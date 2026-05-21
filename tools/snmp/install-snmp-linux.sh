@@ -109,10 +109,12 @@ agentAddress udp:${PORT}
 sysLocation ${LOCATION}
 sysContact ${CONTACT}
 
-view serverwatchSystem included .1.3.6.1.2.1.1
-view serverwatchSystem included .1.3.6.1.2.1.25.1
+view serverwatchMonitoring included .1.3.6.1.2.1.1
+view serverwatchMonitoring included .1.3.6.1.2.1.2
+view serverwatchMonitoring included .1.3.6.1.2.1.25
+view serverwatchMonitoring included .1.3.6.1.2.1.31
 
-rocommunity ${COMMUNITY} ${MANAGER_IP} -V serverwatchSystem
+rocommunity ${COMMUNITY} ${MANAGER_IP} -V serverwatchMonitoring
 EOF
 
   chmod 600 "$config_file"
