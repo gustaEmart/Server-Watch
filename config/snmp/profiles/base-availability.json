@@ -1,0 +1,50 @@
+{
+  "schemaVersion": 1,
+  "id": "base-availability",
+  "name": "Base availability",
+  "description": "Minimal SNMP profile used to check whether the agent responds and expose basic system identity.",
+  "targetTypes": ["linux", "windows", "network-device", "generic"],
+  "metrics": [
+    {
+      "key": "system.description",
+      "name": "System description",
+      "kind": "scalar",
+      "oid": "1.3.6.1.2.1.1.1.0",
+      "mib": "SNMPv2-MIB::sysDescr.0",
+      "valueType": "string",
+      "unit": null,
+      "history": false
+    },
+    {
+      "key": "system.object_id",
+      "name": "System object ID",
+      "kind": "scalar",
+      "oid": "1.3.6.1.2.1.1.2.0",
+      "mib": "SNMPv2-MIB::sysObjectID.0",
+      "valueType": "string",
+      "unit": null,
+      "history": false
+    },
+    {
+      "key": "system.uptime",
+      "name": "System uptime",
+      "kind": "scalar",
+      "oid": "1.3.6.1.2.1.1.3.0",
+      "mib": "SNMPv2-MIB::sysUpTime.0",
+      "valueType": "timeticks",
+      "unit": "timeticks",
+      "history": true,
+      "availabilitySignal": true
+    },
+    {
+      "key": "system.name",
+      "name": "System name",
+      "kind": "scalar",
+      "oid": "1.3.6.1.2.1.1.5.0",
+      "mib": "SNMPv2-MIB::sysName.0",
+      "valueType": "string",
+      "unit": null,
+      "history": false
+    }
+  ]
+}
