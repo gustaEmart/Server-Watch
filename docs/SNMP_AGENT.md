@@ -47,7 +47,7 @@ O script:
 - instala `snmpd` quando possivel;
 - cria backup de `/etc/snmp/snmpd.conf`;
 - configura acesso somente leitura para o IP do ServerWatch;
-- restringe a view aos OIDs basicos de sistema/uptime;
+- restringe a view a OIDs padrao de monitoramento: sistema, interfaces, host resources e contadores estendidos de interface;
 - tenta liberar UDP `161` no firewall local quando `ufw` ou `firewalld` estiverem disponiveis;
 - reinicia e habilita o servico.
 
@@ -111,6 +111,8 @@ Quando o backend passar a suportar SNMP, o cadastro do servidor deve incluir:
 - ultimo erro SNMP.
 
 Na primeira implementacao do ServerWatch, a consulta SNMP pode ser limitada ao `sysUpTime.0`. Isso ja permite usar SNMP como criterio de disponibilidade sem coletar metricas adicionais.
+
+Para preparar a evolucao alem de uptime, os perfis de metricas planejados ficam em `config/snmp/profiles/` e o desenho tecnico esta em `docs/SNMP_METRICS.md`.
 
 ## Seguranca
 
