@@ -1,0 +1,262 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>ServerWatch</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar">
+        <div class="brand">
+          <span class="brand-mark">SW</span>
+          <div>
+            <strong>ServerWatch</strong>
+            <span>MVP LAN</span>
+          </div>
+        </div>
+
+        <nav class="nav-tabs" aria-label="Navegacao principal">
+          <button class="nav-tab active" data-view="dashboard">Dashboard</button>
+          <button class="nav-tab" data-view="groups">Empresas</button>
+          <button class="nav-tab" data-view="history">Historico</button>
+          <button class="nav-tab" data-view="alerts">Alertas</button>
+        </nav>
+
+        <section class="company-nav" aria-label="Visualizacoes por empresa">
+          <div class="sidebar-section-title">Visualizacoes</div>
+          <div id="companyNav"></div>
+        </section>
+
+        <div class="connection-card">
+          <span class="connection-dot" id="connectionDot"></span>
+          <div>
+            <strong id="connectionLabel">Conectando</strong>
+            <span id="connectionDetail">WebSocket</span>
+          </div>
+        </div>
+      </aside>
+
+      <main class="main-content">
+        <header class="topbar">
+          <div>
+            <p class="eyebrow">Monitoramento em tempo real</p>
+            <h1>Disponibilidade dos servidores</h1>
+          </div>
+          <div class="topbar-actions">
+            <button class="ghost-button" id="notifyButton" type="button" title="Ativar notificacoes do navegador">
+              Notificacoes
+            </button>
+            <button class="primary-button" id="openServerForm" type="button">Adicionar servidor</button>
+          </div>
+        </header>
+
+        <section class="metrics-grid" aria-label="Resumo">
+          <article class="metric-card donut-card">
+            <div>
+              <span id="overviewScope">Visao geral</span>
+              <strong>Status</strong>
+            </div>
+            <div class="donut-wrap">
+              <div class="status-donut" id="statusDonut" aria-label="Distribuicao por status"></div>
+              <div class="donut-legend" id="statusLegend"></div>
+            </div>
+          </article>
+          <article class="metric-card">
+            <span>Total</span>
+            <strong id="metricTotal">0</strong>
+            <small>ativos monitorados</small>
+          </article>
+          <article class="metric-card online">
+            <span>Online</span>
+            <strong id="metricOnline">0</strong>
+            <small>respondendo agora</small>
+          </article>
+          <article class="metric-card offline">
+            <span>Offline</span>
+            <strong id="metricOffline">0</strong>
+            <small id="metricAlerts">0 alertas abertos</small>
+          </article>
+          <article class="metric-card">
+            <span>Disponibilidade 24h</span>
+            <strong id="metricAvailability">0%</strong>
+            <small>baseada em eventos</small>
+          </article>
+        </section>
+
+        <section class="view active" id="dashboardView">
+          <div class="toolbar">
+            <div class="segmented" role="group" aria-label="Filtro de status">
+              <button class="segment active" data-status="all">Todos</button>
+              <button class="segment" data-status="online">Online</button>
+              <button class="segment" data-status="offline">Offline</button>
+              <button class="segment" data-status="unknown">Sem status</button>
+              <button class="segment" data-status="paused">Pausado</button>
+            </div>
+            <label class="search-field">
+              <span>Buscar</span>
+              <input id="searchInput" type="search" placeholder="Nome, IP, tag ou ambiente" />
+            </label>
+            <select id="environmentFilter" aria-label="Filtrar por ambiente">
+              <option value="all">Todos ambientes</option>
+              <option value="production">Producao</option>
+              <option value="staging">Homologacao</option>
+              <option value="development">Desenvolvimento</option>
+            </select>
+            <select id="groupFilter" aria-label="Filtrar por empresa">
+              <option value="all">Todas empresas</option>
+              <option value="none">Sem empresa</option>
+            </select>
+          </div>
+
+          <div class="server-layout">
+            <section class="server-panel">
+              <div class="panel-title">
+                <h2>Servidores por empresa</h2>
+                <span id="serverCount">0 itens</span>
+              </div>
+              <div class="server-list" id="serverList"></div>
+            </section>
+
+            <aside class="detail-panel" id="detailPanel">
+              <div class="empty-state">
+                <strong>Nenhum servidor selecionado</strong>
+                <span>Selecione um item para ver latencia, historico recente e acoes.</span>
+              </div>
+            </aside>
+          </div>
+        </section>
+
+        <section class="view" id="groupsView">
+          <div class="wide-panel">
+            <div class="panel-title">
+              <div>
+                <h2>Empresas e grupos</h2>
+                <span id="groupCount">0 empresas</span>
+              </div>
+              <button class="primary-button compact" id="openGroupForm" type="button">Adicionar empresa</button>
+            </div>
+            <div class="groups-list" id="groupsList"></div>
+          </div>
+        </section>
+
+        <section class="view" id="historyView">
+          <div class="wide-panel">
+            <div class="panel-title">
+              <h2>Timeline de eventos</h2>
+              <span id="eventCount">0 eventos</span>
+            </div>
+            <div class="timeline" id="timeline"></div>
+          </div>
+        </section>
+
+        <section class="view" id="alertsView">
+          <div class="wide-panel">
+            <div class="panel-title">
+              <h2>Alertas</h2>
+              <button class="ghost-button compact" id="markAlertsRead" type="button">Marcar como lidos</button>
+            </div>
+            <div class="alerts-list" id="alertsList"></div>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <dialog class="server-dialog" id="serverDialog">
+      <form method="dialog" id="serverForm">
+        <div class="dialog-header">
+          <div>
+            <p class="eyebrow">Monitoramento ICMP</p>
+            <h2 id="dialogTitle">Adicionar servidor</h2>
+          </div>
+          <button class="icon-button" value="cancel" type="button" id="closeDialog" title="Fechar">x</button>
+        </div>
+
+        <input type="hidden" id="serverId" />
+        <div class="form-grid">
+          <label>
+            Nome
+            <input id="serverName" required placeholder="Servidor Web 01" />
+          </label>
+          <label>
+            IP ou hostname
+            <input id="serverHostname" required placeholder="192.168.1.10" />
+          </label>
+          <label>
+            Ambiente
+            <select id="serverEnvironment">
+              <option value="production">Producao</option>
+              <option value="staging">Homologacao</option>
+              <option value="development">Desenvolvimento</option>
+            </select>
+          </label>
+          <label>
+            Empresa / grupo
+            <select id="serverGroup">
+              <option value="">Sem empresa</option>
+            </select>
+          </label>
+          <label>
+            Localizacao
+            <input id="serverLocation" placeholder="Rack A, Filial SP" />
+          </label>
+          <label>
+            Intervalo (segundos)
+            <input id="serverInterval" type="number" min="3" max="3600" value="10" />
+          </label>
+          <label>
+            Falhas para offline
+            <input id="serverThreshold" type="number" min="1" max="10" value="2" />
+          </label>
+        </div>
+
+        <label>
+          Tags
+          <input id="serverTags" placeholder="web, critical, lan" />
+        </label>
+
+        <label>
+          Descricao
+          <textarea id="serverDescription" rows="3" placeholder="Contexto operacional, dono ou observacoes"></textarea>
+        </label>
+
+        <div class="dialog-actions">
+          <button class="ghost-button" type="button" id="cancelForm">Cancelar</button>
+          <button class="primary-button" type="submit">Salvar servidor</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog class="server-dialog" id="groupDialog">
+      <form method="dialog" id="groupForm">
+        <div class="dialog-header">
+          <div>
+            <p class="eyebrow">Agrupamento operacional</p>
+            <h2 id="groupDialogTitle">Adicionar empresa</h2>
+          </div>
+          <button class="icon-button" value="cancel" type="button" id="closeGroupDialog" title="Fechar">x</button>
+        </div>
+
+        <input type="hidden" id="groupId" />
+        <label>
+          Nome da empresa / grupo
+          <input id="groupName" required placeholder="Empresa ACME" />
+        </label>
+
+        <label>
+          Descricao
+          <textarea id="groupDescription" rows="3" placeholder="Cliente, unidade, filial ou contexto do grupo"></textarea>
+        </label>
+
+        <div class="dialog-actions">
+          <button class="ghost-button" type="button" id="cancelGroupForm">Cancelar</button>
+          <button class="primary-button" type="submit">Salvar empresa</button>
+        </div>
+      </form>
+    </dialog>
+
+    <div class="toast-stack" id="toastStack" aria-live="polite"></div>
+    <script src="/app.js" type="module"></script>
+  </body>
+</html>
