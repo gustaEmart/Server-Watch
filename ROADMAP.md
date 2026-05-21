@@ -31,6 +31,45 @@ UI sugerida:
 
 Essa funcionalidade deve ser implementada depois do MVP basico de CRUD, ping, historico e alertas estar estavel.
 
+## Monitoramento SNMP
+
+Adicionar suporte a SNMP como metodo complementar ao ping.
+
+Objetivo:
+
+- Permitir que cada servidor use `ping`, `snmp` ou ambos como metodo de verificacao.
+- Usar ping para confirmar disponibilidade basica de rede via ICMP.
+- Usar SNMP para confirmar que o agente SNMP do servidor, equipamento ou dispositivo esta respondendo.
+- Permitir substituir o ping por SNMP em ambientes onde ICMP esteja bloqueado ou onde a disponibilidade desejada seja baseada no agente SNMP.
+- Manter tolerancia a falhas consecutivas antes de marcar offline, como ja acontece no monitoramento por ping.
+
+Implementacao inicial sugerida:
+
+- Consultar o OID padrao `sysUpTime.0` (`1.3.6.1.2.1.1.3.0`).
+- Considerar o item online quando a consulta SNMP responder com sucesso.
+- Considerar o item offline quando a consulta SNMP falhar por timeout ou erro repetido.
+- Comecar com SNMP v2c para simplificar o MVP.
+- Preparar o modelo para SNMP v3 em uma etapa posterior.
+
+Campos sugeridos:
+
+- `check_method`: `ping`, `snmp`, `ping_snmp`
+- `snmp_version`: `2c`, `3`
+- `snmp_host`: IP ou hostname, podendo reutilizar o hostname principal.
+- `snmp_port`: porta UDP, normalmente `161`.
+- `snmp_community`: community para SNMP v2c.
+- `snmp_timeout_ms`: tempo limite da consulta.
+- `snmp_oid`: OID consultado, com `1.3.6.1.2.1.1.3.0` como padrao.
+- `last_snmp_uptime`: ultimo uptime retornado pelo agente.
+- `last_snmp_error`: ultimo erro de consulta SNMP.
+
+Evolucoes futuras:
+
+- Suporte a SNMP v3 com usuario, autenticacao e privacidade/criptografia.
+- Templates por tipo de equipamento ou fabricante.
+- Metricas adicionais via SNMP, como CPU, memoria, disco, interfaces e temperatura.
+- Traps SNMP em uma fase mais avancada, usando UDP `162`.
+
 ## Identidade visual
 
 Evoluir a interface para uma identidade visual mais proprietaria, misturando azul escuro com vermelho.
@@ -105,7 +144,7 @@ Objetivo:
 Campos sugeridos para CSV de servidores:
 
 ```text
-name,hostname,company,environment,location,tags,check_interval,failure_threshold,is_active
+name,hostname,company,environment,location,tags,check_method,check_interval,failure_threshold,is_active,snmp_version,snmp_port,snmp_community,snmp_oid
 ```
 
 Cuidados:
