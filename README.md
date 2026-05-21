@@ -15,7 +15,7 @@ npm start
 
 Para requisitos de implantacao, ambiente recomendado, portas, firewall e proximos passos de producao, veja `IMPLEMENTACAO.md`.
 
-Para preparar servidores Linux ou Windows para monitoramento futuro por SNMP, veja `docs/SNMP_AGENT.md`.
+Para preparar servidores Linux ou Windows para monitoramento futuro por SNMP, veja `docs/SNMP_AGENT.md`. Para os perfis de metricas SNMP planejados, veja `docs/SNMP_METRICS.md`.
 
 A aplicacao sobe em `0.0.0.0:3000`, entao pode ser acessada pela propria maquina em:
 
