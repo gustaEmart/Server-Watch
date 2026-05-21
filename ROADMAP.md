@@ -68,6 +68,9 @@ Evolucoes futuras:
 - Suporte a SNMP v3 com usuario, autenticacao e privacidade/criptografia.
 - Templates por tipo de equipamento ou fabricante.
 - Metricas adicionais via SNMP, como CPU, memoria, disco, interfaces e temperatura.
+- Perfis de metricas versionados para reaproveitar OIDs padrao entre Linux, Windows e equipamentos de rede.
+- Historico de metricas numericas separado do historico de transicoes online/offline.
+- Alertas por thresholds de metricas, como CPU alta, disco cheio, interface down ou erros de interface.
 - Traps SNMP em uma fase mais avancada, usando UDP `162`.
 
 ## Identidade visual
