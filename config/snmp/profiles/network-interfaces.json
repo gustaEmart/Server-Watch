@@ -1,0 +1,90 @@
+{
+  "schemaVersion": 1,
+  "id": "network-interfaces",
+  "name": "Network interfaces",
+  "description": "Standard IF-MIB metrics for interface inventory, operational status, traffic counters and errors.",
+  "targetTypes": ["linux", "windows", "network-device", "generic"],
+  "metrics": [
+    {
+      "key": "interface.name",
+      "name": "Interface name",
+      "kind": "table",
+      "oid": "1.3.6.1.2.1.31.1.1.1.1",
+      "mib": "IF-MIB::ifName",
+      "valueType": "string",
+      "unit": null,
+      "history": false
+    },
+    {
+      "key": "interface.description",
+      "name": "Interface description",
+      "kind": "table",
+      "oid": "1.3.6.1.2.1.2.2.1.2",
+      "mib": "IF-MIB::ifDescr",
+      "valueType": "string",
+      "unit": null,
+      "history": false
+    },
+    {
+      "key": "interface.oper_status",
+      "name": "Interface operational status",
+      "kind": "table",
+      "oid": "1.3.6.1.2.1.2.2.1.8",
+      "mib": "IF-MIB::ifOperStatus",
+      "valueType": "enum",
+      "unit": null,
+      "history": true,
+      "enum": {
+        "1": "up",
+        "2": "down",
+        "3": "testing",
+        "4": "unknown",
+        "5": "dormant",
+        "6": "notPresent",
+        "7": "lowerLayerDown"
+      }
+    },
+    {
+      "key": "interface.in_octets_64",
+      "name": "Interface inbound octets",
+      "kind": "table",
+      "oid": "1.3.6.1.2.1.31.1.1.1.6",
+      "mib": "IF-MIB::ifHCInOctets",
+      "valueType": "counter",
+      "unit": "octets",
+      "history": true,
+      "computedMetrics": ["interface.in_bits_per_second"]
+    },
+    {
+      "key": "interface.out_octets_64",
+      "name": "Interface outbound octets",
+      "kind": "table",
+      "oid": "1.3.6.1.2.1.31.1.1.1.10",
+      "mib": "IF-MIB::ifHCOutOctets",
+      "valueType": "counter",
+      "unit": "octets",
+      "history": true,
+      "computedMetrics": ["interface.out_bits_per_second"]
+    },
+    {
+      "key": "interface.in_errors",
+      "name": "Interface inbound errors",
+      "kind": "table",
+      "oid": "1.3.6.1.2.1.2.2.1.14",
+      "mib": "IF-MIB::ifInErrors",
+      "valueType": "counter",
+      "unit": "errors",
+      "history": true
+    },
+    {
+      "key": "interface.out_errors",
+      "name": "Interface outbound errors",
+      "kind": "table",
+      "oid": "1.3.6.1.2.1.2.2.1.20",
+      "mib": "IF-MIB::ifOutErrors",
+      "valueType": "counter",
+      "unit": "errors",
+      "history": true
+    }
+  ]
+}
