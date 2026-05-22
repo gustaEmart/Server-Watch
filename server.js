@@ -1,5 +1,5 @@
 import { createServer } from "node:http";
-import { createHash, randomUUID } from "node:crypto";
+import { createHash, randomUUID, scryptSync, timingSafeEqual } from "node:crypto";
 import { spawn } from "node:child_process";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
@@ -26,12 +26,18 @@ const DOWNLOADS = {
 const CHECK_LOOP_MS = 1000;
 const MAX_HISTORY_PER_SERVER = 500;
 const CHECK_SOURCES = new Set(["serverwatch", "probe"]);
+const SESSION_COOKIE = "sw_session";
+const SESSION_TTL_MS = 8 * 60 * 60 * 1000;
+const DEFAULT_ADMIN_EMAIL = process.env.SERVERWATCH_ADMIN_EMAIL || "admin@serverwatch.local";
+const DEFAULT_ADMIN_PASSWORD = process.env.SERVERWATCH_ADMIN_PASSWORD || "admin123";
 
 const sockets = new Set();
+const sessions = new Map();
 let state = {
   servers: [],
   groups: [],
   probes: [],
+  users: [],
   events: [],
   alerts: [],
   settings: {
@@ -133,6 +139,112 @@ function normalizeGroup(payload, existing = {}) {
   };
 }
 
+function normalizeEmail(value) {
+  return String(value || "").trim().toLowerCase();
+}
+
+function hashPassword(password) {
+  const salt = randomUUID().replaceAll("-", "");
+  const hash = scryptSync(String(password), salt, 32).toString("base64");
+  return `scrypt:${salt}:${hash}`;
+}
+
+function verifyPassword(password, storedHash) {
+  const [scheme, salt, hash] = String(storedHash || "").split(":");
+  if (scheme !== "scrypt" || !salt || !hash) return false;
+  const expected = Buffer.from(hash, "base64");
+  const actual = scryptSync(String(password), salt, expected.length);
+  return expected.length === actual.length && timingSafeEqual(expected, actual);
+}
+
+function publicUser(user) {
+  return {
+    id: user.id,
+    name: user.name,
+    email: user.email,
+    role: user.role,
+    isActive: user.isActive !== false,
+    createdAt: user.createdAt,
+    updatedAt: user.updatedAt,
+    lastLoginAt: user.lastLoginAt || null
+  };
+}
+
+function listedUsers() {
+  return (state.users || []).filter((user) => !user.deletedAt);
+}
+
+function activeAdminCount() {
+  return listedUsers().filter((user) => user.role === "admin" && user.isActive !== false).length;
+}
+
+function ensureDefaultAdmin() {
+  state.users = Array.isArray(state.users) ? state.users : [];
+  if (listedUsers().some((user) => user.role === "admin")) return false;
+  const now = nowIso();
+  state.users.push({
+    id: randomUUID(),
+    name: "Administrador",
+    email: normalizeEmail(DEFAULT_ADMIN_EMAIL),
+    role: "admin",
+    passwordHash: hashPassword(DEFAULT_ADMIN_PASSWORD),
+    isActive: true,
+    createdAt: now,
+    updatedAt: now,
+    lastLoginAt: null
+  });
+  return true;
+}
+
+function normalizeUser(payload, existing = {}) {
+  const name = String(payload.name || existing.name || "").trim();
+  const email = normalizeEmail(payload.email || existing.email);
+  const role = String(payload.role || existing.role || "operator");
+  const password = String(payload.password || "").trim();
+
+  if (!name) {
+    const error = new Error("Informe o nome do usuario.");
+    error.statusCode = 400;
+    throw error;
+  }
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    const error = new Error("Informe um e-mail valido.");
+    error.statusCode = 400;
+    throw error;
+  }
+  if (!["admin", "operator"].includes(role)) {
+    const error = new Error("Perfil de usuario invalido.");
+    error.statusCode = 400;
+    throw error;
+  }
+  if (!existing.id && password.length < 6) {
+    const error = new Error("A senha deve ter pelo menos 6 caracteres.");
+    error.statusCode = 400;
+    throw error;
+  }
+  if (password && password.length < 6) {
+    const error = new Error("A senha deve ter pelo menos 6 caracteres.");
+    error.statusCode = 400;
+    throw error;
+  }
+  const duplicate = listedUsers().find((user) => user.email === email && user.id !== existing.id);
+  if (duplicate) {
+    const error = new Error("Ja existe um usuario com este e-mail.");
+    error.statusCode = 409;
+    throw error;
+  }
+
+  return {
+    ...existing,
+    name,
+    email,
+    role,
+    isActive: Boolean(payload.isActive ?? existing.isActive ?? true),
+    passwordHash: password ? hashPassword(password) : existing.passwordHash,
+    updatedAt: nowIso()
+  };
+}
+
 function createSeedState() {
   const createdAt = nowIso();
   return {
@@ -167,6 +279,7 @@ function createSeedState() {
       }
     ],
     groups: [],
+    users: [],
     events: [],
     alerts: []
   };
@@ -176,6 +289,7 @@ async function loadState() {
   await mkdir(DATA_DIR, { recursive: true });
   if (!existsSync(DATA_FILE)) {
     state = createSeedState();
+    ensureDefaultAdmin();
     await persistState();
     return;
   }
@@ -187,11 +301,15 @@ async function loadState() {
     ...parsed,
     groups: Array.isArray(parsed.groups) ? parsed.groups : [],
     probes: Array.isArray(parsed.probes) ? parsed.probes : [],
+    users: Array.isArray(parsed.users) ? parsed.users : [],
     settings: { ...state.settings, ...(parsed.settings || {}) }
   };
   let needsSave = false;
   if (!state.settings.probeToken) {
     state.settings.probeToken = randomUUID();
+    needsSave = true;
+  }
+  if (ensureDefaultAdmin()) {
     needsSave = true;
   }
   const now = Date.now();
@@ -354,14 +472,16 @@ function summary() {
   };
 }
 
-function snapshot() {
+function snapshot(currentUser = null) {
   return {
     type: "snapshot",
     summary: summary(),
     servers: listedServers().map(publicServer),
     groups: listedGroups().map(publicGroup),
     probes: (state.probes || []).map(publicProbe),
-    settings: publicSettings(),
+    users: currentUser?.role === "admin" ? listedUsers().map(publicUser) : [],
+    currentUser: currentUser ? publicUser(currentUser) : null,
+    settings: publicSettings(currentUser),
     alerts: state.alerts.slice(0, 50),
     events: state.events.slice(0, 100)
   };
@@ -513,9 +633,9 @@ function publicProbe(probe) {
   };
 }
 
-function publicSettings() {
+function publicSettings(currentUser = null) {
   return {
-    probeToken: getProbeToken(),
+    probeToken: currentUser?.role === "admin" ? getProbeToken() : "",
     probeTokenSource: process.env.SERVERWATCH_PROBE_TOKEN ? "environment" : "generated"
   };
 }
@@ -593,11 +713,67 @@ function sendJson(res, statusCode, payload) {
   res.end(body);
 }
 
+function parseCookies(req) {
+  return String(req.headers.cookie || "")
+    .split(";")
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .reduce((cookies, item) => {
+      const index = item.indexOf("=");
+      if (index > 0) cookies[item.slice(0, index)] = decodeURIComponent(item.slice(index + 1));
+      return cookies;
+    }, {});
+}
+
+function getSession(req) {
+  const token = parseCookies(req)[SESSION_COOKIE];
+  if (!token) return null;
+  const session = sessions.get(token);
+  if (!session || session.expiresAt <= Date.now()) {
+    sessions.delete(token);
+    return null;
+  }
+  const user = listedUsers().find((item) => item.id === session.userId && item.isActive !== false);
+  if (!user) {
+    sessions.delete(token);
+    return null;
+  }
+  return { token, user };
+}
+
+function setSessionCookie(res, token) {
+  res.setHeader("Set-Cookie", `${SESSION_COOKIE}=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${Math.floor(SESSION_TTL_MS / 1000)}`);
+}
+
+function clearSessionCookie(res) {
+  res.setHeader("Set-Cookie", `${SESSION_COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`);
+}
+
+function requireSession(req, res) {
+  const session = getSession(req);
+  if (!session) {
+    sendJson(res, 401, { error: "Autenticacao necessaria." });
+    return null;
+  }
+  return session;
+}
+
+function requireAdmin(req, res) {
+  const session = requireSession(req, res);
+  if (!session) return null;
+  if (session.user.role !== "admin") {
+    sendJson(res, 403, { error: "Apenas administradores podem executar esta acao." });
+    return null;
+  }
+  return session;
+}
+
 function notFound(res) {
   sendJson(res, 404, { error: "Recurso nao encontrado." });
 }
 
 async function serveDownload(req, res) {
+  if (!requireSession(req, res)) return;
   const { pathname } = getRouteParts(req);
   const download = DOWNLOADS[pathname];
   if (!download) return notFound(res);
@@ -637,12 +813,35 @@ async function handleApi(req, res) {
       });
     }
 
-    if (req.method === "GET" && parts[1] === "summary") {
-      return sendJson(res, 200, summary());
-    }
+    if (parts[1] === "auth") {
+      if (req.method === "GET" && parts[2] === "session") {
+        const session = getSession(req);
+        return sendJson(res, 200, { user: session ? publicUser(session.user) : null });
+      }
 
-    if (req.method === "GET" && parts[1] === "snapshot") {
-      return sendJson(res, 200, snapshot());
+      if (req.method === "POST" && parts[2] === "login") {
+        const payload = await readBody(req);
+        const email = normalizeEmail(payload.email);
+        const password = String(payload.password || "");
+        const user = listedUsers().find((item) => item.email === email && item.isActive !== false);
+        if (!user || !verifyPassword(password, user.passwordHash)) {
+          return sendJson(res, 401, { error: "E-mail ou senha invalidos." });
+        }
+        const token = randomUUID();
+        sessions.set(token, { userId: user.id, expiresAt: Date.now() + SESSION_TTL_MS });
+        user.lastLoginAt = nowIso();
+        user.updatedAt = user.updatedAt || user.lastLoginAt;
+        scheduleSave();
+        setSessionCookie(res, token);
+        return sendJson(res, 200, { user: publicUser(user) });
+      }
+
+      if (req.method === "POST" && parts[2] === "logout") {
+        const session = getSession(req);
+        if (session) sessions.delete(session.token);
+        clearSessionCookie(res);
+        return sendJson(res, 200, { ok: true });
+      }
     }
 
     if (parts[1] === "probe") {
@@ -694,8 +893,70 @@ async function handleApi(req, res) {
       }
     }
 
+    const session = requireSession(req, res);
+    if (!session) return;
+
+    if (req.method === "GET" && parts[1] === "summary") {
+      return sendJson(res, 200, summary());
+    }
+
+    if (req.method === "GET" && parts[1] === "snapshot") {
+      return sendJson(res, 200, snapshot(session.user));
+    }
+
     if (req.method === "GET" && parts[1] === "probes") {
       return sendJson(res, 200, (state.probes || []).map(publicProbe));
+    }
+
+    if (parts[1] === "users") {
+      if (!requireAdmin(req, res)) return;
+
+      if (req.method === "GET" && parts.length === 2) {
+        return sendJson(res, 200, listedUsers().map(publicUser));
+      }
+
+      if (req.method === "POST" && parts.length === 2) {
+        const payload = await readBody(req);
+        const createdAt = nowIso();
+        const user = {
+          id: randomUUID(),
+          createdAt,
+          lastLoginAt: null,
+          ...normalizeUser(payload)
+        };
+        state.users.unshift(user);
+        scheduleSave();
+        return sendJson(res, 201, publicUser(user));
+      }
+
+      const id = parts[2];
+      const user = listedUsers().find((item) => item.id === id);
+      if (!user) return notFound(res);
+
+      if (req.method === "PUT" && parts.length === 3) {
+        const payload = await readBody(req);
+        const nextRole = String(payload.role || user.role);
+        const nextActive = Boolean(payload.isActive ?? user.isActive ?? true);
+        if (user.role === "admin" && (!nextActive || nextRole !== "admin") && activeAdminCount() <= 1) {
+          return sendJson(res, 409, { error: "Mantenha pelo menos um administrador ativo." });
+        }
+        Object.assign(user, normalizeUser(payload, user));
+        scheduleSave();
+        return sendJson(res, 200, publicUser(user));
+      }
+
+      if (req.method === "DELETE" && parts.length === 3) {
+        if (user.id === session.user.id) {
+          return sendJson(res, 409, { error: "Voce nao pode excluir o proprio usuario logado." });
+        }
+        if (user.role === "admin" && activeAdminCount() <= 1) {
+          return sendJson(res, 409, { error: "Mantenha pelo menos um administrador ativo." });
+        }
+        user.deletedAt = nowIso();
+        user.updatedAt = user.deletedAt;
+        scheduleSave();
+        return sendJson(res, 200, publicUser(user));
+      }
     }
 
     if (parts[1] === "groups") {
@@ -897,6 +1158,11 @@ function handleUpgrade(req, socket) {
     socket.destroy();
     return;
   }
+  const session = getSession(req);
+  if (!session) {
+    socket.destroy();
+    return;
+  }
 
   const key = req.headers["sec-websocket-key"];
   if (!key) {
@@ -920,7 +1186,7 @@ function handleUpgrade(req, socket) {
   );
 
   sockets.add(socket);
-  socket.write(encodeWebSocketFrame(snapshot()));
+  socket.write(encodeWebSocketFrame(snapshot(session.user)));
   socket.on("close", () => sockets.delete(socket));
   socket.on("error", () => sockets.delete(socket));
 }

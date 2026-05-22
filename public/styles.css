@@ -32,6 +32,10 @@ body {
   color: var(--text);
 }
 
+[hidden] {
+  display: none !important;
+}
+
 button,
 input,
 select,
@@ -41,6 +45,40 @@ textarea {
 
 button {
   cursor: pointer;
+}
+
+.auth-screen {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+}
+
+.login-card {
+  width: min(420px, 100%);
+  display: grid;
+  gap: 16px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 24px;
+  background: rgba(255, 255, 255, 0.94);
+  box-shadow: var(--shadow);
+}
+
+.login-brand {
+  color: var(--text);
+  margin-bottom: 4px;
+}
+
+.login-brand span:last-child {
+  color: var(--muted);
+}
+
+.form-error {
+  min-height: 20px;
+  color: #991b1b;
+  font-size: 0.88rem;
+  font-weight: 800;
 }
 
 .app-shell {
@@ -245,6 +283,17 @@ button {
   display: flex;
   align-items: center;
   gap: 10px;
+}
+
+.user-chip {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 8px 11px;
+  background: rgba(255, 255, 255, 0.72);
+  color: var(--muted);
+  font-size: 0.84rem;
+  font-weight: 800;
+  white-space: nowrap;
 }
 
 .primary-button,
@@ -843,6 +892,7 @@ textarea:focus {
 .timeline,
 .alerts-list,
 .groups-list,
+.users-list,
 .mini-history,
 .probes-list {
   display: grid;
@@ -852,6 +902,7 @@ textarea:focus {
 .timeline-item,
 .alert-card,
 .group-card,
+.user-card,
 .probe-card {
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -909,6 +960,36 @@ textarea:focus {
 .group-card span {
   color: var(--muted);
   margin-top: 3px;
+}
+
+.user-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 14px;
+}
+
+.user-card.inactive {
+  background: #f3f5f5;
+  color: #6b7280;
+}
+
+.user-card strong,
+.user-card span {
+  display: block;
+}
+
+.user-card span {
+  color: var(--muted);
+  margin-top: 3px;
+}
+
+.user-badges,
+.user-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 
 .group-stats {
@@ -1165,7 +1246,13 @@ label {
     grid-template-columns: 1fr;
   }
 
-  .group-stats {
+  .user-card {
+    grid-template-columns: 1fr;
+  }
+
+  .group-stats,
+  .user-badges,
+  .user-actions {
     justify-content: flex-start;
   }
 

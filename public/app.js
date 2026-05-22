@@ -2,6 +2,8 @@ const state = {
   servers: [],
   groups: [],
   probes: [],
+  users: [],
+  currentUser: null,
   settings: {},
   events: [],
   alerts: [],
@@ -20,6 +22,14 @@ const state = {
 };
 
 const els = {
+  authScreen: document.querySelector("#authScreen"),
+  appShell: document.querySelector("#appShell"),
+  loginForm: document.querySelector("#loginForm"),
+  loginEmail: document.querySelector("#loginEmail"),
+  loginPassword: document.querySelector("#loginPassword"),
+  loginError: document.querySelector("#loginError"),
+  currentUserName: document.querySelector("#currentUserName"),
+  logoutButton: document.querySelector("#logoutButton"),
   metricTotal: document.querySelector("#metricTotal"),
   metricOnline: document.querySelector("#metricOnline"),
   metricOffline: document.querySelector("#metricOffline"),
@@ -41,6 +51,17 @@ const els = {
   companyNav: document.querySelector("#companyNav"),
   groupsList: document.querySelector("#groupsList"),
   groupCount: document.querySelector("#groupCount"),
+  usersList: document.querySelector("#usersList"),
+  userCount: document.querySelector("#userCount"),
+  userDialog: document.querySelector("#userDialog"),
+  userForm: document.querySelector("#userForm"),
+  userDialogTitle: document.querySelector("#userDialogTitle"),
+  userId: document.querySelector("#userId"),
+  userName: document.querySelector("#userName"),
+  userEmail: document.querySelector("#userEmail"),
+  userRole: document.querySelector("#userRole"),
+  userActive: document.querySelector("#userActive"),
+  userPassword: document.querySelector("#userPassword"),
   probeCount: document.querySelector("#probeCount"),
   probesList: document.querySelector("#probesList"),
   probeTokenValue: document.querySelector("#probeTokenValue"),
@@ -78,15 +99,42 @@ const els = {
 function api(path, options = {}) {
   return fetch(path, {
     ...options,
+    credentials: "same-origin",
     headers: {
       "Content-Type": "application/json",
       ...(options.headers || {})
     }
   }).then(async (response) => {
     const body = await response.json().catch(() => ({}));
+    if (response.status === 401) showLogin();
     if (!response.ok) throw new Error(body.error || "Falha na requisicao.");
     return body;
   });
+}
+
+function isAdmin() {
+  return state.currentUser?.role === "admin";
+}
+
+function showLogin() {
+  state.currentUser = null;
+  state.socket?.close();
+  clearTimeout(state.reconnectTimer);
+  els.authScreen.hidden = false;
+  els.appShell.hidden = true;
+}
+
+function showApp(user) {
+  state.currentUser = user;
+  els.authScreen.hidden = true;
+  els.appShell.hidden = false;
+  els.currentUserName.textContent = `${user.name} · ${user.role === "admin" ? "Admin" : "Operador"}`;
+  document.querySelectorAll(".admin-only").forEach((item) => {
+    item.hidden = !isAdmin();
+  });
+  if (!isAdmin() && document.querySelector(".nav-tab.active")?.classList.contains("admin-only")) {
+    document.querySelector('[data-view="dashboard"]').click();
+  }
 }
 
 function statusLabel(status) {
@@ -177,6 +225,8 @@ function applySnapshot(payload) {
   state.servers = payload.servers || [];
   state.groups = payload.groups || [];
   state.probes = payload.probes || [];
+  state.users = payload.users || [];
+  state.currentUser = payload.currentUser || state.currentUser;
   state.settings = payload.settings || {};
   state.alerts = payload.alerts || [];
   state.events = payload.events || [];
@@ -257,6 +307,7 @@ function connectSocket() {
     }
   });
   state.socket.addEventListener("close", () => {
+    if (!state.currentUser) return;
     setConnection("disconnected");
     state.reconnectTimer = setTimeout(connectSocket, 1800);
   });
@@ -666,6 +717,38 @@ function renderGroups() {
     .join("");
 }
 
+function roleLabel(role) {
+  return role === "admin" ? "Administrador" : "Operador";
+}
+
+function renderUsers() {
+  if (!els.usersList || !isAdmin()) return;
+  els.userCount.textContent = `${state.users.length} ${state.users.length === 1 ? "usuario" : "usuarios"}`;
+
+  els.usersList.innerHTML = state.users.length
+    ? state.users
+        .map(
+          (user) => `
+            <article class="user-card ${user.isActive ? "" : "inactive"}">
+              <div>
+                <strong>${escapeHtml(user.name)}</strong>
+                <span>${escapeHtml(user.email)}</span>
+              </div>
+              <div class="user-badges">
+                <span class="tag">${roleLabel(user.role)}</span>
+                <span class="tag">${user.isActive ? "Ativo" : "Inativo"}</span>
+              </div>
+              <div class="user-actions">
+                <button class="ghost-button compact" type="button" data-user-action="edit" data-id="${user.id}">Editar</button>
+                <button class="danger-button compact" type="button" data-user-action="delete" data-id="${user.id}">Excluir</button>
+              </div>
+            </article>
+          `
+        )
+        .join("")
+    : `<div class="empty-list">Nenhum usuario cadastrado.</div>`;
+}
+
 function probeToken() {
   return String(state.settings.probeToken || "");
 }
@@ -711,6 +794,7 @@ function render() {
   renderAlerts();
   renderGroups();
   renderProbes();
+  renderUsers();
 }
 
 function showToast(title, message) {
@@ -792,6 +876,23 @@ function closeGroupDialog() {
   els.groupDialog.close();
 }
 
+function openUserDialog(user = null) {
+  els.userForm.reset();
+  els.userId.value = user?.id || "";
+  els.userDialogTitle.textContent = user ? "Editar usuario" : "Adicionar usuario";
+  els.userName.value = user?.name || "";
+  els.userEmail.value = user?.email || "";
+  els.userRole.value = user?.role || "operator";
+  els.userActive.value = String(user?.isActive ?? true);
+  els.userPassword.placeholder = user ? "Deixe em branco para manter a senha" : "Minimo 6 caracteres";
+  els.userPassword.required = !user;
+  els.userDialog.showModal();
+}
+
+function closeUserDialog() {
+  els.userDialog.close();
+}
+
 async function submitGroup(event) {
   event.preventDefault();
   const id = els.groupId.value;
@@ -808,6 +909,27 @@ async function submitGroup(event) {
   showToast("Empresa salva", `${saved.name} esta disponivel para associar servidores.`);
   const snap = await api("/api/snapshot");
   applySnapshot(snap);
+}
+
+async function submitUser(event) {
+  event.preventDefault();
+  const id = els.userId.value;
+  const payload = {
+    name: els.userName.value,
+    email: els.userEmail.value,
+    role: els.userRole.value,
+    isActive: els.userActive.value === "true"
+  };
+  if (els.userPassword.value) payload.password = els.userPassword.value;
+  const saved = id
+    ? await api(`/api/users/${id}`, { method: "PUT", body: JSON.stringify(payload) })
+    : await api("/api/users", { method: "POST", body: JSON.stringify(payload) });
+  const index = state.users.findIndex((item) => item.id === saved.id);
+  if (index >= 0) state.users[index] = saved;
+  else state.users.unshift(saved);
+  closeUserDialog();
+  renderUsers();
+  showToast("Usuario salvo", `${saved.name} pode acessar o ServerWatch.`);
 }
 
 async function submitServer(event) {
@@ -852,8 +974,26 @@ function toggleProbeOptions() {
 }
 
 function bindEvents() {
+  els.loginForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    els.loginError.textContent = "";
+    try {
+      const payload = {
+        email: els.loginEmail.value,
+        password: els.loginPassword.value
+      };
+      const result = await api("/api/auth/login", { method: "POST", body: JSON.stringify(payload) });
+      showApp(result.user);
+      await loadInitialData();
+      connectSocket();
+    } catch (error) {
+      els.loginError.textContent = error.message;
+    }
+  });
+
   document.querySelectorAll(".nav-tab").forEach((button) => {
     button.addEventListener("click", () => {
+      if (button.hidden) return;
       document.querySelectorAll(".nav-tab").forEach((item) => item.classList.remove("active"));
       document.querySelectorAll(".view").forEach((item) => item.classList.remove("active"));
       button.classList.add("active");
@@ -925,6 +1065,30 @@ function bindEvents() {
   document.querySelector("#cancelGroupForm").addEventListener("click", closeGroupDialog);
   els.groupForm.addEventListener("submit", submitGroup);
 
+  document.querySelector("#openUserForm").addEventListener("click", () => openUserDialog());
+  document.querySelector("#closeUserDialog").addEventListener("click", closeUserDialog);
+  document.querySelector("#cancelUserForm").addEventListener("click", closeUserDialog);
+  els.userForm.addEventListener("submit", submitUser);
+
+  els.usersList.addEventListener("click", async (event) => {
+    const button = event.target.closest("[data-user-action]");
+    if (!button) return;
+    const user = state.users.find((item) => item.id === button.dataset.id);
+    if (!user) return;
+    if (button.dataset.userAction === "edit") {
+      openUserDialog(user);
+      return;
+    }
+    if (button.dataset.userAction === "delete") {
+      const confirmed = window.confirm(`Excluir o usuario "${user.name}"?`);
+      if (!confirmed) return;
+      await api(`/api/users/${user.id}`, { method: "DELETE" });
+      state.users = state.users.filter((item) => item.id !== user.id);
+      renderUsers();
+      showToast("Usuario excluido", `${user.name} nao acessa mais o ServerWatch.`);
+    }
+  });
+
   els.groupsList.addEventListener("click", (event) => {
     const button = event.target.closest("[data-group-action]");
     if (!button) return;
@@ -990,6 +1154,11 @@ function bindEvents() {
     );
   });
 
+  els.logoutButton.addEventListener("click", async () => {
+    await api("/api/auth/logout", { method: "POST" }).catch(() => ({}));
+    showLogin();
+  });
+
   document.querySelector("#markAlertsRead").addEventListener("click", async () => {
     await api("/api/alerts/read", { method: "POST" });
     state.alerts = state.alerts.map((alert) => ({ ...alert, read: true }));
@@ -999,9 +1168,19 @@ function bindEvents() {
 }
 
 bindEvents();
-loadInitialData().catch((error) => showToast("Falha ao carregar", error.message));
-connectSocket();
+api("/api/auth/session")
+  .then(async ({ user }) => {
+    if (!user) {
+      showLogin();
+      return;
+    }
+    showApp(user);
+    await loadInitialData();
+    connectSocket();
+  })
+  .catch(() => showLogin());
 setInterval(() => {
+  if (!state.currentUser) return;
   renderServers();
   renderDetail();
 }, 1000);

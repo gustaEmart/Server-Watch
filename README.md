@@ -13,6 +13,15 @@ MVP local do ServerWatch para monitoramento de disponibilidade por ping ICMP, co
 npm start
 ```
 
+No primeiro start, se ainda nao existir usuario cadastrado, o sistema cria um administrador inicial:
+
+```text
+E-mail: admin@serverwatch.local
+Senha: admin123
+```
+
+Para trocar esses valores antes da primeira execucao, defina `SERVERWATCH_ADMIN_EMAIL` e `SERVERWATCH_ADMIN_PASSWORD`.
+
 Para requisitos de implantacao, ambiente recomendado, portas, firewall e proximos passos de producao, veja `IMPLEMENTACAO.md`.
 
 Para monitorar clientes em redes diferentes sem VPN, veja `docs/PROBE_COLLECTOR.md`.
@@ -98,6 +107,7 @@ Resposta esperada:
 - Monitoramento direto pelo ServerWatch central ou por Probe Collector instalado na rede do cliente
 - UI local para configurar o Probe Collector em `http://localhost:8777/setup`
 - Instalador Windows `.exe` com UI para o Probe Collector
+- Tela de login e cadastro de usuarios por administrador
 - Tolerancia a falhas consecutivas antes de marcar offline
 - Dashboard com filtros por status, ambiente e busca
 - Atualizacao em tempo real via WebSocket
