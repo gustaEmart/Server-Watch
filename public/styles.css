@@ -258,6 +258,12 @@ button {
   font-weight: 800;
 }
 
+.download-link {
+  display: inline-grid;
+  place-items: center;
+  text-decoration: none;
+}
+
 .primary-button {
   background: var(--accent);
   color: #ffffff;
@@ -961,6 +967,12 @@ textarea:focus {
   gap: 8px;
 }
 
+.download-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
 .install-command-header,
 .compact-title {
   display: flex;
@@ -1124,7 +1136,8 @@ label {
   }
 
   .topbar-actions,
-  .dialog-actions {
+  .dialog-actions,
+  .download-actions {
     width: 100%;
   }
 

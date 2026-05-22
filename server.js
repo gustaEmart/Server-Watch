@@ -11,6 +11,18 @@ const HOST = process.env.HOST || "0.0.0.0";
 const DATA_DIR = resolve(process.env.DATA_DIR || "data");
 const DATA_FILE = join(DATA_DIR, "serverwatch.json");
 const PUBLIC_DIR = resolve("public");
+const DOWNLOADS = {
+  "/downloads/probe/linux-installer": {
+    path: resolve("tools/probe/install-linux.sh"),
+    filename: "serverwatch-probe-install-linux.sh",
+    contentType: "text/x-shellscript; charset=utf-8"
+  },
+  "/downloads/probe/windows-installer": {
+    path: resolve("tools/probe/Install-ProbeCollector.ps1"),
+    filename: "Install-ServerWatchProbe.ps1",
+    contentType: "text/plain; charset=utf-8"
+  }
+};
 const CHECK_LOOP_MS = 1000;
 const MAX_HISTORY_PER_SERVER = 500;
 const CHECK_SOURCES = new Set(["serverwatch", "probe"]);
@@ -585,6 +597,25 @@ function notFound(res) {
   sendJson(res, 404, { error: "Recurso nao encontrado." });
 }
 
+async function serveDownload(req, res) {
+  const { pathname } = getRouteParts(req);
+  const download = DOWNLOADS[pathname];
+  if (!download) return notFound(res);
+
+  try {
+    const content = await readFile(download.path);
+    res.writeHead(200, {
+      "Content-Type": download.contentType,
+      "Content-Length": content.length,
+      "Content-Disposition": `attachment; filename="${download.filename}"`,
+      "Cache-Control": "no-store"
+    });
+    res.end(content);
+  } catch {
+    notFound(res);
+  }
+}
+
 function getRouteParts(req) {
   const url = new URL(req.url, `http://${req.headers.host}`);
   return {
@@ -915,6 +946,10 @@ function printStartup() {
 const server = createServer((req, res) => {
   if (req.url === "/health" || req.url?.startsWith("/api/")) {
     handleApi(req, res);
+    return;
+  }
+  if (req.url?.startsWith("/downloads/")) {
+    serveDownload(req, res);
     return;
   }
   serveStatic(req, res);
