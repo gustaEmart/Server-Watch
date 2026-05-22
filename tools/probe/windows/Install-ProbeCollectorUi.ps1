@@ -24,12 +24,27 @@ $installDir = Join-Path $env:ProgramData "ServerWatchProbe"
 $configPath = Join-Path $installDir "config.json"
 $taskName = "ServerWatch Probe Collector"
 
+function Get-DefaultProbeName {
+  try {
+    $hostName = [System.Net.Dns]::GetHostName()
+    if (-not [string]::IsNullOrWhiteSpace($hostName)) {
+      return $hostName.Trim()
+    }
+  } catch {
+  }
+  if (-not [string]::IsNullOrWhiteSpace($env:COMPUTERNAME)) {
+    return $env:COMPUTERNAME.Trim()
+  }
+  return "serverwatch-probe"
+}
+
 function Read-ExistingConfig {
+  $defaultName = Get-DefaultProbeName
   if (-not (Test-Path $configPath)) {
     return @{
       serverUrl = ""
-      probeId = ""
-      name = ""
+      probeId = $defaultName
+      name = $defaultName
       token = ""
       intervalSeconds = 10
       timeoutMs = 2500
@@ -49,8 +64,8 @@ function Read-ExistingConfig {
   } catch {
     return @{
       serverUrl = ""
-      probeId = ""
-      name = ""
+      probeId = $defaultName
+      name = $defaultName
       token = ""
       intervalSeconds = 10
       timeoutMs = 2500
@@ -58,7 +73,18 @@ function Read-ExistingConfig {
   }
 }
 
+function Set-InstallProgress($value, $message) {
+  if ($script:progressBar) {
+    $script:progressBar.Value = [Math]::Max($script:progressBar.Minimum, [Math]::Min($script:progressBar.Maximum, [int]$value))
+  }
+  if ($script:statusLabel) {
+    $script:statusLabel.Text = $message
+  }
+  [System.Windows.Forms.Application]::DoEvents()
+}
+
 function Get-NodeSource {
+  Set-InstallProgress 25 "Verificando runtime Node.js..."
   $bundled = Join-Path $sourceDir "node.exe"
   if (Test-Path $bundled) {
     return $bundled
@@ -70,6 +96,24 @@ function Get-NodeSource {
   }
 
   throw "Node.js nao foi encontrado. Gere o instalador com node.exe embutido ou instale Node.js 20+."
+}
+
+function Register-Probe($values) {
+  Set-InstallProgress 80 "Registrando probe no ServerWatch..."
+  $serverUrl = $values.serverUrl.TrimEnd("/")
+  $probeId = [System.Uri]::EscapeDataString($values.probeId.Trim())
+  $probeName = $(if ([string]::IsNullOrWhiteSpace($values.name)) { $values.probeId.Trim() } else { $values.name.Trim() })
+  $probeName = [System.Uri]::EscapeDataString($probeName)
+  $targetUrl = "$serverUrl/api/probe/targets?probeId=$probeId&name=$probeName&version=0.1.0-installer"
+  $headers = @{
+    Authorization = "Bearer $($values.token.Trim())"
+  }
+
+  try {
+    Invoke-RestMethod -Method Get -Uri $targetUrl -Headers $headers -TimeoutSec 20 | Out-Null
+  } catch {
+    throw "O probe foi instalado, mas nao conseguiu se registrar no ServerWatch. Verifique URL, token e acesso de rede. Detalhe: $($_.Exception.Message)"
+  }
 }
 
 function Validate-Config($values) {
@@ -93,14 +137,17 @@ function Validate-Config($values) {
 function Install-Probe($values) {
   Validate-Config $values
 
+  Set-InstallProgress 10 "Criando pasta de instalacao..."
   New-Item -ItemType Directory -Path $installDir -Force | Out-Null
 
+  Set-InstallProgress 18 "Copiando arquivos do collector..."
   Copy-Item -Path (Join-Path $sourceDir "collector.js") -Destination (Join-Path $installDir "collector.js") -Force
   if (Test-Path (Join-Path $sourceDir "setup-server.js")) {
     Copy-Item -Path (Join-Path $sourceDir "setup-server.js") -Destination (Join-Path $installDir "setup-server.js") -Force
   }
 
   $nodeSource = Get-NodeSource
+  Set-InstallProgress 38 "Copiando runtime Node.js..."
   $nodeTarget = Join-Path $installDir "node.exe"
   if ((Split-Path -Leaf $nodeSource) -eq "node.exe") {
     Copy-Item -Path $nodeSource -Destination $nodeTarget -Force
@@ -116,8 +163,10 @@ function Install-Probe($values) {
     intervalSeconds = $values.intervalSeconds
     timeoutMs = $values.timeoutMs
   }
+  Set-InstallProgress 52 "Salvando configuracao..."
   $config | ConvertTo-Json | Set-Content -Path $configPath -Encoding UTF8
 
+  Set-InstallProgress 62 "Configurando tarefa agendada..."
   $action = New-ScheduledTaskAction `
     -Execute $nodeTarget `
     -Argument "`"$installDir\collector.js`" --config `"$configPath`"" `
@@ -138,7 +187,10 @@ function Install-Probe($values) {
     -Settings $settings `
     -Force | Out-Null
 
+  Set-InstallProgress 74 "Iniciando Probe Collector..."
   Start-ScheduledTask -TaskName $taskName
+  Register-Probe $values
+  Set-InstallProgress 100 "Instalacao concluida. O probe ja foi registrado no ServerWatch."
 }
 
 $existing = Read-ExistingConfig
@@ -285,13 +337,23 @@ $intervalBox = Add-Number 22 231 120 $existing.intervalSeconds 3 3600
 Add-Label "Timeout em ms" 172 208 | Out-Null
 $timeoutBox = Add-Number 172 231 120 $existing.timeoutMs 500 60000
 
+$progressBar = New-Object System.Windows.Forms.ProgressBar
+$progressBar.Location = New-Object System.Drawing.Point(22, 272)
+$progressBar.Size = New-Object System.Drawing.Size(552, 18)
+$progressBar.Minimum = 0
+$progressBar.Maximum = 100
+$progressBar.Value = 0
+$card.Controls.Add($progressBar)
+$script:progressBar = $progressBar
+
 $status = New-Object System.Windows.Forms.Label
-$status.Location = New-Object System.Drawing.Point(22, 276)
-$status.Size = New-Object System.Drawing.Size(552, 32)
+$status.Location = New-Object System.Drawing.Point(22, 300)
+$status.Size = New-Object System.Drawing.Size(552, 18)
 $status.ForeColor = $colorMuted
 $status.BackColor = $colorSurface
 $status.Text = "O probe sera instalado em C:\ProgramData\ServerWatchProbe."
 $card.Controls.Add($status)
+$script:statusLabel = $status
 
 $installButton = New-Object System.Windows.Forms.Button
 $installButton.Text = "Instalar e iniciar"
@@ -317,7 +379,8 @@ $form.Controls.Add($cancelButton)
 
 $installButton.Add_Click({
   $installButton.Enabled = $false
-  $status.Text = "Instalando..."
+  $cancelButton.Enabled = $false
+  Set-InstallProgress 0 "Instalando..."
   try {
     $values = @{
       serverUrl = $serverUrlBox.Text
@@ -328,16 +391,15 @@ $installButton.Add_Click({
       timeoutMs = [int]$timeoutBox.Value
     }
     Install-Probe $values
-    $status.Text = "Instalacao concluida. A tarefa agendada ja foi iniciada."
     [System.Windows.Forms.MessageBox]::Show(
-      "ServerWatch Probe Collector instalado e iniciado com sucesso.",
+      "ServerWatch Probe Collector instalado, iniciado e registrado com sucesso.",
       "ServerWatch Probe Collector",
       [System.Windows.Forms.MessageBoxButtons]::OK,
       [System.Windows.Forms.MessageBoxIcon]::Information
     ) | Out-Null
     $form.Close()
   } catch {
-    $status.Text = $_.Exception.Message
+    Set-InstallProgress 0 $_.Exception.Message
     [System.Windows.Forms.MessageBox]::Show(
       $_.Exception.Message,
       "Erro na instalacao",
@@ -346,6 +408,7 @@ $installButton.Add_Click({
     ) | Out-Null
   } finally {
     $installButton.Enabled = $true
+    $cancelButton.Enabled = $true
   }
 })
 
