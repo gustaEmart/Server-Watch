@@ -34,6 +34,32 @@ function buildPingArgs(hostname, timeoutMs) {
   return ["-c", "1", "-W", String(Math.max(1, Math.ceil(timeoutMs / 1000))), hostname];
 }
 
+function pingCommand() {
+  if (os.platform() === "win32") {
+    return `${process.env.SystemRoot || "C:\\Windows"}\\System32\\ping.exe`;
+  }
+  return "ping";
+}
+
+function localAddresses() {
+  return Object.values(os.networkInterfaces())
+    .flatMap((items) => items || [])
+    .filter((item) => item.family === "IPv4" && !item.internal && !item.address.startsWith("169.254."))
+    .map((item) => item.address);
+}
+
+function probeMetadata(config) {
+  const addresses = localAddresses();
+  return {
+    probeId: config.probeId,
+    name: config.name || config.probeId,
+    version: VERSION,
+    hostName: os.hostname(),
+    primaryAddress: addresses[0] || "",
+    addresses
+  };
+}
+
 function parseLatency(output) {
   const match = output.match(/(?:time|tempo)[=<]\s*([\d.,]+)\s*ms/i);
   return match ? Math.round(Number(match[1].replace(",", "."))) : null;
@@ -65,7 +91,7 @@ function hasReply(output, latencyMs) {
 function pingHost(hostname, timeoutMs) {
   return new Promise((resolve) => {
     const startedAt = Date.now();
-    const child = spawn("ping", buildPingArgs(hostname, timeoutMs), { shell: false });
+    const child = spawn(pingCommand(), buildPingArgs(hostname, timeoutMs), { shell: false });
     let output = "";
     let finished = false;
     const timeout = setTimeout(() => {
@@ -116,22 +142,25 @@ async function requestJson(config, path, options = {}) {
 }
 
 async function getTargets(config) {
+  const metadata = probeMetadata(config);
   const params = new URLSearchParams({
-    probeId: config.probeId,
-    name: config.name || config.probeId,
-    version: VERSION
+    probeId: metadata.probeId,
+    name: metadata.name,
+    version: metadata.version,
+    hostName: metadata.hostName,
+    primaryAddress: metadata.primaryAddress,
+    addresses: JSON.stringify(metadata.addresses)
   });
   return requestJson(config, `/api/probe/targets?${params.toString()}`);
 }
 
 async function sendResults(config, results) {
   if (!results.length) return;
+  const metadata = probeMetadata(config);
   await requestJson(config, "/api/probe/results", {
     method: "POST",
     body: JSON.stringify({
-      probeId: config.probeId,
-      name: config.name || config.probeId,
-      version: VERSION,
+      ...metadata,
       results
     })
   });

@@ -642,6 +642,9 @@ function publicProbe(probe) {
     id: probe.id,
     name: probe.name || probe.id,
     version: probe.version || null,
+    hostName: probe.hostName || null,
+    primaryAddress: probe.primaryAddress || null,
+    addresses: Array.isArray(probe.addresses) ? probe.addresses : [],
     lastSeenAt: probe.lastSeenAt || null,
     lastAddress: probe.lastAddress || null,
     targetCount: listedServers().filter((server) => server.checkSource === "probe" && server.probeId === probe.id).length
@@ -655,14 +658,35 @@ function publicSettings(currentUser = null) {
   };
 }
 
-function upsertProbe({ probeId, name, version, remoteAddress }) {
+function normalizeProbeAddresses(value) {
+  if (Array.isArray(value)) {
+    return value.map((address) => String(address).trim()).filter(Boolean);
+  }
+  if (!value) return [];
+  try {
+    const parsed = JSON.parse(String(value));
+    if (Array.isArray(parsed)) return parsed.map((address) => String(address).trim()).filter(Boolean);
+  } catch {
+  }
+  return String(value)
+    .split(",")
+    .map((address) => address.trim())
+    .filter(Boolean);
+}
+
+function upsertProbe({ probeId, name, version, hostName, primaryAddress, addresses, remoteAddress }) {
   const id = String(probeId || "").trim();
   if (!id) return null;
   const existing = state.probes.find((probe) => probe.id === id);
+  const normalizedAddresses = normalizeProbeAddresses(addresses);
+  const normalizedPrimaryAddress = String(primaryAddress || normalizedAddresses[0] || existing?.primaryAddress || "").trim() || null;
   const payload = {
     id,
     name: String(name || existing?.name || id).trim(),
     version: String(version || existing?.version || "").trim() || null,
+    hostName: String(hostName || existing?.hostName || "").trim() || null,
+    primaryAddress: normalizedPrimaryAddress,
+    addresses: normalizedAddresses.length ? normalizedAddresses : Array.isArray(existing?.addresses) ? existing.addresses : [],
     lastSeenAt: nowIso(),
     lastAddress: remoteAddress || existing?.lastAddress || null
   };
@@ -670,6 +694,9 @@ function upsertProbe({ probeId, name, version, remoteAddress }) {
     const changed =
       existing.name !== payload.name ||
       existing.version !== payload.version ||
+      existing.hostName !== payload.hostName ||
+      existing.primaryAddress !== payload.primaryAddress ||
+      JSON.stringify(existing.addresses || []) !== JSON.stringify(payload.addresses || []) ||
       existing.lastAddress !== payload.lastAddress;
     Object.assign(existing, payload);
     return { probe: existing, changed };
@@ -883,6 +910,9 @@ async function handleApi(req, res) {
           probeId,
           name: url.searchParams.get("name") || probeId,
           version: url.searchParams.get("version") || null,
+          hostName: url.searchParams.get("hostName") || null,
+          primaryAddress: url.searchParams.get("primaryAddress") || null,
+          addresses: url.searchParams.get("addresses") || [],
           remoteAddress: req.socket.remoteAddress
         });
         if (!registered) return sendJson(res, 400, { error: "Informe probeId." });
@@ -900,6 +930,9 @@ async function handleApi(req, res) {
           probeId: payload.probeId,
           name: payload.name || payload.probeId,
           version: payload.version || null,
+          hostName: payload.hostName || null,
+          primaryAddress: payload.primaryAddress || null,
+          addresses: payload.addresses || [],
           remoteAddress: req.socket.remoteAddress
         });
         if (!registered) return sendJson(res, 400, { error: "Informe probeId." });

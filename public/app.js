@@ -365,16 +365,39 @@ function renderProbeOptions() {
   els.serverProbeId.disabled = false;
   els.serverProbeId.innerHTML = state.probes
     .map((probe) => {
-      const label = `${probe.name || probe.id} (${probe.id})`;
+      const address = probe.primaryAddress || probe.addresses?.[0] || probe.lastAddress || "";
+      const label = `${probe.name || probe.id} (${address || probe.id})`;
       return `<option value="${escapeHtml(probe.id)}">${escapeHtml(label)}</option>`;
     })
     .join("");
   els.serverProbeId.value = state.probes.some((probe) => probe.id === current) ? current : state.probes[0].id;
   if (els.serverProbeHint) {
     const selected = state.probes.find((probe) => probe.id === els.serverProbeId.value);
+    const selectedAddress = selected?.primaryAddress || selected?.addresses?.[0] || selected?.lastAddress || "";
     els.serverProbeHint.textContent = selected?.lastSeenAt
-      ? `Ultimo contato: ${formatDate(selected.lastSeenAt)}.`
+      ? `${selectedAddress ? `IP detectado: ${selectedAddress}. ` : ""}Ultimo contato: ${formatDate(selected.lastSeenAt)}.`
       : "Probe pronto para receber alvos.";
+  }
+}
+
+function selectedProbe() {
+  return state.probes.find((probe) => probe.id === els.serverProbeId?.value) || null;
+}
+
+function probeAddress(probe) {
+  return probe?.primaryAddress || probe?.addresses?.[0] || probe?.lastAddress || "";
+}
+
+function applySelectedProbeDefaults({ force = false } = {}) {
+  if (els.serverCheckSource.value !== "probe") return;
+  const probe = selectedProbe();
+  if (!probe) return;
+  const address = probeAddress(probe);
+  if (address && (force || !els.serverHostname.value.trim())) {
+    els.serverHostname.value = address;
+  }
+  if ((force || !els.serverName.value.trim()) && probe.name) {
+    els.serverName.value = probe.name.toUpperCase();
   }
 }
 
@@ -812,7 +835,7 @@ function renderProbes() {
             <article class="probe-card">
               <div>
                 <strong>${escapeHtml(probe.name || probe.id)}</strong>
-                <span>${escapeHtml(probe.id)} · ${probe.targetCount || 0} ${probe.targetCount === 1 ? "alvo" : "alvos"}</span>
+                <span>${escapeHtml(probe.id)} · ${escapeHtml(probe.primaryAddress || probe.addresses?.[0] || probe.lastAddress || "sem IP")} · ${probe.targetCount || 0} ${probe.targetCount === 1 ? "alvo" : "alvos"}</span>
               </div>
               <div>
                 <strong>${formatDate(probe.lastSeenAt)}</strong>
@@ -1024,6 +1047,7 @@ function toggleProbeOptions() {
   els.probeOptions.hidden = els.serverCheckSource.value !== "probe";
   if (els.serverCheckSource.value === "probe") {
     renderProbeOptions();
+    applySelectedProbeDefaults();
   }
 }
 
@@ -1098,6 +1122,7 @@ function bindEvents() {
   document.querySelector("#closeDialog").addEventListener("click", closeDialog);
   document.querySelector("#cancelForm").addEventListener("click", closeDialog);
   els.serverCheckSource.addEventListener("change", toggleProbeOptions);
+  els.serverProbeId.addEventListener("change", () => applySelectedProbeDefaults({ force: true }));
   els.serverForm.addEventListener("submit", submitServer);
 
   els.toggleProbeToken?.addEventListener("click", () => {
