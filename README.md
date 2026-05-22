@@ -15,7 +15,7 @@ npm start
 
 Para requisitos de implantacao, ambiente recomendado, portas, firewall e proximos passos de producao, veja `IMPLEMENTACAO.md`.
 
-Para preparar servidores Linux ou Windows para monitoramento futuro por SNMP, veja `docs/SNMP_AGENT.md`. Para os perfis de metricas SNMP planejados, veja `docs/SNMP_METRICS.md`.
+Para monitorar clientes em redes diferentes sem VPN, veja `docs/PROBE_COLLECTOR.md`.
 
 A aplicacao sobe em `0.0.0.0:3000`, entao pode ser acessada pela propria maquina em:
 
@@ -49,6 +49,29 @@ SERVERWATCH_PORT=3000
 
 O Docker Compose cria um volume chamado `serverwatch_data` para persistir os dados.
 
+## Como rodar no Linux com systemd
+
+Em Ubuntu Server ou Debian com Node.js 20+ instalado:
+
+```bash
+sudo bash tools/serverwatch/install-linux-service.sh
+```
+
+Por padrao, o instalador copia a aplicacao para `/opt/serverwatch`, guarda dados em `/var/lib/serverwatch` e cria o servico `serverwatch`.
+
+Variaveis aceitas pelo instalador:
+
+```bash
+SERVERWATCH_PORT=3000 SERVERWATCH_DATA_DIR=/var/lib/serverwatch sudo -E bash tools/serverwatch/install-linux-service.sh
+```
+
+Comandos uteis:
+
+```bash
+sudo systemctl status serverwatch
+sudo journalctl -u serverwatch -f
+```
+
 ## Health check
 
 ```text
@@ -72,12 +95,15 @@ Resposta esperada:
 - Dashboard geral com servidores agrupados por empresa e grafico de rosca por status
 - Atalhos laterais para visualizar todos os servidores ou filtrar por empresa
 - Monitoramento automatico via ping com intervalo por servidor
+- Monitoramento direto pelo ServerWatch central ou por Probe Collector instalado na rede do cliente
+- UI local para configurar o Probe Collector em `http://localhost:8777/setup`
+- Instalador Windows `.exe` com UI para o Probe Collector
 - Tolerancia a falhas consecutivas antes de marcar offline
 - Dashboard com filtros por status, ambiente e busca
 - Atualizacao em tempo real via WebSocket
 - Historico de transicoes online/offline
 - Alertas internos e notificacoes do navegador para queda abrupta
-- Persistencia local em `data/serverwatch.json`
+- Persistencia local em `data/serverwatch.json` ou no caminho definido por `DATA_DIR`
 - Dockerfile e Docker Compose para execucao em container
 
 ## Observacoes

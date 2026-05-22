@@ -3,3 +3,8 @@ logs/
 node_modules/
 npm-debug.log*
 .DS_Store
+dist/
+*.exe
+tools/probe/windows/dotnet-installer/assets/node.exe
+.codex_ssh/
+.serverwatch.pid

@@ -493,6 +493,25 @@ textarea {
   outline: none;
 }
 
+fieldset {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px;
+  margin: 0;
+}
+
+fieldset[hidden] {
+  display: none;
+}
+
+legend {
+  padding: 0 6px;
+  color: var(--accent-strong);
+  font-size: 0.78rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
 input:focus,
 select:focus,
 textarea:focus {
@@ -818,14 +837,16 @@ textarea:focus {
 .timeline,
 .alerts-list,
 .groups-list,
-.mini-history {
+.mini-history,
+.probes-list {
   display: grid;
   gap: 10px;
 }
 
 .timeline-item,
 .alert-card,
-.group-card {
+.group-card,
+.probe-card {
   border: 1px solid var(--line);
   border-radius: 8px;
   padding: 12px;
@@ -899,6 +920,82 @@ textarea:focus {
   padding: 5px 8px;
   font-size: 0.78rem;
   font-weight: 800;
+}
+
+.probe-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.05fr) minmax(280px, 0.95fr);
+  gap: 14px;
+}
+
+.probe-token-panel,
+.probe-list-panel {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 14px;
+  background: #f8fbfb;
+}
+
+.probe-token-panel {
+  display: grid;
+  gap: 14px;
+}
+
+.probe-token-panel h3,
+.probe-list-panel h3 {
+  margin: 0;
+}
+
+.token-control {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 8px;
+}
+
+.token-control input {
+  font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+}
+
+.install-command {
+  display: grid;
+  gap: 8px;
+}
+
+.install-command-header,
+.compact-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.install-command code {
+  display: block;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px;
+  background: #142022;
+  color: #e5f4f2;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.probe-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+}
+
+.probe-card strong,
+.probe-card span {
+  display: block;
+}
+
+.probe-card span {
+  color: var(--muted);
+  font-size: 0.84rem;
+  margin-top: 3px;
 }
 
 .server-dialog {
@@ -1003,7 +1100,8 @@ label {
   }
 
   .metrics-grid,
-  .server-layout {
+  .server-layout,
+  .probe-grid {
     grid-template-columns: 1fr 1fr;
   }
 
@@ -1039,7 +1137,10 @@ label {
   .metrics-grid,
   .server-layout,
   .form-grid,
-  .detail-grid {
+  .detail-grid,
+  .probe-grid,
+  .token-control,
+  .probe-card {
     grid-template-columns: 1fr;
   }
 

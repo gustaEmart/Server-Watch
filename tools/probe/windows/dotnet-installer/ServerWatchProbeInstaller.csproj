@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk.WindowsDesktop">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <AssemblyName>ServerWatchProbeSetup</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="assets\collector.js" LogicalName="collector.js" />
+    <EmbeddedResource Include="assets\setup-server.js" LogicalName="setup-server.js" />
+    <EmbeddedResource Include="assets\node.exe" LogicalName="node.exe" />
+  </ItemGroup>
+</Project>

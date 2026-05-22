@@ -31,47 +31,37 @@ UI sugerida:
 
 Essa funcionalidade deve ser implementada depois do MVP basico de CRUD, ping, historico e alertas estar estavel.
 
-## Monitoramento SNMP
+## Probe Collector para clientes externos
 
-Adicionar suporte a SNMP como metodo complementar ao ping.
+Adicionar suporte a um coletor local por cliente, evitando VPN e portas de entrada nas redes dos clientes.
 
 Objetivo:
 
-- Permitir que cada servidor use `ping`, `snmp` ou ambos como metodo de verificacao.
-- Usar ping para confirmar disponibilidade basica de rede via ICMP.
-- Usar SNMP para confirmar que o agente SNMP do servidor, equipamento ou dispositivo esta respondendo.
-- Permitir substituir o ping por SNMP em ambientes onde ICMP esteja bloqueado ou onde a disponibilidade desejada seja baseada no agente SNMP.
-- Manter tolerancia a falhas consecutivas antes de marcar offline, como ja acontece no monitoramento por ping.
+- Instalar um Probe Collector dentro da rede do cliente.
+- Fazer checagens locais a partir do probe, inicialmente por ping.
+- Enviar resultados para o ServerWatch central via HTTP/HTTPS de saida.
+- Permitir que cada servidor seja monitorado pelo ServerWatch central ou por um probe especifico.
+- Manter tolerancia a falhas consecutivas antes de marcar offline.
+- Evitar exposicao de ICMP, SNMP ou portas internas na internet.
 
-Implementacao inicial sugerida:
+Implementacao inicial:
 
-- Consultar o OID padrao `sysUpTime.0` (`1.3.6.1.2.1.1.3.0`).
-- Considerar o item online quando a consulta SNMP responder com sucesso.
-- Considerar o item offline quando a consulta SNMP falhar por timeout ou erro repetido.
-- Comecar com SNMP v2c para simplificar o MVP.
-- Preparar o modelo para SNMP v3 em uma etapa posterior.
-
-Campos sugeridos:
-
-- `check_method`: `ping`, `snmp`, `ping_snmp`
-- `snmp_version`: `2c`, `3`
-- `snmp_host`: IP ou hostname, podendo reutilizar o hostname principal.
-- `snmp_port`: porta UDP, normalmente `161`.
-- `snmp_community`: community para SNMP v2c.
-- `snmp_timeout_ms`: tempo limite da consulta.
-- `snmp_oid`: OID consultado, com `1.3.6.1.2.1.1.3.0` como padrao.
-- `last_snmp_uptime`: ultimo uptime retornado pelo agente.
-- `last_snmp_error`: ultimo erro de consulta SNMP.
+- Endpoint para o probe buscar alvos atribuidos ao seu `probe_id`.
+- Endpoint para o probe enviar resultados de checagem.
+- Autenticacao por token compartilhado.
+- Probe em Node.js, instalavel em Linux e Windows.
+- UI local do probe em `http://localhost:8777/setup` para facilitar a configuracao.
+- Instalador Windows `.exe` com UI para configurar, instalar e iniciar o probe.
+- Cadastro de servidor com origem `serverwatch` ou `probe`.
 
 Evolucoes futuras:
 
-- Suporte a SNMP v3 com usuario, autenticacao e privacidade/criptografia.
-- Templates por tipo de equipamento ou fabricante.
-- Metricas adicionais via SNMP, como CPU, memoria, disco, interfaces e temperatura.
-- Perfis de metricas versionados para reaproveitar OIDs padrao entre Linux, Windows e equipamentos de rede.
-- Historico de metricas numericas separado do historico de transicoes online/offline.
-- Alertas por thresholds de metricas, como CPU alta, disco cheio, interface down ou erros de interface.
-- Traps SNMP em uma fase mais avancada, usando UDP `162`.
+- SNMP dentro da LAN do cliente, coletado pelo probe.
+- Coleta de CPU, memoria, disco, interfaces e inventario.
+- Fila local no probe para reenviar resultados quando a internet cair.
+- Atualizacao automatica do probe.
+- Token individual por cliente/probe.
+- Tela de gestao de probes com ultimo contato, versao e quantidade de alvos.
 
 ## Identidade visual
 
@@ -108,7 +98,11 @@ Modelo inicial sugerido:
 
 Recomendacao tecnica:
 
-- Migrar a persistencia atual em JSON para SQLite no proximo passo simples, ou PostgreSQL se ja for preparar producao.
+- Banco escolhido para a persistencia central: MongoDB.
+- Migrar a persistencia atual em JSON para MongoDB de forma gradual, mantendo uma camada de storage para reduzir risco durante a transicao.
+- Usar `MONGODB_URI` e `MONGODB_DB` por variaveis de ambiente.
+- Manter o MongoDB acessivel apenas ao backend do ServerWatch; probes e clientes continuam comunicando somente via HTTP/HTTPS.
+- Separar historico de checagens em uma colecao propria, com indices por servidor/probe/data e politica futura de retencao.
 - Autenticacao com sessao ou JWT.
 - Senhas com bcrypt/argon2.
 
@@ -147,7 +141,7 @@ Objetivo:
 Campos sugeridos para CSV de servidores:
 
 ```text
-name,hostname,company,environment,location,tags,check_method,check_interval,failure_threshold,is_active,snmp_version,snmp_port,snmp_community,snmp_oid
+name,hostname,company,environment,location,tags,check_source,probe_id,check_interval,failure_threshold,is_active
 ```
 
 Cuidados:

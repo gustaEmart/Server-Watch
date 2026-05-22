@@ -1,0 +1,50 @@
+param(
+  [string]$OutputDir = "dist\probe-installer-dotnet",
+  [switch]$FrameworkDependent
+)
+
+$ErrorActionPreference = "Stop"
+
+$repoRoot = Resolve-Path (Join-Path $PSScriptRoot "..\..\..")
+$projectDir = Join-Path $PSScriptRoot "dotnet-installer"
+$assetsDir = Join-Path $projectDir "assets"
+$publishDir = Join-Path $repoRoot $OutputDir
+
+$dotnet = Get-Command dotnet.exe -ErrorAction SilentlyContinue
+if (-not $dotnet) {
+  throw "dotnet.exe nao foi encontrado."
+}
+
+$node = Get-Command node.exe -ErrorAction SilentlyContinue
+if (-not $node) {
+  throw "node.exe nao foi encontrado neste computador."
+}
+
+New-Item -ItemType Directory -Path $assetsDir -Force | Out-Null
+New-Item -ItemType Directory -Path $publishDir -Force | Out-Null
+
+Copy-Item -Path (Join-Path $repoRoot "probe\collector.js") -Destination (Join-Path $assetsDir "collector.js") -Force
+Copy-Item -Path (Join-Path $repoRoot "probe\setup-server.js") -Destination (Join-Path $assetsDir "setup-server.js") -Force
+Copy-Item -Path $node.Source -Destination (Join-Path $assetsDir "node.exe") -Force
+
+$project = Join-Path $projectDir "ServerWatchProbeInstaller.csproj"
+$selfContained = if ($FrameworkDependent) { "false" } else { "true" }
+
+& $dotnet.Source publish $project `
+  -c Release `
+  -r win-x64 `
+  --self-contained $selfContained `
+  -p:PublishSingleFile=true `
+  -p:EnableCompressionInSingleFile=true `
+  -o $publishDir
+
+if ($LASTEXITCODE -ne 0) {
+  throw "Falha ao publicar o instalador .NET. Codigo: $LASTEXITCODE"
+}
+
+$exePath = Join-Path $publishDir "ServerWatchProbeSetup.exe"
+if (-not (Test-Path $exePath)) {
+  throw "O instalador nao foi gerado em $exePath."
+}
+
+Write-Host "Installer generated at $exePath"

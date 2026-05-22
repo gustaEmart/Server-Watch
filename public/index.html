@@ -20,6 +20,7 @@
         <nav class="nav-tabs" aria-label="Navegacao principal">
           <button class="nav-tab active" data-view="dashboard">Dashboard</button>
           <button class="nav-tab" data-view="groups">Empresas</button>
+          <button class="nav-tab" data-view="probes">Probes</button>
           <button class="nav-tab" data-view="history">Historico</button>
           <button class="nav-tab" data-view="alerts">Alertas</button>
         </nav>
@@ -141,6 +142,46 @@
           </div>
         </section>
 
+        <section class="view" id="probesView">
+          <div class="wide-panel">
+            <div class="panel-title">
+              <div>
+                <h2>Probe Collector</h2>
+                <span id="probeCount">0 probes conectados</span>
+              </div>
+            </div>
+
+            <div class="probe-grid">
+              <section class="probe-token-panel" aria-label="Token de instalacao do probe">
+                <div>
+                  <p class="eyebrow">Instalacao</p>
+                  <h3>Token do Probe Collector</h3>
+                </div>
+                <div class="token-control">
+                  <input id="probeTokenValue" type="password" readonly value="" aria-label="Token do probe" />
+                  <button class="ghost-button compact" id="toggleProbeToken" type="button">Mostrar</button>
+                  <button class="primary-button compact" id="copyProbeToken" type="button">Copiar</button>
+                </div>
+                <div class="install-command">
+                  <div class="install-command-header">
+                    <strong>Comando Linux</strong>
+                    <button class="ghost-button compact" id="copyProbeInstallCommand" type="button">Copiar comando</button>
+                  </div>
+                  <code id="probeInstallCommand"></code>
+                </div>
+              </section>
+
+              <section class="probe-list-panel">
+                <div class="panel-title compact-title">
+                  <h3>Probes recebidos</h3>
+                  <span>Ultimo contato</span>
+                </div>
+                <div class="probes-list" id="probesList"></div>
+              </section>
+            </div>
+          </div>
+        </section>
+
         <section class="view" id="historyView">
           <div class="wide-panel">
             <div class="panel-title">
@@ -167,7 +208,7 @@
       <form method="dialog" id="serverForm">
         <div class="dialog-header">
           <div>
-            <p class="eyebrow">Monitoramento ICMP</p>
+            <p class="eyebrow">Monitoramento</p>
             <h2 id="dialogTitle">Adicionar servidor</h2>
           </div>
           <button class="icon-button" value="cancel" type="button" id="closeDialog" title="Fechar">x</button>
@@ -192,6 +233,13 @@
             </select>
           </label>
           <label>
+            Origem
+            <select id="serverCheckSource">
+              <option value="serverwatch">ServerWatch central</option>
+              <option value="probe">Probe local do cliente</option>
+            </select>
+          </label>
+          <label>
             Empresa / grupo
             <select id="serverGroup">
               <option value="">Sem empresa</option>
@@ -210,6 +258,14 @@
             <input id="serverThreshold" type="number" min="1" max="10" value="2" />
           </label>
         </div>
+
+        <fieldset id="probeOptions">
+          <legend>Probe collector</legend>
+          <label>
+            ID do probe
+            <input id="serverProbeId" placeholder="cliente-acme-sp" />
+          </label>
+        </fieldset>
 
         <label>
           Tags
