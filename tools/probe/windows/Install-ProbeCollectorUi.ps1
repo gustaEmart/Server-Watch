@@ -107,6 +107,7 @@ function Register-Probe($values) {
   $targetUrl = "$serverUrl/api/probe/targets?probeId=$probeId&name=$probeName&version=0.1.0-installer"
   $headers = @{
     Authorization = "Bearer $($values.token.Trim())"
+    "X-ServerWatch-Probe-Token" = $values.token.Trim()
   }
 
   try {

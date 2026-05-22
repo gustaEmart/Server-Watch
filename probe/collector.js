@@ -106,6 +106,7 @@ async function requestJson(config, path, options = {}) {
     headers: {
       "Content-Type": "application/json",
       Authorization: `Bearer ${config.token}`,
+      "X-ServerWatch-Probe-Token": config.token,
       ...(options.headers || {})
     }
   });

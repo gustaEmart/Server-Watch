@@ -633,7 +633,8 @@ function getProbeToken() {
 function authorizeProbe(req) {
   const header = String(req.headers.authorization || "");
   const token = header.startsWith("Bearer ") ? header.slice(7).trim() : "";
-  return token && token === getProbeToken();
+  const probeTokenHeader = String(req.headers["x-serverwatch-probe-token"] || "").trim();
+  return (token && token === getProbeToken()) || (probeTokenHeader && probeTokenHeader === getProbeToken());
 }
 
 function publicProbe(probe) {
