@@ -93,6 +93,7 @@ const els = {
   serverThreshold: document.querySelector("#serverThreshold"),
   probeOptions: document.querySelector("#probeOptions"),
   serverProbeId: document.querySelector("#serverProbeId"),
+  serverProbeHint: document.querySelector("#serverProbeHint"),
   serverTags: document.querySelector("#serverTags"),
   serverDescription: document.querySelector("#serverDescription")
 };
@@ -240,6 +241,7 @@ function applySnapshot(payload) {
     state.selectedServerId = state.servers[0].id;
   }
   renderGroupOptions();
+  renderProbeOptions();
   render();
 }
 
@@ -346,6 +348,34 @@ function renderGroupOptions() {
     }
   }
   renderCompanyNav();
+}
+
+function renderProbeOptions() {
+  if (!els.serverProbeId) return;
+  const current = els.serverProbeId.value;
+  if (!state.probes.length) {
+    els.serverProbeId.innerHTML = `<option value="">Nenhum probe instalado encontrado</option>`;
+    els.serverProbeId.disabled = true;
+    if (els.serverProbeHint) {
+      els.serverProbeHint.textContent = "Instale o Probe Collector primeiro. Assim que ele se conectar, aparecera aqui.";
+    }
+    return;
+  }
+
+  els.serverProbeId.disabled = false;
+  els.serverProbeId.innerHTML = state.probes
+    .map((probe) => {
+      const label = `${probe.name || probe.id} (${probe.id})`;
+      return `<option value="${escapeHtml(probe.id)}">${escapeHtml(label)}</option>`;
+    })
+    .join("");
+  els.serverProbeId.value = state.probes.some((probe) => probe.id === current) ? current : state.probes[0].id;
+  if (els.serverProbeHint) {
+    const selected = state.probes.find((probe) => probe.id === els.serverProbeId.value);
+    els.serverProbeHint.textContent = selected?.lastSeenAt
+      ? `Ultimo contato: ${formatDate(selected.lastSeenAt)}.`
+      : "Probe pronto para receber alvos.";
+  }
 }
 
 function groupFilterMatches(server) {
@@ -580,13 +610,20 @@ function renderDetail() {
       </div>
     `;
   const checkButton = server.isActive
-    ? `<button class="ghost-button compact" type="button" data-action="check" data-id="${server.id}" ${server.checkSource === "probe" ? "disabled" : ""}>Checar agora</button>`
+    ? `<button class="ghost-button compact" type="button" data-action="check" data-id="${server.id}">${
+        server.checkSource === "probe" ? "Solicitar checagem" : "Checar agora"
+      }</button>`
     : "";
   const probeStats =
     server.checkSource === "probe"
       ? `
         <div class="detail-stat"><span>Probe</span><strong>${escapeHtml(server.probeId || "-")}</strong></div>
         <div class="detail-stat"><span>Ultimo envio do probe</span><strong>${formatDate(server.lastProbeSeenAt)}</strong></div>
+        ${
+          server.probeCheckRequestedAt
+            ? `<div class="detail-stat"><span>Checagem solicitada</span><strong>${formatDate(server.probeCheckRequestedAt)}</strong></div>`
+            : ""
+        }
       `
       : "";
 
@@ -845,6 +882,7 @@ function showIncidentNotification(event) {
 function openDialog(server = null) {
   els.serverForm.reset();
   renderGroupOptions();
+  renderProbeOptions();
   els.serverId.value = server?.id || "";
   els.dialogTitle.textContent = server ? "Editar servidor" : "Adicionar servidor";
   els.serverName.value = server?.name || "";
@@ -855,7 +893,9 @@ function openDialog(server = null) {
   els.serverLocation.value = server?.location || "";
   els.serverInterval.value = server?.checkInterval || 10;
   els.serverThreshold.value = server?.failureThreshold || 2;
-  els.serverProbeId.value = server?.probeId || "";
+  if (server?.probeId && state.probes.some((probe) => probe.id === server.probeId)) {
+    els.serverProbeId.value = server.probeId;
+  }
   els.serverTags.value = (server?.tags || []).join(", ");
   els.serverDescription.value = server?.description || "";
   toggleProbeOptions();
@@ -938,6 +978,10 @@ async function submitUser(event) {
 async function submitServer(event) {
   event.preventDefault();
   const id = els.serverId.value;
+  if (els.serverCheckSource.value === "probe" && !els.serverProbeId.value) {
+    showToast("Probe obrigatorio", "Instale e selecione um Probe Collector antes de salvar este servidor.");
+    return;
+  }
   const payload = {
     name: els.serverName.value,
     hostname: els.serverHostname.value,
@@ -951,14 +995,18 @@ async function submitServer(event) {
     tags: els.serverTags.value,
     description: els.serverDescription.value
   };
-  const saved = id
-    ? await api(`/api/servers/${id}`, { method: "PUT", body: JSON.stringify(payload) })
-    : await api("/api/servers", { method: "POST", body: JSON.stringify(payload) });
-  state.selectedServerId = saved.id;
-  closeDialog();
-  showToast("Servidor salvo", `${saved.name} entrou no monitoramento.`);
-  const snap = await api("/api/snapshot");
-  applySnapshot(snap);
+  try {
+    const saved = id
+      ? await api(`/api/servers/${id}`, { method: "PUT", body: JSON.stringify(payload) })
+      : await api("/api/servers", { method: "POST", body: JSON.stringify(payload) });
+    state.selectedServerId = saved.id;
+    closeDialog();
+    showToast("Servidor salvo", `${saved.name} entrou no monitoramento.`);
+    const snap = await api("/api/snapshot");
+    applySnapshot(snap);
+  } catch (error) {
+    showToast("Falha ao salvar servidor", error.message);
+  }
 }
 
 async function loadInitialData() {
@@ -974,6 +1022,9 @@ async function copyText(value, successMessage) {
 
 function toggleProbeOptions() {
   els.probeOptions.hidden = els.serverCheckSource.value !== "probe";
+  if (els.serverCheckSource.value === "probe") {
+    renderProbeOptions();
+  }
 }
 
 function bindEvents() {
@@ -1139,8 +1190,19 @@ function bindEvents() {
     }
 
     if (button.dataset.action === "check") {
-      await api(`/api/servers/${server.id}/check`, { method: "POST" });
-      showToast("Checagem solicitada", `${server.name} sera verificado agora.`);
+      try {
+        const result = await api(`/api/servers/${server.id}/check`, { method: "POST" });
+        if (result.server) upsertServer(result.server);
+        render();
+        showToast(
+          result.status === "probe_queued" ? "Checagem enviada ao probe" : "Checagem concluida",
+          result.status === "probe_queued"
+            ? `${server.name} sera verificado no proximo contato do Probe Collector.`
+            : `${server.name} foi verificado agora.`
+        );
+      } catch (error) {
+        showToast("Falha na checagem", error.message);
+      }
     }
   });
 

@@ -1146,6 +1146,12 @@ label {
   font-weight: 800;
 }
 
+.field-hint {
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
 .toast-stack {
   position: fixed;
   right: 18px;

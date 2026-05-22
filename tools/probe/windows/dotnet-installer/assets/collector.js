@@ -145,7 +145,7 @@ async function runLoop(config) {
       const now = Date.now();
       const dueTargets = (payload.targets || []).filter((target) => {
         const dueAt = nextChecks.get(target.id) || 0;
-        return dueAt <= now;
+        return target.forceCheck || dueAt <= now;
       });
       const results = [];
       for (const target of dueTargets) {

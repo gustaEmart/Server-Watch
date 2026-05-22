@@ -103,6 +103,19 @@ function normalizeServer(payload, existing = {}) {
     throw error;
   }
 
+  if (checkSource === "probe") {
+    if (!probeId) {
+      const error = new Error("Selecione um probe collector para monitorar este servidor.");
+      error.statusCode = 400;
+      throw error;
+    }
+    if (!state.probes.some((probe) => probe.id === probeId)) {
+      const error = new Error("Probe collector nao encontrado. Instale o probe antes de associar servidores a ele.");
+      error.statusCode = 400;
+      throw error;
+    }
+  }
+
   return {
     ...existing,
     name: String(payload.name || existing.name || hostname).trim(),
@@ -415,6 +428,7 @@ function publicServer(server) {
     lastLatencyMs: server.lastLatencyMs,
     lastError: server.lastError,
     lastProbeSeenAt: server.lastProbeSeenAt || null,
+    probeCheckRequestedAt: server.probeCheckRequestedAt || null,
     consecutiveFailures: server.consecutiveFailures || 0,
     createdAt: server.createdAt,
     updatedAt: server.updatedAt,
@@ -651,9 +665,17 @@ function upsertProbe({ probeId, name, version, remoteAddress }) {
     lastSeenAt: nowIso(),
     lastAddress: remoteAddress || existing?.lastAddress || null
   };
-  if (existing) Object.assign(existing, payload);
-  else state.probes.push({ createdAt: nowIso(), ...payload });
-  return payload;
+  if (existing) {
+    const changed =
+      existing.name !== payload.name ||
+      existing.version !== payload.version ||
+      existing.lastAddress !== payload.lastAddress;
+    Object.assign(existing, payload);
+    return { probe: existing, changed };
+  }
+  const probe = { createdAt: nowIso(), ...payload };
+  state.probes.push(probe);
+  return { probe, changed: true };
 }
 
 function probeTargets(probeId) {
@@ -665,7 +687,11 @@ function probeTargets(probeId) {
       hostname: server.hostname,
       checkMethod: "ping",
       checkInterval: server.checkInterval,
-      failureThreshold: server.failureThreshold
+      failureThreshold: server.failureThreshold,
+      forceCheck: Boolean(
+        server.probeCheckRequestedAt &&
+          (!server.lastCheckedAt || new Date(server.probeCheckRequestedAt).getTime() > new Date(server.lastCheckedAt).getTime())
+      )
     }));
 }
 
@@ -673,6 +699,7 @@ function applyProbeResult(server, result, probeId) {
   const previousStatus = server.currentStatus || "unknown";
   server.lastCheckedAt = result.checkedAt || nowIso();
   server.lastProbeSeenAt = nowIso();
+  server.probeCheckRequestedAt = null;
   server.lastLatencyMs = result.latencyMs ?? null;
   server.lastError = result.error || null;
 
@@ -851,29 +878,31 @@ async function handleApi(req, res) {
 
       if (req.method === "GET" && parts[2] === "targets") {
         const probeId = String(url.searchParams.get("probeId") || "").trim();
-        const probe = upsertProbe({
+        const registered = upsertProbe({
           probeId,
           name: url.searchParams.get("name") || probeId,
           version: url.searchParams.get("version") || null,
           remoteAddress: req.socket.remoteAddress
         });
-        if (!probe) return sendJson(res, 400, { error: "Informe probeId." });
+        if (!registered) return sendJson(res, 400, { error: "Informe probeId." });
         scheduleSave();
+        if (registered.changed) broadcastSnapshot();
         return sendJson(res, 200, {
-          probe: publicProbe(probe),
-          targets: probeTargets(probe.id)
+          probe: publicProbe(registered.probe),
+          targets: probeTargets(registered.probe.id)
         });
       }
 
       if (req.method === "POST" && parts[2] === "results") {
         const payload = await readBody(req);
-        const probe = upsertProbe({
+        const registered = upsertProbe({
           probeId: payload.probeId,
           name: payload.name || payload.probeId,
           version: payload.version || null,
           remoteAddress: req.socket.remoteAddress
         });
-        if (!probe) return sendJson(res, 400, { error: "Informe probeId." });
+        if (!registered) return sendJson(res, 400, { error: "Informe probeId." });
+        const probe = registered.probe;
         const results = Array.isArray(payload.results) ? payload.results : [];
         let accepted = 0;
         for (const result of results) {
@@ -889,6 +918,7 @@ async function handleApi(req, res) {
           accepted += 1;
         }
         scheduleSave();
+        if (registered.changed || accepted > 0) broadcastSnapshot();
         return sendJson(res, 200, { ok: true, accepted });
       }
     }
@@ -974,7 +1004,7 @@ async function handleApi(req, res) {
         };
         state.groups.unshift(group);
         scheduleSave();
-        broadcast(snapshot());
+        broadcastSnapshot();
         return sendJson(res, 201, publicGroup(group));
       }
 
@@ -990,7 +1020,7 @@ async function handleApi(req, res) {
         const payload = await readBody(req);
         Object.assign(group, normalizeGroup(payload, group));
         scheduleSave();
-        broadcast(snapshot());
+        broadcastSnapshot();
         return sendJson(res, 200, publicGroup(group));
       }
 
@@ -1004,7 +1034,7 @@ async function handleApi(req, res) {
         group.deletedAt = nowIso();
         group.updatedAt = nowIso();
         scheduleSave();
-        broadcast(snapshot());
+        broadcastSnapshot();
         return sendJson(res, 200, publicGroup(group));
       }
     }
@@ -1032,7 +1062,7 @@ async function handleApi(req, res) {
         };
         state.servers.unshift(server);
         scheduleSave();
-        broadcast(snapshot());
+        broadcastSnapshot();
         return sendJson(res, 201, publicServer(server));
       }
 
@@ -1048,7 +1078,7 @@ async function handleApi(req, res) {
         const payload = await readBody(req);
         Object.assign(server, normalizeServer(payload, server));
         scheduleSave();
-        broadcast(snapshot());
+        broadcastSnapshot();
         return sendJson(res, 200, publicServer(server));
       }
 
@@ -1057,7 +1087,7 @@ async function handleApi(req, res) {
         server.deletedAt = nowIso();
         server.updatedAt = nowIso();
         scheduleSave();
-        broadcast(snapshot());
+        broadcastSnapshot();
         return sendJson(res, 200, publicServer(server));
       }
 
@@ -1066,14 +1096,23 @@ async function handleApi(req, res) {
         server.updatedAt = nowIso();
         server.nextCheckAt = Date.now() + 300;
         scheduleSave();
-        broadcast(snapshot());
+        broadcastSnapshot();
         return sendJson(res, 200, publicServer(server));
       }
 
       if (req.method === "POST" && parts[3] === "check") {
+        if (!server.isActive) {
+          return sendJson(res, 409, { error: "Reative o servidor antes de solicitar uma checagem." });
+        }
+        if (server.checkSource === "probe") {
+          server.probeCheckRequestedAt = nowIso();
+          scheduleSave();
+          broadcast({ type: "server_checked", server: publicServer(server), summary: summary() });
+          return sendJson(res, 202, { status: "probe_queued", server: publicServer(server) });
+        }
         server.nextCheckAt = Date.now();
-        checkServer(server).catch((error) => console.error("Falha ao verificar manualmente", error));
-        return sendJson(res, 202, { status: "queued" });
+        await checkServer(server);
+        return sendJson(res, 200, { status: "checked", server: publicServer(server) });
       }
 
       if (req.method === "GET" && parts[3] === "history") {
@@ -1090,7 +1129,7 @@ async function handleApi(req, res) {
     if (req.method === "POST" && parts[1] === "alerts" && parts[2] === "read") {
       state.alerts = state.alerts.map((alert) => ({ ...alert, read: true }));
       scheduleSave();
-      broadcast(snapshot());
+      broadcastSnapshot();
       return sendJson(res, 200, { ok: true });
     }
 
@@ -1148,8 +1187,16 @@ function encodeWebSocketFrame(payload) {
 
 function broadcast(payload) {
   const frame = encodeWebSocketFrame(payload);
-  for (const socket of sockets) {
+  for (const client of sockets) {
+    const socket = client.socket || client;
     if (!socket.destroyed) socket.write(frame);
+  }
+}
+
+function broadcastSnapshot() {
+  for (const client of sockets) {
+    const socket = client.socket || client;
+    if (!socket.destroyed) socket.write(encodeWebSocketFrame(snapshot(client.user || null)));
   }
 }
 
@@ -1185,10 +1232,11 @@ function handleUpgrade(req, socket) {
     ].join("\r\n")
   );
 
-  sockets.add(socket);
+  const client = { socket, user: session.user };
+  sockets.add(client);
   socket.write(encodeWebSocketFrame(snapshot(session.user)));
-  socket.on("close", () => sockets.delete(socket));
-  socket.on("error", () => sockets.delete(socket));
+  socket.on("close", () => sockets.delete(client));
+  socket.on("error", () => sockets.delete(client));
 }
 
 function printStartup() {
