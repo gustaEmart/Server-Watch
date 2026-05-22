@@ -135,23 +135,84 @@ function Validate-Config($values) {
   }
 }
 
+function Stop-ExistingProbe {
+  Set-InstallProgress 8 "Parando instalacao anterior, se existir..."
+
+  $task = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
+  if ($task) {
+    try {
+      Stop-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
+    } catch {
+    }
+  }
+
+  $collectorPath = (Join-Path $installDir "collector.js").ToLowerInvariant()
+  $nodePath = (Join-Path $installDir "node.exe").ToLowerInvariant()
+  $deadline = (Get-Date).AddSeconds(12)
+
+  do {
+    $running = @()
+    try {
+      $running = @(Get-CimInstance Win32_Process -Filter "Name = 'node.exe'" | Where-Object {
+        $commandLine = ([string]$_.CommandLine).ToLowerInvariant()
+        $executablePath = ([string]$_.ExecutablePath).ToLowerInvariant()
+        $commandLine.Contains($collectorPath) -or $executablePath -eq $nodePath
+      })
+    } catch {
+      $running = @()
+    }
+
+    if ($running.Count -eq 0) {
+      return
+    }
+
+    foreach ($process in $running) {
+      try {
+        Stop-Process -Id $process.ProcessId -Force -ErrorAction SilentlyContinue
+      } catch {
+      }
+    }
+
+    Start-Sleep -Milliseconds 500
+  } while ((Get-Date) -lt $deadline)
+
+  throw "Nao foi possivel parar a instalacao anterior do Probe Collector. Feche processos node.exe relacionados ao ServerWatch ou reinicie o Windows e tente novamente."
+}
+
+function Copy-WithRetry($source, $destination, $description) {
+  for ($attempt = 1; $attempt -le 6; $attempt++) {
+    try {
+      Copy-Item -Path $source -Destination $destination -Force
+      return
+    } catch {
+      if ($attempt -eq 6) {
+        throw "Nao foi possivel copiar $description para $destination. O arquivo pode estar em uso por uma instalacao anterior. Detalhe: $($_.Exception.Message)"
+      }
+      Start-Sleep -Milliseconds (400 * $attempt)
+      [System.Windows.Forms.Application]::DoEvents()
+    }
+  }
+}
+
 function Install-Probe($values) {
   Validate-Config $values
+
+  Stop-ExistingProbe
 
   Set-InstallProgress 10 "Criando pasta de instalacao..."
   New-Item -ItemType Directory -Path $installDir -Force | Out-Null
 
   Set-InstallProgress 18 "Copiando arquivos do collector..."
-  Copy-Item -Path (Join-Path $sourceDir "collector.js") -Destination (Join-Path $installDir "collector.js") -Force
+  Copy-WithRetry (Join-Path $sourceDir "collector.js") (Join-Path $installDir "collector.js") "collector.js"
   if (Test-Path (Join-Path $sourceDir "setup-server.js")) {
-    Copy-Item -Path (Join-Path $sourceDir "setup-server.js") -Destination (Join-Path $installDir "setup-server.js") -Force
+    Copy-WithRetry (Join-Path $sourceDir "setup-server.js") (Join-Path $installDir "setup-server.js") "setup-server.js"
   }
 
   $nodeSource = Get-NodeSource
   Set-InstallProgress 38 "Copiando runtime Node.js..."
   $nodeTarget = Join-Path $installDir "node.exe"
   if ((Split-Path -Leaf $nodeSource) -eq "node.exe") {
-    Copy-Item -Path $nodeSource -Destination $nodeTarget -Force
+    Copy-WithRetry $nodeSource $nodeTarget "node.exe"
   } else {
     $nodeTarget = $nodeSource
   }
