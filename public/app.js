@@ -22,6 +22,7 @@ const state = {
 };
 
 const els = {
+  bootScreen: document.querySelector("#bootScreen"),
   authScreen: document.querySelector("#authScreen"),
   appShell: document.querySelector("#appShell"),
   loginForm: document.querySelector("#loginForm"),
@@ -120,12 +121,14 @@ function showLogin() {
   state.currentUser = null;
   state.socket?.close();
   clearTimeout(state.reconnectTimer);
+  els.bootScreen.hidden = true;
   els.authScreen.hidden = false;
   els.appShell.hidden = true;
 }
 
 function showApp(user) {
   state.currentUser = user;
+  els.bootScreen.hidden = true;
   els.authScreen.hidden = true;
   els.appShell.hidden = false;
   els.currentUserName.textContent = `${user.name} · ${user.role === "admin" ? "Admin" : "Operador"}`;
