@@ -18,9 +18,9 @@ const DOWNLOADS = {
     contentType: "text/x-shellscript; charset=utf-8"
   },
   "/downloads/probe/windows-installer": {
-    path: resolve("tools/probe/Install-ProbeCollector.ps1"),
-    filename: "Install-ServerWatchProbe.ps1",
-    contentType: "text/plain; charset=utf-8"
+    path: resolve(process.env.SERVERWATCH_WINDOWS_INSTALLER_PATH || "downloads/ServerWatchProbeSetup.exe"),
+    filename: "ServerWatchProbeSetup.exe",
+    contentType: "application/vnd.microsoft.portable-executable"
   }
 };
 const CHECK_LOOP_MS = 1000;
