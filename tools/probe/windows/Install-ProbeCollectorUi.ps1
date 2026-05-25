@@ -121,6 +121,32 @@ function Has-CompleteConfig($values) {
   )
 }
 
+function New-ServerWatchIcon {
+  $bitmap = New-Object System.Drawing.Bitmap 32, 32
+  $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
+  $graphics.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::HighQuality
+  $graphics.TextRenderingHint = [System.Drawing.Text.TextRenderingHint]::AntiAliasGridFit
+  $graphics.Clear([System.Drawing.Color]::Transparent)
+
+  $background = New-Object System.Drawing.SolidBrush ([System.Drawing.ColorTranslator]::FromHtml("#dc2626"))
+  $foreground = New-Object System.Drawing.SolidBrush ([System.Drawing.Color]::White)
+  $font = New-Object System.Drawing.Font("Segoe UI", 10, [System.Drawing.FontStyle]::Bold)
+
+  $graphics.FillRectangle($background, 0, 0, 32, 32)
+  $size = $graphics.MeasureString("SW", $font)
+  $x = [Math]::Max(0, (32 - $size.Width) / 2)
+  $y = [Math]::Max(0, (32 - $size.Height) / 2 - 1)
+  $graphics.DrawString("SW", $font, $foreground, $x, $y)
+
+  $icon = [System.Drawing.Icon]::FromHandle($bitmap.GetHicon())
+  $graphics.Dispose()
+  $background.Dispose()
+  $foreground.Dispose()
+  $font.Dispose()
+  $bitmap.Dispose()
+  return $icon
+}
+
 function Set-InstallProgress($value, $message) {
   if ($script:progressBar) {
     $script:progressBar.Value = [Math]::Max($script:progressBar.Minimum, [Math]::Min($script:progressBar.Maximum, [int]$value))
@@ -308,6 +334,7 @@ function Install-Probe($values) {
 }
 
 $existing = Read-ExistingConfig
+$appIcon = New-ServerWatchIcon
 
 if ((Test-Path $defaultsPath) -and (Has-CompleteConfig $existing)) {
   $progressForm = New-Object System.Windows.Forms.Form
@@ -317,6 +344,7 @@ if ((Test-Path $defaultsPath) -and (Has-CompleteConfig $existing)) {
   $progressForm.FormBorderStyle = "FixedDialog"
   $progressForm.MaximizeBox = $false
   $progressForm.MinimizeBox = $false
+  $progressForm.Icon = $appIcon
 
   $autoLabel = New-Object System.Windows.Forms.Label
   $autoLabel.Location = New-Object System.Drawing.Point(18, 18)
@@ -380,6 +408,7 @@ $form.FormBorderStyle = "FixedDialog"
 $form.MaximizeBox = $false
 $form.MinimizeBox = $false
 $form.BackColor = $colorBg
+$form.Icon = $appIcon
 
 $font = New-Object System.Drawing.Font("Segoe UI", 9)
 $form.Font = $font
