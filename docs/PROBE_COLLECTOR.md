@@ -22,6 +22,13 @@ ServerWatch central
 
 Com isso, o cliente nao precisa expor ICMP, SNMP ou portas internas na internet. O probe so precisa conseguir sair para o ServerWatch central, preferencialmente por HTTPS `443`.
 
+Em cada contato, o probe tambem envia metadados basicos da maquina coletora:
+
+- sistema operacional (`linux`, `windows` ou `macos`);
+- hostname;
+- IPs locais;
+- endereco MAC principal e lista de MACs das interfaces fisicas detectadas.
+
 ## Token
 
 O ServerWatch central usa um token compartilhado para autenticar probes.

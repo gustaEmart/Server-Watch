@@ -703,7 +703,7 @@ textarea:focus {
   padding: 13px;
   background: var(--surface);
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-columns: auto auto minmax(0, 1fr) auto;
   align-items: center;
   gap: 12px;
   text-align: left;
@@ -739,6 +739,46 @@ textarea:focus {
   box-shadow: 0 0 0 6px rgba(107, 114, 128, 0.14);
 }
 
+.platform-icon {
+  width: 24px;
+  height: 24px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  display: inline-grid;
+  place-items: center;
+  background: #f8fbfb;
+  color: #334155;
+  flex: 0 0 auto;
+}
+
+.platform-icon svg {
+  width: 15px;
+  height: 15px;
+  fill: currentColor;
+}
+
+.platform-icon.windows {
+  color: #2563eb;
+  background: #eff6ff;
+  border-color: #bfdbfe;
+}
+
+.platform-icon.linux {
+  color: #111827;
+  background: #fef9c3;
+  border-color: #fde68a;
+}
+
+.platform-icon.macos {
+  color: #475569;
+  background: #f8fafc;
+  border-color: #cbd5e1;
+}
+
+.platform-icon.unknown {
+  color: #64748b;
+}
+
 .server-row.inactive {
   background: #f3f5f5;
   color: #5f6b6e;
@@ -770,6 +810,14 @@ textarea:focus {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.detail-title,
+.probe-card strong {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
 }
 
 .server-main span,
@@ -907,6 +955,13 @@ textarea:focus {
 .detail-stat span {
   color: var(--muted);
   font-size: 0.82rem;
+}
+
+.detail-stat strong {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
 }
 
 .tag-list {
@@ -1141,7 +1196,6 @@ textarea:focus {
   align-items: center;
 }
 
-.probe-card strong,
 .probe-card span {
   display: block;
 }

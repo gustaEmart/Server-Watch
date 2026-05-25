@@ -220,6 +220,40 @@ function checkSourceLabel(source) {
   }[source || "serverwatch"];
 }
 
+function platformLabel(platform) {
+  return {
+    linux: "Linux",
+    windows: "Windows",
+    win32: "Windows",
+    macos: "macOS",
+    darwin: "macOS"
+  }[String(platform || "").toLowerCase()] || "Sistema nao identificado";
+}
+
+function normalizedPlatform(platform) {
+  const value = String(platform || "").toLowerCase();
+  if (value === "win32" || value === "windows") return "windows";
+  if (value === "darwin" || value === "macos") return "macos";
+  if (value === "linux") return "linux";
+  return "unknown";
+}
+
+function platformIcon(platform) {
+  const normalized = normalizedPlatform(platform);
+  const label = platformLabel(platform);
+  const icons = {
+    windows: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 5.2 10.7 4v7.2H3V5.2Zm9-1.4L21 2.5v8.7h-9V3.8ZM3 12.8h7.7V20L3 18.8v-6Zm9 0h9v8.7L12 20.2v-7.4Z"/></svg>`,
+    linux: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3c-2.6 0-4.6 2.2-4.6 5.1 0 1.6-.5 2.7-1.2 3.9-.7 1.1-1.4 2.4-1.4 4.2 0 2.9 2.8 4.8 7.2 4.8s7.2-1.9 7.2-4.8c0-1.8-.7-3.1-1.4-4.2-.7-1.2-1.2-2.3-1.2-3.9C16.6 5.2 14.6 3 12 3Zm-1.7 5.5c-.5 0-.9-.4-.9-.9s.4-.9.9-.9.9.4.9.9-.4.9-.9.9Zm3.4 0c-.5 0-.9-.4-.9-.9s.4-.9.9-.9.9.4.9.9-.4.9-.9.9Zm-4 7.7h4.6c-.4.8-1.2 1.3-2.3 1.3s-1.9-.5-2.3-1.3Z"/></svg>`,
+    macos: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16.4 2.8c.1 1.2-.4 2.3-1.1 3-.8.8-1.8 1.2-2.8 1.1-.1-1.1.4-2.1 1.1-2.9.8-.8 1.9-1.3 2.8-1.2Zm3.4 14.1c-.5 1.1-.8 1.6-1.4 2.6-.9 1.3-2.1 2.9-3.6 2.9-1.3 0-1.7-.8-3.5-.8s-2.2.8-3.5.8c-1.5 0-2.7-1.5-3.6-2.8-2.5-3.7-2.8-8.1-1.2-10.4 1.1-1.7 2.9-2.7 4.6-2.7 1.7 0 2.8.9 3.8.9.9 0 2.4-1.1 4.1-.9.7 0 2.7.3 4 2.2-3.5 1.9-2.9 6.8.3 8.2Z"/></svg>`,
+    unknown: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5.5C4 4.7 4.7 4 5.5 4h13c.8 0 1.5.7 1.5 1.5v8c0 .8-.7 1.5-1.5 1.5h-13c-.8 0-1.5-.7-1.5-1.5v-8ZM9 18h6v2H9v-2Z"/></svg>`
+  };
+  return `<span class="platform-icon ${normalized}" title="${escapeHtml(label)}" aria-label="${escapeHtml(label)}">${icons[normalized]}</span>`;
+}
+
+function primaryMac(entity) {
+  return entity?.primaryMac || entity?.macAddresses?.[0] || "";
+}
+
 function groupLabel(groupId) {
   if (!groupId) return "Sem empresa";
   return state.groups.find((group) => group.id === groupId)?.name || "Empresa removida";
@@ -515,6 +549,8 @@ function filteredServers() {
       server.name,
       server.hostname,
       server.environment,
+      platformLabel(server.platform),
+      primaryMac(server),
       groupLabel(server.groupId),
       server.location,
       ...(server.tags || [])
@@ -588,12 +624,14 @@ function renderServerRow(server) {
   const latency = server.lastLatencyMs === null || server.lastLatencyMs === undefined ? "-" : `${server.lastLatencyMs} ms`;
   const offlineFor =
     server.isActive && server.currentStatus === "offline" ? `<span>Offline ha ${formatDurationSince(server.statusChangedAt)}</span>` : "";
+  const mac = primaryMac(server);
   const subtitle = server.isActive
-    ? `${escapeHtml(server.hostname)} · ${checkSourceLabel(server.checkSource)} · ${environmentLabel(server.environment)} ${offlineFor}`
+    ? `${escapeHtml(server.hostname)} · ${checkSourceLabel(server.checkSource)} · ${environmentLabel(server.environment)}${mac ? ` · ${escapeHtml(mac)}` : ""} ${offlineFor}`
     : `${escapeHtml(server.hostname)} · Monitoramento pausado`;
   return `
     <button class="server-row ${selected} ${inactive}" type="button" data-server-id="${server.id}">
       <span class="status-pulse ${visibleStatus}"></span>
+      ${platformIcon(server.platform)}
       <span class="server-main">
         <strong>${escapeHtml(server.name)}</strong>
         <span>${subtitle}</span>
@@ -669,6 +707,7 @@ function renderDetail() {
 
   const recent = state.events.filter((event) => event.serverId === server.id).slice(0, 5);
   const visibleStatus = displayStatus(server);
+  const mac = primaryMac(server);
   const tags = (server.tags || []).map((tag) => `<span class="tag">${escapeHtml(tag)}</span>`).join("");
   const offlineSince =
     !server.isActive
@@ -705,8 +744,8 @@ function renderDetail() {
   els.detailPanel.innerHTML = `
     <div class="detail-header">
       <div>
-        <h2>${escapeHtml(server.name)}</h2>
-        <div class="detail-meta">${escapeHtml(server.hostname)} · ${checkSourceLabel(server.checkSource)} · ${escapeHtml(groupLabel(server.groupId))} · ${environmentLabel(server.environment)}</div>
+        <h2 class="detail-title">${platformIcon(server.platform)}${escapeHtml(server.name)}</h2>
+        <div class="detail-meta">${escapeHtml(server.hostname)} · ${platformLabel(server.platform)} · ${checkSourceLabel(server.checkSource)} · ${escapeHtml(groupLabel(server.groupId))} · ${environmentLabel(server.environment)}</div>
       </div>
       <span class="status-badge ${visibleStatus}">${statusLabel(visibleStatus)}</span>
     </div>
@@ -721,6 +760,8 @@ function renderDetail() {
       <div class="detail-stat"><span>Latencia</span><strong>${server.lastLatencyMs ?? "-"} ms</strong></div>
       <div class="detail-stat"><span>Origem</span><strong>${checkSourceLabel(server.checkSource)}</strong></div>
       <div class="detail-stat"><span>Empresa</span><strong>${escapeHtml(groupLabel(server.groupId))}</strong></div>
+      <div class="detail-stat"><span>Sistema</span><strong>${platformIcon(server.platform)}${platformLabel(server.platform)}</strong></div>
+      <div class="detail-stat"><span>MAC</span><strong>${escapeHtml(mac || "-")}</strong></div>
       <div class="detail-stat"><span>Intervalo</span><strong>${server.checkInterval}s</strong></div>
       ${offlineSince}
       ${probeStats}
@@ -938,8 +979,8 @@ function renderProbes() {
           (probe) => `
             <article class="probe-card">
               <div>
-                <strong>${escapeHtml(probe.name || probe.id)}</strong>
-                <span>${escapeHtml(probe.id)} · ${escapeHtml(probe.primaryAddress || probe.addresses?.[0] || probe.lastAddress || "sem IP")} · ${probe.targetCount || 0} ${probe.targetCount === 1 ? "alvo" : "alvos"}</span>
+                <strong>${platformIcon(probe.platform)}${escapeHtml(probe.name || probe.id)}</strong>
+                <span>${escapeHtml(probe.id)} · ${platformLabel(probe.platform)} · ${escapeHtml(probe.primaryAddress || probe.addresses?.[0] || probe.lastAddress || "sem IP")} · ${escapeHtml(primaryMac(probe) || "sem MAC")} · ${probe.targetCount || 0} ${probe.targetCount === 1 ? "alvo" : "alvos"}</span>
               </div>
               <div>
                 <strong>${formatDate(probe.lastSeenAt)}</strong>

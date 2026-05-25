@@ -63,6 +63,29 @@ function Get-LocalIPv4Addresses {
   }
 }
 
+function Get-LocalMacAddresses {
+  try {
+    $macs = @()
+    if (Get-Command Get-NetAdapter -ErrorAction SilentlyContinue) {
+      $macs = Get-NetAdapter -Physical -ErrorAction SilentlyContinue |
+        Where-Object { $_.Status -ne "Disabled" -and -not [string]::IsNullOrWhiteSpace($_.MacAddress) } |
+        ForEach-Object { $_.MacAddress.ToLowerInvariant().Replace("-", ":") }
+    }
+    if (-not $macs -or $macs.Count -eq 0) {
+      $macs = Get-CimInstance Win32_NetworkAdapter -ErrorAction SilentlyContinue |
+        Where-Object { $_.PhysicalAdapter -and -not [string]::IsNullOrWhiteSpace($_.MACAddress) } |
+        ForEach-Object { $_.MACAddress.ToLowerInvariant() }
+    }
+    return @(
+      $macs |
+        Where-Object { $_ -match "^[0-9a-f]{2}(:[0-9a-f]{2}){5}$" -and $_ -ne "00:00:00:00:00:00" } |
+        Select-Object -Unique
+    )
+  } catch {
+    return @()
+  }
+}
+
 function Read-ExistingConfig {
   $defaultName = Get-DefaultProbeName
   if (Test-Path $defaultsPath) {
@@ -181,8 +204,11 @@ function Register-Probe($values) {
   $addresses = @(Get-LocalIPv4Addresses)
   $primaryAddress = $(if ($addresses.Count -gt 0) { $addresses[0] } else { "" })
   $encodedAddresses = [System.Uri]::EscapeDataString((ConvertTo-Json -Compress -InputObject @($addresses)))
+  $macAddresses = @(Get-LocalMacAddresses)
+  $primaryMac = [System.Uri]::EscapeDataString($(if ($macAddresses.Count -gt 0) { $macAddresses[0] } else { "" }))
+  $encodedMacAddresses = [System.Uri]::EscapeDataString((ConvertTo-Json -Compress -InputObject @($macAddresses)))
   $hostName = [System.Uri]::EscapeDataString((Get-DefaultProbeName))
-  $targetUrl = "$serverUrl/api/probe/targets?probeId=$probeId&name=$probeName&version=0.1.0-installer&hostName=$hostName&primaryAddress=$primaryAddress&addresses=$encodedAddresses"
+  $targetUrl = "$serverUrl/api/probe/targets?probeId=$probeId&name=$probeName&version=0.1.0-installer&hostName=$hostName&primaryAddress=$primaryAddress&addresses=$encodedAddresses&platform=windows&primaryMac=$primaryMac&macAddresses=$encodedMacAddresses"
   $headers = @{
     Authorization = "Bearer $($values.token.Trim())"
     "X-ServerWatch-Probe-Token" = $values.token.Trim()

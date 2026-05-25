@@ -488,6 +488,9 @@ function publicServer(server) {
     lastError: server.lastError,
     lastProbeSeenAt: server.lastProbeSeenAt || null,
     probeCheckRequestedAt: server.probeCheckRequestedAt || null,
+    platform: server.platform || null,
+    primaryMac: server.primaryMac || null,
+    macAddresses: Array.isArray(server.macAddresses) ? server.macAddresses : [],
     consecutiveFailures: server.consecutiveFailures || 0,
     createdAt: server.createdAt,
     updatedAt: server.updatedAt,
@@ -704,6 +707,9 @@ function publicProbe(probe) {
     hostName: probe.hostName || null,
     primaryAddress: probe.primaryAddress || null,
     addresses: Array.isArray(probe.addresses) ? probe.addresses : [],
+    platform: probe.platform || null,
+    primaryMac: probe.primaryMac || null,
+    macAddresses: Array.isArray(probe.macAddresses) ? probe.macAddresses : [],
     lastSeenAt: probe.lastSeenAt || null,
     lastAddress: probe.lastAddress || null,
     targetCount: listedServers().filter((server) => server.checkSource === "probe" && server.probeId === probe.id).length
@@ -736,11 +742,45 @@ function normalizeProbeAddresses(value) {
     .filter(Boolean);
 }
 
-function upsertProbe({ probeId, name, version, hostName, primaryAddress, addresses, remoteAddress }) {
+function normalizeMacAddresses(value) {
+  const normalize = (mac) =>
+    String(mac || "")
+      .trim()
+      .toLowerCase()
+      .replace(/-/g, ":");
+  const valid = (mac) => /^[0-9a-f]{2}(:[0-9a-f]{2}){5}$/.test(mac) && mac !== "00:00:00:00:00:00";
+  if (Array.isArray(value)) {
+    return [...new Set(value.map(normalize).filter(valid))];
+  }
+  if (!value) return [];
+  try {
+    const parsed = JSON.parse(String(value));
+    if (Array.isArray(parsed)) return [...new Set(parsed.map(normalize).filter(valid))];
+  } catch {
+  }
+  return [...new Set(
+    String(value)
+      .split(",")
+      .map(normalize)
+      .filter(valid)
+  )];
+}
+
+function normalizeProbePlatform(value, fallback = "") {
+  const platform = String(value || fallback || "").trim().toLowerCase();
+  if (platform === "win32" || platform === "windows") return "windows";
+  if (platform === "darwin" || platform === "mac" || platform === "macos") return "macos";
+  if (platform === "linux") return "linux";
+  return platform || null;
+}
+
+function upsertProbe({ probeId, name, version, hostName, primaryAddress, addresses, platform, primaryMac, macAddresses, remoteAddress }) {
   const id = String(probeId || "").trim();
   if (!id) return null;
   const existing = state.probes.find((probe) => probe.id === id);
   const normalizedAddresses = normalizeProbeAddresses(addresses);
+  const normalizedMacAddresses = normalizeMacAddresses(macAddresses);
+  const normalizedPrimaryMac = normalizeMacAddresses([primaryMac || normalizedMacAddresses[0] || existing?.primaryMac || ""])[0] || null;
   const normalizedPrimaryAddress = String(primaryAddress || normalizedAddresses[0] || existing?.primaryAddress || "").trim() || null;
   const payload = {
     id,
@@ -749,6 +789,9 @@ function upsertProbe({ probeId, name, version, hostName, primaryAddress, address
     hostName: String(hostName || existing?.hostName || "").trim() || null,
     primaryAddress: normalizedPrimaryAddress,
     addresses: normalizedAddresses.length ? normalizedAddresses : Array.isArray(existing?.addresses) ? existing.addresses : [],
+    platform: normalizeProbePlatform(platform, existing?.platform),
+    primaryMac: normalizedPrimaryMac,
+    macAddresses: normalizedMacAddresses.length ? normalizedMacAddresses : Array.isArray(existing?.macAddresses) ? existing.macAddresses : [],
     lastSeenAt: nowIso(),
     lastAddress: remoteAddress || existing?.lastAddress || null
   };
@@ -759,6 +802,9 @@ function upsertProbe({ probeId, name, version, hostName, primaryAddress, address
       existing.hostName !== payload.hostName ||
       existing.primaryAddress !== payload.primaryAddress ||
       JSON.stringify(existing.addresses || []) !== JSON.stringify(payload.addresses || []) ||
+      existing.platform !== payload.platform ||
+      existing.primaryMac !== payload.primaryMac ||
+      JSON.stringify(existing.macAddresses || []) !== JSON.stringify(payload.macAddresses || []) ||
       existing.lastAddress !== payload.lastAddress;
     Object.assign(existing, payload);
     return { probe: existing, changed };
@@ -791,6 +837,18 @@ function ensureProbeServer(probe) {
       existing.isActive = true;
       changed = true;
     }
+    if (existing.platform !== probe.platform) {
+      existing.platform = probe.platform || null;
+      changed = true;
+    }
+    if (existing.primaryMac !== probe.primaryMac) {
+      existing.primaryMac = probe.primaryMac || null;
+      changed = true;
+    }
+    if (JSON.stringify(existing.macAddresses || []) !== JSON.stringify(probe.macAddresses || [])) {
+      existing.macAddresses = Array.isArray(probe.macAddresses) ? probe.macAddresses : [];
+      changed = true;
+    }
     if (changed) existing.updatedAt = nowIso();
     return { server: existing, changed };
   }
@@ -818,6 +876,9 @@ function ensureProbeServer(probe) {
     lastLatencyMs: null,
     lastError: null,
     lastProbeSeenAt: probe.lastSeenAt || createdAt,
+    platform: probe.platform || null,
+    primaryMac: probe.primaryMac || null,
+    macAddresses: Array.isArray(probe.macAddresses) ? probe.macAddresses : [],
     consecutiveFailures: 0,
     createdAt,
     updatedAt: createdAt,
@@ -1042,6 +1103,9 @@ async function handleApi(req, res) {
           hostName: url.searchParams.get("hostName") || null,
           primaryAddress: url.searchParams.get("primaryAddress") || null,
           addresses: url.searchParams.get("addresses") || [],
+          platform: url.searchParams.get("platform") || null,
+          primaryMac: url.searchParams.get("primaryMac") || null,
+          macAddresses: url.searchParams.get("macAddresses") || [],
           remoteAddress: req.socket.remoteAddress
         });
         if (!registered) return sendJson(res, 400, { error: "Informe probeId." });
@@ -1063,6 +1127,9 @@ async function handleApi(req, res) {
           hostName: payload.hostName || null,
           primaryAddress: payload.primaryAddress || null,
           addresses: payload.addresses || [],
+          platform: payload.platform || null,
+          primaryMac: payload.primaryMac || null,
+          macAddresses: payload.macAddresses || [],
           remoteAddress: req.socket.remoteAddress
         });
         if (!registered) return sendJson(res, 400, { error: "Informe probeId." });

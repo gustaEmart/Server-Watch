@@ -41,22 +41,38 @@ function pingCommand() {
   return "ping";
 }
 
+function localInterfaces() {
+  return Object.entries(os.networkInterfaces())
+    .flatMap(([name, items]) => (items || []).map((item) => ({ name, ...item })))
+    .filter((item) => item.family === "IPv4" && !item.internal && !item.address.startsWith("169.254."));
+}
+
 function localAddresses() {
-  return Object.values(os.networkInterfaces())
-    .flatMap((items) => items || [])
-    .filter((item) => item.family === "IPv4" && !item.internal && !item.address.startsWith("169.254."))
+  return localInterfaces()
     .map((item) => item.address);
+}
+
+function localMacAddresses() {
+  return [...new Set(
+    localInterfaces()
+      .map((item) => String(item.mac || "").toLowerCase())
+      .filter((mac) => mac && mac !== "00:00:00:00:00:00")
+  )];
 }
 
 function probeMetadata(config) {
   const addresses = localAddresses();
+  const macAddresses = localMacAddresses();
   return {
     probeId: config.probeId,
     name: config.name || config.probeId,
     version: VERSION,
+    platform: os.platform(),
     hostName: os.hostname(),
     primaryAddress: addresses[0] || "",
-    addresses
+    addresses,
+    primaryMac: macAddresses[0] || "",
+    macAddresses
   };
 }
 
@@ -149,7 +165,10 @@ async function getTargets(config) {
     version: metadata.version,
     hostName: metadata.hostName,
     primaryAddress: metadata.primaryAddress,
-    addresses: JSON.stringify(metadata.addresses)
+    addresses: JSON.stringify(metadata.addresses),
+    platform: metadata.platform,
+    primaryMac: metadata.primaryMac,
+    macAddresses: JSON.stringify(metadata.macAddresses)
   });
   return requestJson(config, `/api/probe/targets?${params.toString()}`);
 }
