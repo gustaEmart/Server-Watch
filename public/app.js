@@ -922,7 +922,7 @@ function probeToken() {
 
 function probeInstallCommand() {
   const token = probeToken();
-  return `sudo bash tools/probe/install-linux.sh --server-url ${location.origin} --probe-id cliente-acme-sp --token ${token} --name "Cliente ACME"`;
+  return `curl -fsSL ${location.origin}/downloads/probe/linux-installer | sudo bash -s -- --server-url ${location.origin} --probe-id cliente-acme-sp --token ${token} --name "Cliente ACME"`;
 }
 
 function renderProbes() {

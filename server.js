@@ -15,7 +15,20 @@ const DOWNLOADS = {
   "/downloads/probe/linux-installer": {
     path: resolve("tools/probe/install-linux.sh"),
     filename: "serverwatch-probe-install-linux.sh",
-    contentType: "text/x-shellscript; charset=utf-8"
+    contentType: "text/x-shellscript; charset=utf-8",
+    public: true
+  },
+  "/downloads/probe/collector.js": {
+    path: resolve("probe/collector.js"),
+    filename: "collector.js",
+    contentType: "text/javascript; charset=utf-8",
+    allowProbeToken: true
+  },
+  "/downloads/probe/setup-server.js": {
+    path: resolve("probe/setup-server.js"),
+    filename: "setup-server.js",
+    contentType: "text/javascript; charset=utf-8",
+    allowProbeToken: true
   },
   "/downloads/probe/windows-installer": {
     path: resolve(process.env.SERVERWATCH_WINDOWS_INSTALLER_PATH || "downloads/ServerWatchProbeSetup.exe"),
@@ -936,10 +949,15 @@ function notFound(res) {
 }
 
 async function serveDownload(req, res) {
-  if (!requireSession(req, res)) return;
   const { pathname } = getRouteParts(req);
   const download = DOWNLOADS[pathname];
   if (!download) return notFound(res);
+  const hasSession = Boolean(getSession(req));
+  const hasProbeToken = download.allowProbeToken && authorizeProbe(req);
+  if (!download.public && !hasSession && !hasProbeToken) {
+    sendJson(res, 401, { error: "Autenticacao necessaria." });
+    return;
+  }
 
   try {
     const content = await readFile(download.path);

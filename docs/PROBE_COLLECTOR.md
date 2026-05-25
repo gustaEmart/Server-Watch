@@ -103,11 +103,13 @@ A tela salva o arquivo `config.json`. Depois disso, reinicie o processo, servico
 Execute como root ou com `sudo`:
 
 ```bash
-sudo bash tools/probe/install-linux.sh \
+curl -fsSL https://serverwatch.example.com/downloads/probe/linux-installer | sudo bash -s -- \
   --server-url https://serverwatch.example.com \
   --probe-id cliente-acme-sp \
   --token cole-aqui-o-token-do-serverwatch
 ```
+
+Esse comando nao precisa do repositorio clonado no servidor do cliente. O instalador baixa os arquivos necessarios do ServerWatch usando o token do probe.
 
 O instalador cria:
 
