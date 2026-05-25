@@ -818,7 +818,7 @@ function ensureProbeServer(probe) {
   const hostname = String(probe.primaryAddress || probe.addresses?.[0] || "").trim();
   if (!hostname) return { server: null, changed: false };
 
-  const serverName = String(probe.hostName || probe.name || probe.id).trim();
+  const serverName = String(probe.name || probe.hostName || probe.id).trim();
   const existing = state.servers.find(
     (server) => !server.deletedAt && server.checkSource === "probe" && server.probeId === probe.id
   );
@@ -1320,7 +1320,14 @@ async function handleApi(req, res) {
 
       if (req.method === "PUT" && parts.length === 3) {
         const payload = await readBody(req);
+        const manuallyRenamedAutoServer =
+          server.autoCreatedByProbe &&
+          (String(payload.name || "").trim() !== String(server.name || "").trim() ||
+            String(payload.hostname || "").trim() !== String(server.hostname || "").trim());
         Object.assign(server, normalizeServer(payload, server));
+        if (manuallyRenamedAutoServer) {
+          server.autoCreatedByProbe = false;
+        }
         scheduleSave();
         broadcastSnapshot();
         return sendJson(res, 200, publicServer(server));
