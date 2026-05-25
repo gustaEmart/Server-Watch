@@ -107,18 +107,7 @@ A tela salva o arquivo `config.json`. Depois disso, reinicie o processo, servico
 
 ## Instalacao no Linux
 
-O probe Linux exige Node.js 20+ no servidor que vai receber o coletor:
-
-```bash
-node -v
-```
-
-Em Ubuntu/Debian, se precisar atualizar:
-
-```bash
-curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
-sudo apt-get install -y nodejs
-```
+O probe Linux usa Node.js 20+. Se o servidor ja tiver Node.js 20+ instalado, o servico usa esse runtime. Se nao tiver, ou se o Node.js do sistema for antigo, o instalador baixa um Node.js isolado dentro de `/opt/serverwatch-probe/node` e usa apenas para o Probe Collector, sem alterar o Node global do servidor.
 
 Execute como root ou com `sudo`:
 
@@ -135,6 +124,7 @@ O instalador cria:
 
 ```text
 /opt/serverwatch-probe
+/opt/serverwatch-probe/node
 /etc/systemd/system/serverwatch-probe.service
 ```
 
