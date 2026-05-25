@@ -9,17 +9,17 @@
   <body>
     <section class="bootstrap-screen" id="bootScreen" aria-label="Carregando ServerWatch">
       <div class="boot-card">
-        <span class="brand-mark">SW</span>
-        <strong>ServerWatch</strong>
+        <span class="brand-mark brand-logo" aria-hidden="true"><span class="brand-initials">SW</span></span>
+        <strong class="brand-name">ServerWatch</strong>
       </div>
     </section>
 
     <section class="auth-screen" id="authScreen" hidden>
       <form class="login-card" id="loginForm">
         <div class="brand login-brand">
-          <span class="brand-mark">SW</span>
+          <span class="brand-mark brand-logo" aria-hidden="true"><span class="brand-initials">SW</span></span>
           <div>
-            <strong>ServerWatch</strong>
+            <strong class="brand-name">ServerWatch</strong>
             <span>Acesso administrativo</span>
           </div>
         </div>
@@ -39,10 +39,10 @@
     <div class="app-shell" id="appShell" hidden>
       <aside class="sidebar">
         <div class="brand">
-          <span class="brand-mark">SW</span>
+          <span class="brand-mark brand-logo" aria-hidden="true"><span class="brand-initials">SW</span></span>
           <div>
-            <strong>ServerWatch</strong>
-            <span>MVP LAN</span>
+            <strong class="brand-name">ServerWatch</strong>
+            <span class="brand-subtitle">MVP LAN</span>
           </div>
         </div>
 
@@ -51,6 +51,7 @@
           <button class="nav-tab" data-view="groups">Empresas</button>
           <button class="nav-tab admin-only" data-view="probes">Probes</button>
           <button class="nav-tab admin-only" data-view="users">Usuarios</button>
+          <button class="nav-tab admin-only" data-view="settings">Configuracoes</button>
           <button class="nav-tab" data-view="history">Historico</button>
           <button class="nav-tab" data-view="alerts">Alertas</button>
         </nav>
@@ -242,6 +243,50 @@
               <button class="primary-button compact" id="openUserForm" type="button">Adicionar usuario</button>
             </div>
             <div class="users-list" id="usersList"></div>
+          </div>
+        </section>
+
+        <section class="view" id="settingsView">
+          <div class="wide-panel">
+            <div class="panel-title">
+              <div>
+                <h2>Configuracoes</h2>
+                <span>Identidade visual</span>
+              </div>
+            </div>
+            <form class="settings-form" id="brandingForm">
+              <div class="brand-preview">
+                <span class="brand-mark brand-logo" id="brandPreviewLogo" aria-hidden="true">
+                  <span class="brand-initials" id="brandPreviewInitials">SW</span>
+                </span>
+                <div>
+                  <strong id="brandPreviewName">ServerWatch</strong>
+                  <span id="brandPreviewSubtitle">MVP LAN</span>
+                </div>
+              </div>
+
+              <div class="form-grid">
+                <label>
+                  Nome do sistema
+                  <input id="brandNameInput" maxlength="60" required placeholder="Nome da marca" />
+                </label>
+                <label>
+                  Subtitulo
+                  <input id="brandSubtitleInput" maxlength="80" placeholder="Ex.: Monitoramento" />
+                </label>
+              </div>
+
+              <label>
+                Logo
+                <input id="brandLogoInput" type="file" accept="image/png,image/jpeg,image/webp,image/svg+xml" />
+              </label>
+              <small class="field-hint">Use PNG, JPG, WEBP ou SVG com ate aproximadamente 500 KB.</small>
+
+              <div class="dialog-actions">
+                <button class="ghost-button" id="removeBrandLogo" type="button">Remover logo</button>
+                <button class="primary-button" type="submit">Salvar identidade</button>
+              </div>
+            </form>
           </div>
         </section>
 

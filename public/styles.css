@@ -128,6 +128,18 @@ button {
   background: #dc2626;
   color: #ffffff;
   font-weight: 900;
+  background-position: center;
+  background-size: cover;
+  flex: 0 0 auto;
+}
+
+.brand-mark.has-image {
+  background-color: #ffffff;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+}
+
+.brand-mark.has-image .brand-initials {
+  opacity: 0;
 }
 
 .brand strong,
@@ -138,6 +150,15 @@ button {
 .brand span {
   color: #9fb9b9;
   font-size: 0.86rem;
+}
+
+.brand > div {
+  min-width: 0;
+}
+
+.brand strong,
+.brand span {
+  overflow-wrap: anywhere;
 }
 
 .nav-tabs {
@@ -1005,6 +1026,31 @@ textarea:focus {
   gap: 8px;
   flex-wrap: wrap;
   justify-content: flex-end;
+}
+
+.settings-form {
+  display: grid;
+  gap: 14px;
+}
+
+.brand-preview {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 14px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: #f8fbfb;
+}
+
+.brand-preview strong,
+.brand-preview span {
+  display: block;
+}
+
+.brand-preview span {
+  color: var(--muted);
+  margin-top: 3px;
 }
 
 .group-stats {

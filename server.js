@@ -43,7 +43,10 @@ let state = {
   settings: {
     defaultInterval: 10,
     defaultFailureThreshold: 2,
-    probeToken: randomUUID()
+    probeToken: randomUUID(),
+    brandName: "ServerWatch",
+    brandSubtitle: "MVP LAN",
+    logoDataUrl: ""
   }
 };
 let saveTimer = null;
@@ -149,6 +152,40 @@ function normalizeGroup(payload, existing = {}) {
     description: String(payload.description ?? existing.description ?? "").trim(),
     type: String(payload.type || existing.type || "company"),
     updatedAt: nowIso()
+  };
+}
+
+function normalizeBranding(payload, existing = {}) {
+  const brandName = String(payload.brandName ?? existing.brandName ?? "ServerWatch").trim() || "ServerWatch";
+  const brandSubtitle = String(payload.brandSubtitle ?? existing.brandSubtitle ?? "MVP LAN").trim();
+  const logoDataUrl = String(payload.logoDataUrl ?? existing.logoDataUrl ?? "").trim();
+
+  if (brandName.length > 60) {
+    const error = new Error("Nome da marca deve ter no maximo 60 caracteres.");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  if (brandSubtitle.length > 80) {
+    const error = new Error("Subtitulo da marca deve ter no maximo 80 caracteres.");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  if (
+    logoDataUrl &&
+    (!/^data:image\/(?:png|jpeg|jpg|webp|svg\+xml);base64,[a-z0-9+/=]+$/i.test(logoDataUrl) || logoDataUrl.length > 700000)
+  ) {
+    const error = new Error("Logo invalida. Use PNG, JPG, WEBP ou SVG com ate aproximadamente 500 KB.");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  return {
+    ...existing,
+    brandName,
+    brandSubtitle,
+    logoDataUrl
   };
 }
 
@@ -322,6 +359,15 @@ async function loadState() {
     state.settings.probeToken = randomUUID();
     needsSave = true;
   }
+  const normalizedSettings = normalizeBranding(state.settings, state.settings);
+  if (
+    normalizedSettings.brandName !== state.settings.brandName ||
+    normalizedSettings.brandSubtitle !== state.settings.brandSubtitle ||
+    normalizedSettings.logoDataUrl !== state.settings.logoDataUrl
+  ) {
+    needsSave = true;
+  }
+  state.settings = normalizedSettings;
   if (ensureDefaultAdmin()) {
     needsSave = true;
   }
@@ -653,6 +699,9 @@ function publicProbe(probe) {
 
 function publicSettings(currentUser = null) {
   return {
+    brandName: state.settings.brandName || "ServerWatch",
+    brandSubtitle: state.settings.brandSubtitle || "MVP LAN",
+    logoDataUrl: state.settings.logoDataUrl || "",
     probeToken: currentUser?.role === "admin" ? getProbeToken() : "",
     probeTokenSource: process.env.SERVERWATCH_PROBE_TOKEN ? "environment" : "generated"
   };
@@ -930,7 +979,10 @@ async function handleApi(req, res) {
     if (parts[1] === "auth") {
       if (req.method === "GET" && parts[2] === "session") {
         const session = getSession(req);
-        return sendJson(res, 200, { user: session ? publicUser(session.user) : null });
+        return sendJson(res, 200, {
+          user: session ? publicUser(session.user) : null,
+          settings: publicSettings(session?.user || null)
+        });
       }
 
       if (req.method === "POST" && parts[2] === "login") {
@@ -1031,6 +1083,18 @@ async function handleApi(req, res) {
 
     if (req.method === "GET" && parts[1] === "probes") {
       return sendJson(res, 200, (state.probes || []).map(publicProbe));
+    }
+
+    if (parts[1] === "settings") {
+      if (!requireAdmin(req, res)) return;
+
+      if (req.method === "PUT" && parts[2] === "branding") {
+        const payload = await readBody(req);
+        state.settings = normalizeBranding(payload, state.settings);
+        scheduleSave();
+        broadcastSnapshot();
+        return sendJson(res, 200, publicSettings(session.user));
+      }
     }
 
     if (parts[1] === "users") {

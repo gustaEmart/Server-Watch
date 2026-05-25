@@ -54,6 +54,15 @@ const els = {
   groupCount: document.querySelector("#groupCount"),
   usersList: document.querySelector("#usersList"),
   userCount: document.querySelector("#userCount"),
+  brandingForm: document.querySelector("#brandingForm"),
+  brandNameInput: document.querySelector("#brandNameInput"),
+  brandSubtitleInput: document.querySelector("#brandSubtitleInput"),
+  brandLogoInput: document.querySelector("#brandLogoInput"),
+  removeBrandLogo: document.querySelector("#removeBrandLogo"),
+  brandPreviewLogo: document.querySelector("#brandPreviewLogo"),
+  brandPreviewInitials: document.querySelector("#brandPreviewInitials"),
+  brandPreviewName: document.querySelector("#brandPreviewName"),
+  brandPreviewSubtitle: document.querySelector("#brandPreviewSubtitle"),
   userDialog: document.querySelector("#userDialog"),
   userForm: document.querySelector("#userForm"),
   userDialogTitle: document.querySelector("#userDialogTitle"),
@@ -116,6 +125,48 @@ function api(path, options = {}) {
 
 function isAdmin() {
   return state.currentUser?.role === "admin";
+}
+
+function branding() {
+  return {
+    brandName: state.settings.brandName || "ServerWatch",
+    brandSubtitle: state.settings.brandSubtitle || "MVP LAN",
+    logoDataUrl: state.settings.logoDataUrl || ""
+  };
+}
+
+function brandInitials(name) {
+  return String(name || "SW")
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0])
+    .join("")
+    .toUpperCase()
+    .slice(0, 3) || "SW";
+}
+
+function paintBrandLogo(element, logoDataUrl, name) {
+  if (!element) return;
+  element.style.backgroundImage = logoDataUrl ? `url("${logoDataUrl}")` : "";
+  element.classList.toggle("has-image", Boolean(logoDataUrl));
+  const initials = element.querySelector(".brand-initials");
+  if (initials) initials.textContent = brandInitials(name);
+}
+
+function applyBranding() {
+  const current = branding();
+  document.title = current.brandName;
+  document.querySelectorAll(".brand-name").forEach((item) => {
+    item.textContent = current.brandName;
+  });
+  document.querySelectorAll(".brand-subtitle").forEach((item) => {
+    item.textContent = current.brandSubtitle;
+  });
+  document.querySelectorAll(".brand-logo").forEach((item) => {
+    paintBrandLogo(item, current.logoDataUrl, current.brandName);
+  });
+  renderBrandingForm();
 }
 
 function showLogin() {
@@ -232,6 +283,7 @@ function applySnapshot(payload) {
   state.users = payload.users || [];
   state.currentUser = payload.currentUser || state.currentUser;
   state.settings = payload.settings || {};
+  applyBranding();
   state.alerts = payload.alerts || [];
   state.events = payload.events || [];
   if (state.selectedServerId && !state.servers.some((server) => server.id === state.selectedServerId)) {
@@ -812,6 +864,58 @@ function renderUsers() {
     : `<div class="empty-list">Nenhum usuario cadastrado.</div>`;
 }
 
+function renderBrandingForm() {
+  if (!els.brandingForm) return;
+  const current = branding();
+  if (document.activeElement !== els.brandNameInput) els.brandNameInput.value = current.brandName;
+  if (document.activeElement !== els.brandSubtitleInput) els.brandSubtitleInput.value = current.brandSubtitle;
+  if (els.brandPreviewName) els.brandPreviewName.textContent = current.brandName;
+  if (els.brandPreviewSubtitle) els.brandPreviewSubtitle.textContent = current.brandSubtitle || "Sem subtitulo";
+  paintBrandLogo(els.brandPreviewLogo, current.logoDataUrl, current.brandName);
+}
+
+function readLogoFile(file) {
+  return new Promise((resolve, reject) => {
+    if (!file) {
+      resolve(null);
+      return;
+    }
+    if (file.size > 512 * 1024) {
+      reject(new Error("A logo deve ter ate 500 KB."));
+      return;
+    }
+    const allowed = ["image/png", "image/jpeg", "image/webp", "image/svg+xml"];
+    if (!allowed.includes(file.type)) {
+      reject(new Error("Use uma imagem PNG, JPG, WEBP ou SVG."));
+      return;
+    }
+    const reader = new FileReader();
+    reader.addEventListener("load", () => resolve(String(reader.result || "")));
+    reader.addEventListener("error", () => reject(new Error("Nao foi possivel ler a imagem.")));
+    reader.readAsDataURL(file);
+  });
+}
+
+async function submitBranding(event) {
+  event.preventDefault();
+  try {
+    const current = branding();
+    const selectedLogo = await readLogoFile(els.brandLogoInput.files?.[0]);
+    const payload = {
+      brandName: els.brandNameInput.value,
+      brandSubtitle: els.brandSubtitleInput.value,
+      logoDataUrl: selectedLogo ?? current.logoDataUrl
+    };
+    const settings = await api("/api/settings/branding", { method: "PUT", body: JSON.stringify(payload) });
+    state.settings = { ...state.settings, ...settings };
+    els.brandLogoInput.value = "";
+    applyBranding();
+    showToast("Identidade salva", "A marca da interface foi atualizada.");
+  } catch (error) {
+    showToast("Falha ao salvar identidade", error.message);
+  }
+}
+
 function probeToken() {
   return String(state.settings.probeToken || "");
 }
@@ -858,6 +962,7 @@ function render() {
   renderGroups();
   renderProbes();
   renderUsers();
+  renderBrandingForm();
 }
 
 function showToast(title, message) {
@@ -1148,6 +1253,25 @@ function bindEvents() {
   document.querySelector("#closeUserDialog").addEventListener("click", closeUserDialog);
   document.querySelector("#cancelUserForm").addEventListener("click", closeUserDialog);
   els.userForm.addEventListener("submit", submitUser);
+  els.brandingForm?.addEventListener("submit", submitBranding);
+  els.removeBrandLogo?.addEventListener("click", async () => {
+    try {
+      const settings = await api("/api/settings/branding", {
+        method: "PUT",
+        body: JSON.stringify({
+          brandName: els.brandNameInput.value,
+          brandSubtitle: els.brandSubtitleInput.value,
+          logoDataUrl: ""
+        })
+      });
+      state.settings = { ...state.settings, ...settings };
+      els.brandLogoInput.value = "";
+      applyBranding();
+      showToast("Logo removida", "A interface voltou a usar as iniciais da marca.");
+    } catch (error) {
+      showToast("Falha ao remover logo", error.message);
+    }
+  });
 
   els.usersList.addEventListener("click", async (event) => {
     const button = event.target.closest("[data-user-action]");
@@ -1259,7 +1383,9 @@ function bindEvents() {
 
 bindEvents();
 api("/api/auth/session")
-  .then(async ({ user }) => {
+  .then(async ({ user, settings }) => {
+    state.settings = settings || state.settings;
+    applyBranding();
     if (!user) {
       showLogin();
       return;
