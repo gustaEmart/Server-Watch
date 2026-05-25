@@ -21,11 +21,13 @@ New-Item -ItemType Directory -Path $packageDir -Force | Out-Null
 
 Copy-Item -Path (Join-Path $PSScriptRoot "Install-ProbeCollectorUi.ps1") -Destination (Join-Path $packageDir "Install-ProbeCollectorUi.ps1") -Force
 Copy-Item -Path (Join-Path $PSScriptRoot "RunInstaller.vbs") -Destination (Join-Path $packageDir "RunInstaller.vbs") -Force
+Copy-Item -Path (Join-Path $PSScriptRoot "RunElevated.ps1") -Destination (Join-Path $packageDir "RunElevated.ps1") -Force
 Copy-Item -Path (Join-Path $repoRoot "probe\collector.js") -Destination (Join-Path $packageDir "collector.js") -Force
 Copy-Item -Path (Join-Path $repoRoot "probe\setup-server.js") -Destination (Join-Path $packageDir "setup-server.js") -Force
 
 $files = @(
   "RunInstaller.vbs",
+  "RunElevated.ps1",
   "Install-ProbeCollectorUi.ps1",
   "collector.js",
   "setup-server.js"
