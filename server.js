@@ -706,6 +706,65 @@ function upsertProbe({ probeId, name, version, hostName, primaryAddress, address
   return { probe, changed: true };
 }
 
+function ensureProbeServer(probe) {
+  const hostname = String(probe.primaryAddress || probe.addresses?.[0] || "").trim();
+  if (!hostname) return { server: null, changed: false };
+
+  const serverName = String(probe.hostName || probe.name || probe.id).trim();
+  const existing = state.servers.find(
+    (server) => !server.deletedAt && server.checkSource === "probe" && server.probeId === probe.id
+  );
+
+  if (existing) {
+    let changed = false;
+    if (existing.autoCreatedByProbe && existing.hostname !== hostname) {
+      existing.hostname = hostname;
+      changed = true;
+    }
+    if (existing.autoCreatedByProbe && serverName && existing.name !== serverName) {
+      existing.name = serverName;
+      changed = true;
+    }
+    if (!existing.isActive) {
+      existing.isActive = true;
+      changed = true;
+    }
+    if (changed) existing.updatedAt = nowIso();
+    return { server: existing, changed };
+  }
+
+  const createdAt = nowIso();
+  const server = {
+    id: randomUUID(),
+    name: serverName || probe.id,
+    hostname,
+    description: "Cadastro criado automaticamente pelo Probe Collector.",
+    checkMethod: "ping",
+    checkSource: "probe",
+    probeId: probe.id,
+    checkInterval: state.settings.defaultInterval,
+    failureThreshold: state.settings.defaultFailureThreshold,
+    environment: "production",
+    groupId: null,
+    location: "",
+    tags: ["probe"],
+    isActive: true,
+    currentStatus: "unknown",
+    previousStatus: "unknown",
+    statusChangedAt: createdAt,
+    lastCheckedAt: null,
+    lastLatencyMs: null,
+    lastError: null,
+    lastProbeSeenAt: probe.lastSeenAt || createdAt,
+    consecutiveFailures: 0,
+    createdAt,
+    updatedAt: createdAt,
+    autoCreatedByProbe: true
+  };
+  state.servers.unshift(server);
+  return { server, changed: true };
+}
+
 function probeTargets(probeId) {
   return listedServers()
     .filter((server) => server.isActive && server.checkSource === "probe" && server.probeId === probeId)
@@ -916,8 +975,9 @@ async function handleApi(req, res) {
           remoteAddress: req.socket.remoteAddress
         });
         if (!registered) return sendJson(res, 400, { error: "Informe probeId." });
+        const ensuredServer = ensureProbeServer(registered.probe);
         scheduleSave();
-        if (registered.changed) broadcastSnapshot();
+        if (registered.changed || ensuredServer.changed) broadcastSnapshot();
         return sendJson(res, 200, {
           probe: publicProbe(registered.probe),
           targets: probeTargets(registered.probe.id)
@@ -937,6 +997,7 @@ async function handleApi(req, res) {
         });
         if (!registered) return sendJson(res, 400, { error: "Informe probeId." });
         const probe = registered.probe;
+        const ensuredServer = ensureProbeServer(probe);
         const results = Array.isArray(payload.results) ? payload.results : [];
         let accepted = 0;
         for (const result of results) {
@@ -952,7 +1013,7 @@ async function handleApi(req, res) {
           accepted += 1;
         }
         scheduleSave();
-        if (registered.changed || accepted > 0) broadcastSnapshot();
+        if (registered.changed || ensuredServer.changed || accepted > 0) broadcastSnapshot();
         return sendJson(res, 200, { ok: true, accepted });
       }
     }

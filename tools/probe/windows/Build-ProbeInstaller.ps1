@@ -1,6 +1,7 @@
 param(
   [string]$OutputDir = "dist\probe-installer",
-  [switch]$SkipBundledNode
+  [switch]$SkipBundledNode,
+  [string]$DefaultsPath = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -29,6 +30,12 @@ $files = @(
   "collector.js",
   "setup-server.js"
 )
+
+if (-not [string]::IsNullOrWhiteSpace($DefaultsPath)) {
+  $resolvedDefaults = Resolve-Path $DefaultsPath
+  Copy-Item -Path $resolvedDefaults -Destination (Join-Path $packageDir "installer-defaults.json") -Force
+  $files += "installer-defaults.json"
+}
 
 if (-not $SkipBundledNode) {
   $node = Get-Command node.exe -ErrorAction SilentlyContinue

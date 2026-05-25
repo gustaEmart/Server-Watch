@@ -3,6 +3,12 @@ Add-Type -AssemblyName System.Drawing
 
 $ErrorActionPreference = "Stop"
 
+$sourceDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+$defaultsPath = Join-Path $sourceDir "installer-defaults.json"
+$installDir = Join-Path $env:ProgramData "ServerWatchProbe"
+$configPath = Join-Path $installDir "config.json"
+$taskName = "ServerWatch Probe Collector"
+
 function Test-Administrator {
   $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
   $principal = New-Object Security.Principal.WindowsPrincipal($identity)
@@ -10,19 +16,22 @@ function Test-Administrator {
 }
 
 if (-not (Test-Administrator)) {
-  [System.Windows.Forms.MessageBox]::Show(
-    "Execute o instalador como Administrador para instalar o Probe Collector como tarefa do sistema.",
-    "ServerWatch Probe Collector",
-    [System.Windows.Forms.MessageBoxButtons]::OK,
-    [System.Windows.Forms.MessageBoxIcon]::Warning
-  ) | Out-Null
+  try {
+    Start-Process `
+      -FilePath "powershell.exe" `
+      -ArgumentList "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "`"$PSCommandPath`"" `
+      -WorkingDirectory $sourceDir `
+      -Verb RunAs | Out-Null
+  } catch {
+    [System.Windows.Forms.MessageBox]::Show(
+      "Nao foi possivel solicitar permissao de Administrador. Execute o instalador novamente e aceite o UAC.",
+      "ServerWatch Probe Collector",
+      [System.Windows.Forms.MessageBoxButtons]::OK,
+      [System.Windows.Forms.MessageBoxIcon]::Warning
+    ) | Out-Null
+  }
   exit 1
 }
-
-$sourceDir = Split-Path -Parent $MyInvocation.MyCommand.Path
-$installDir = Join-Path $env:ProgramData "ServerWatchProbe"
-$configPath = Join-Path $installDir "config.json"
-$taskName = "ServerWatch Probe Collector"
 
 function Get-DefaultProbeName {
   try {
@@ -38,8 +47,39 @@ function Get-DefaultProbeName {
   return "serverwatch-probe"
 }
 
+function Get-LocalIPv4Addresses {
+  try {
+    return @(
+      [System.Net.Dns]::GetHostAddresses([System.Net.Dns]::GetHostName()) |
+        Where-Object {
+          $_.AddressFamily -eq [System.Net.Sockets.AddressFamily]::InterNetwork -and
+          -not $_.IPAddressToString.StartsWith("127.") -and
+          -not $_.IPAddressToString.StartsWith("169.254.")
+        } |
+        ForEach-Object { $_.IPAddressToString }
+    )
+  } catch {
+    return @()
+  }
+}
+
 function Read-ExistingConfig {
   $defaultName = Get-DefaultProbeName
+  if (Test-Path $defaultsPath) {
+    try {
+      $defaults = Get-Content $defaultsPath -Raw | ConvertFrom-Json
+      return @{
+        serverUrl = [string]$defaults.serverUrl
+        probeId = $(if ([string]::IsNullOrWhiteSpace([string]$defaults.probeId)) { $defaultName } else { [string]$defaults.probeId })
+        name = $(if ([string]::IsNullOrWhiteSpace([string]$defaults.name)) { $defaultName } else { [string]$defaults.name })
+        token = [string]$defaults.token
+        intervalSeconds = $(if ($defaults.intervalSeconds) { [int]$defaults.intervalSeconds } else { 10 })
+        timeoutMs = $(if ($defaults.timeoutMs) { [int]$defaults.timeoutMs } else { 2500 })
+      }
+    } catch {
+    }
+  }
+
   if (-not (Test-Path $configPath)) {
     return @{
       serverUrl = ""
@@ -73,6 +113,14 @@ function Read-ExistingConfig {
   }
 }
 
+function Has-CompleteConfig($values) {
+  return (
+    -not [string]::IsNullOrWhiteSpace($values.serverUrl) -and
+    -not [string]::IsNullOrWhiteSpace($values.probeId) -and
+    -not [string]::IsNullOrWhiteSpace($values.token)
+  )
+}
+
 function Set-InstallProgress($value, $message) {
   if ($script:progressBar) {
     $script:progressBar.Value = [Math]::Max($script:progressBar.Minimum, [Math]::Min($script:progressBar.Maximum, [int]$value))
@@ -104,7 +152,11 @@ function Register-Probe($values) {
   $probeId = [System.Uri]::EscapeDataString($values.probeId.Trim())
   $probeName = $(if ([string]::IsNullOrWhiteSpace($values.name)) { $values.probeId.Trim() } else { $values.name.Trim() })
   $probeName = [System.Uri]::EscapeDataString($probeName)
-  $targetUrl = "$serverUrl/api/probe/targets?probeId=$probeId&name=$probeName&version=0.1.0-installer"
+  $addresses = @(Get-LocalIPv4Addresses)
+  $primaryAddress = $(if ($addresses.Count -gt 0) { $addresses[0] } else { "" })
+  $encodedAddresses = [System.Uri]::EscapeDataString((ConvertTo-Json -Compress -InputObject @($addresses)))
+  $hostName = [System.Uri]::EscapeDataString((Get-DefaultProbeName))
+  $targetUrl = "$serverUrl/api/probe/targets?probeId=$probeId&name=$probeName&version=0.1.0-installer&hostName=$hostName&primaryAddress=$primaryAddress&addresses=$encodedAddresses"
   $headers = @{
     Authorization = "Bearer $($values.token.Trim())"
     "X-ServerWatch-Probe-Token" = $values.token.Trim()
@@ -256,6 +308,56 @@ function Install-Probe($values) {
 }
 
 $existing = Read-ExistingConfig
+
+if ((Test-Path $defaultsPath) -and (Has-CompleteConfig $existing)) {
+  $progressForm = New-Object System.Windows.Forms.Form
+  $progressForm.Text = "ServerWatch Probe Collector"
+  $progressForm.StartPosition = "CenterScreen"
+  $progressForm.ClientSize = New-Object System.Drawing.Size(480, 116)
+  $progressForm.FormBorderStyle = "FixedDialog"
+  $progressForm.MaximizeBox = $false
+  $progressForm.MinimizeBox = $false
+
+  $autoLabel = New-Object System.Windows.Forms.Label
+  $autoLabel.Location = New-Object System.Drawing.Point(18, 18)
+  $autoLabel.Size = New-Object System.Drawing.Size(444, 20)
+  $autoLabel.Text = "Instalando ServerWatch Probe Collector..."
+  $progressForm.Controls.Add($autoLabel)
+  $script:statusLabel = $autoLabel
+
+  $autoProgress = New-Object System.Windows.Forms.ProgressBar
+  $autoProgress.Location = New-Object System.Drawing.Point(18, 52)
+  $autoProgress.Size = New-Object System.Drawing.Size(444, 22)
+  $autoProgress.Minimum = 0
+  $autoProgress.Maximum = 100
+  $progressForm.Controls.Add($autoProgress)
+  $script:progressBar = $autoProgress
+
+  $progressForm.Show()
+  [System.Windows.Forms.Application]::DoEvents()
+
+  try {
+    Install-Probe $existing
+    [System.Windows.Forms.MessageBox]::Show(
+      "Probe instalado, iniciado e cadastrado automaticamente.",
+      "ServerWatch Probe Collector",
+      [System.Windows.Forms.MessageBoxButtons]::OK,
+      [System.Windows.Forms.MessageBoxIcon]::Information
+    ) | Out-Null
+    $progressForm.Close()
+    exit 0
+  } catch {
+    Set-InstallProgress 0 $_.Exception.Message
+    [System.Windows.Forms.MessageBox]::Show(
+      $_.Exception.Message,
+      "Erro na instalacao",
+      [System.Windows.Forms.MessageBoxButtons]::OK,
+      [System.Windows.Forms.MessageBoxIcon]::Error
+    ) | Out-Null
+    $progressForm.Close()
+    exit 1
+  }
+}
 
 function Color($hex) {
   return [System.Drawing.ColorTranslator]::FromHtml($hex)
