@@ -11,6 +11,9 @@ services:
       HOST: 0.0.0.0
       PORT: 3000
       DATA_DIR: /app/data
+      SERVERWATCH_STORAGE: ${SERVERWATCH_STORAGE:-json}
+      MONGODB_URI: ${MONGODB_URI:-}
+      MONGODB_DB: ${MONGODB_DB:-serverwatch}
     ports:
       - "${SERVERWATCH_PORT:-3000}:3000"
     volumes:
@@ -24,5 +27,20 @@ services:
       retries: 3
       start_period: 10s
 
+  mongodb:
+    image: mongo:7
+    container_name: serverwatch-mongodb
+    restart: unless-stopped
+    profiles:
+      - mongodb
+    ports:
+      - "127.0.0.1:27017:27017"
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_INITDB_ROOT_USERNAME:-serverwatch}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_INITDB_ROOT_PASSWORD:-troque-essa-senha}
+    volumes:
+      - mongodb_data:/data/db
+
 volumes:
   serverwatch_data:
+  mongodb_data:

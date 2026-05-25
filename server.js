@@ -1,15 +1,16 @@
 import { createServer } from "node:http";
 import { createHash, randomUUID, scryptSync, timingSafeEqual } from "node:crypto";
 import { spawn } from "node:child_process";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { existsSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import { extname, join, resolve } from "node:path";
 import os from "node:os";
+import { createStorage } from "./storage/index.js";
 
 const PORT = Number(process.env.PORT || 3000);
 const HOST = process.env.HOST || "0.0.0.0";
 const DATA_DIR = resolve(process.env.DATA_DIR || "data");
 const DATA_FILE = join(DATA_DIR, "serverwatch.json");
+const STORAGE_TYPE = process.env.SERVERWATCH_STORAGE || (process.env.MONGODB_URI ? "mongodb" : "json");
 const PUBLIC_DIR = resolve("public");
 const DOWNLOADS = {
   "/downloads/probe/linux-installer": {
@@ -63,6 +64,12 @@ let state = {
   }
 };
 let saveTimer = null;
+const storage = createStorage({
+  type: STORAGE_TYPE,
+  dataFile: DATA_FILE,
+  mongoUri: process.env.MONGODB_URI,
+  mongoDb: process.env.MONGODB_DB || "serverwatch"
+});
 
 const mimeTypes = {
   ".html": "text/html; charset=utf-8",
@@ -349,16 +356,14 @@ function createSeedState() {
 }
 
 async function loadState() {
-  await mkdir(DATA_DIR, { recursive: true });
-  if (!existsSync(DATA_FILE)) {
+  const parsed = await storage.loadState();
+  if (!parsed) {
     state = createSeedState();
     ensureDefaultAdmin();
     await persistState();
     return;
   }
 
-  const raw = await readFile(DATA_FILE, "utf8");
-  const parsed = JSON.parse(raw);
   state = {
     ...state,
     ...parsed,
@@ -398,12 +403,11 @@ async function loadState() {
 }
 
 async function persistState() {
-  await mkdir(DATA_DIR, { recursive: true });
   const payload = {
     ...state,
     servers: state.servers.map(({ nextCheckAt, ...server }) => server)
   };
-  await writeFile(DATA_FILE, JSON.stringify(payload, null, 2), "utf8");
+  await storage.saveState(payload);
 }
 
 function scheduleSave() {

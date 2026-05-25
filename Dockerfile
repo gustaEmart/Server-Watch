@@ -9,9 +9,13 @@ ENV HOST=0.0.0.0
 ENV PORT=3000
 ENV DATA_DIR=/app/data
 
-COPY package.json ./
+COPY package*.json ./
+COPY storage ./storage
+COPY scripts ./scripts
 COPY server.js ./
 COPY public ./public
+
+RUN npm ci --omit=dev
 
 RUN mkdir -p /app/data && chown -R node:node /app
 
