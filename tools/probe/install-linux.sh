@@ -92,6 +92,11 @@ fi
 mkdir -p "$INSTALL_DIR"
 cp "$TMP_DIR/collector.js" "$INSTALL_DIR/collector.js"
 cp "$TMP_DIR/setup-server.js" "$INSTALL_DIR/setup-server.js"
+cat >"$INSTALL_DIR/package.json" <<'EOF'
+{
+  "type": "module"
+}
+EOF
 cat >"$INSTALL_DIR/config.json" <<EOF
 {
   "serverUrl": "$SERVER_URL",
