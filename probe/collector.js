@@ -92,7 +92,8 @@ function failureReason(output) {
     [/100%\s*(?:loss|de\s+perda)/i, "Sem resposta ao ping."],
     [/(?:received|recebidos)\s*=\s*0/i, "Sem resposta ao ping."]
   ];
-  return checks.find(([pattern]) => pattern.test(output))?.[1] || null;
+  const match = checks.find(([pattern]) => pattern.test(output));
+  return match ? match[1] : null;
 }
 
 function hasReply(output, latencyMs) {
@@ -134,7 +135,7 @@ function pingHost(hostname, timeoutMs) {
       const online = code === 0 && !reason && hasReply(output, latencyMs);
       resolve({
         online,
-        latencyMs: online ? latencyMs ?? Date.now() - startedAt : null,
+        latencyMs: online ? (latencyMs === null || latencyMs === undefined ? Date.now() - startedAt : latencyMs) : null,
         error: online ? null : reason || "Sem resposta ao ping.",
         checkedAt: new Date().toISOString()
       });

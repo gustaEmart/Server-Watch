@@ -46,6 +46,22 @@ if ! command -v node >/dev/null 2>&1; then
   exit 1
 fi
 
+NODE_VERSION="$(node -p 'process.versions.node' 2>/dev/null || true)"
+NODE_MAJOR="${NODE_VERSION%%.*}"
+if [[ -z "$NODE_VERSION" || -z "$NODE_MAJOR" || "$NODE_MAJOR" -lt 20 ]]; then
+  cat >&2 <<EOF
+Node.js 20+ is required by ServerWatch Probe Collector.
+Current Node.js: ${NODE_VERSION:-not detected}
+
+On Ubuntu/Debian, install Node.js 20 with:
+  curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+  sudo apt-get install -y nodejs
+
+Then run the ServerWatch probe install command again.
+EOF
+  exit 1
+fi
+
 SERVER_URL="${SERVER_URL%/}"
 TMP_DIR="$(mktemp -d)"
 cleanup() {
