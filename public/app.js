@@ -36,6 +36,7 @@ const els = {
   metricOffline: document.querySelector("#metricOffline"),
   metricAvailability: document.querySelector("#metricAvailability"),
   metricAlerts: document.querySelector("#metricAlerts"),
+  metricsGrid: document.querySelector("#metricsGrid"),
   overviewScope: document.querySelector("#overviewScope"),
   statusDonut: document.querySelector("#statusDonut"),
   statusLegend: document.querySelector("#statusLegend"),
@@ -329,6 +330,15 @@ function applySnapshot(payload) {
   renderGroupOptions();
   renderProbeOptions();
   render();
+}
+
+function activeViewName() {
+  return document.querySelector(".nav-tab.active")?.dataset.view || "dashboard";
+}
+
+function updateMetricsVisibility() {
+  if (!els.metricsGrid) return;
+  els.metricsGrid.hidden = !["dashboard", "groups"].includes(activeViewName());
 }
 
 function upsertServer(server) {
@@ -1004,6 +1014,7 @@ function renderProbes() {
 }
 
 function render() {
+  updateMetricsVisibility();
   renderMetrics();
   renderCompanyNav();
   renderServers();
@@ -1232,6 +1243,7 @@ function bindEvents() {
       document.querySelectorAll(".view").forEach((item) => item.classList.remove("active"));
       button.classList.add("active");
       document.querySelector(`#${button.dataset.view}View`).classList.add("active");
+      updateMetricsVisibility();
     });
   });
 
@@ -1271,6 +1283,7 @@ function bindEvents() {
     document.querySelectorAll(".view").forEach((item) => item.classList.remove("active"));
     document.querySelector('[data-view="dashboard"]').classList.add("active");
     document.querySelector("#dashboardView").classList.add("active");
+    updateMetricsVisibility();
     render();
   });
 
