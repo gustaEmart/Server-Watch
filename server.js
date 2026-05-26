@@ -17,7 +17,7 @@ const DOWNLOADS = {
     path: resolve("tools/probe/install-linux.sh"),
     filename: "serverwatch-probe-install-linux.sh",
     contentType: "text/x-shellscript; charset=utf-8",
-    public: true
+    allowProbeToken: true
   },
   "/downloads/probe/collector.js": {
     path: resolve("probe/collector.js"),
@@ -558,7 +558,7 @@ function snapshot(currentUser = null) {
     summary: summary(),
     servers: listedServers().map(publicServer),
     groups: listedGroups().map(publicGroup),
-    probes: (state.probes || []).map(publicProbe),
+    probes: currentUser?.role === "admin" ? (state.probes || []).map(publicProbe) : [],
     users: currentUser?.role === "admin" ? listedUsers().map(publicUser) : [],
     currentUser: currentUser ? publicUser(currentUser) : null,
     settings: publicSettings(currentUser),
@@ -1017,10 +1017,11 @@ async function serveDownload(req, res) {
   const { pathname } = getRouteParts(req);
   const download = DOWNLOADS[pathname];
   if (!download) return notFound(res);
-  const hasSession = Boolean(getSession(req));
+  const session = getSession(req);
+  const hasAdminSession = session?.user?.role === "admin";
   const hasProbeToken = download.allowProbeToken && authorizeProbe(req);
-  if (!download.public && !hasSession && !hasProbeToken) {
-    sendJson(res, 401, { error: "Autenticacao necessaria." });
+  if (!download.public && !hasAdminSession && !hasProbeToken) {
+    sendJson(res, session ? 403 : 401, { error: session ? "Apenas administradores podem baixar este arquivo." : "Autenticacao necessaria." });
     return;
   }
 
@@ -1171,6 +1172,7 @@ async function handleApi(req, res) {
     }
 
     if (req.method === "GET" && parts[1] === "probes") {
+      if (!requireAdmin(req, res)) return;
       return sendJson(res, 200, (state.probes || []).map(publicProbe));
     }
 
@@ -1242,6 +1244,8 @@ async function handleApi(req, res) {
         return sendJson(res, 200, listedGroups().map(publicGroup));
       }
 
+      if (req.method !== "GET" && !requireAdmin(req, res)) return;
+
       if (req.method === "POST" && parts.length === 2) {
         const payload = await readBody(req);
         const createdAt = nowIso();
@@ -1292,6 +1296,24 @@ async function handleApi(req, res) {
         return sendJson(res, 200, listedServers().map(publicServer));
       }
 
+      if (req.method === "GET" && parts.length === 3) {
+        const id = parts[2];
+        const server = state.servers.find((item) => item.id === id && !item.deletedAt);
+        if (!server) return notFound(res);
+        return sendJson(res, 200, publicServer(server));
+      }
+
+      if (req.method === "GET" && parts[3] === "history") {
+        const id = parts[2];
+        const server = state.servers.find((item) => item.id === id && !item.deletedAt);
+        if (!server) return notFound(res);
+        const limit = Number(url.searchParams.get("limit") || 100);
+        const events = state.events.filter((event) => event.serverId === id).slice(0, Math.min(limit, 500));
+        return sendJson(res, 200, events);
+      }
+
+      if (!requireAdmin(req, res)) return;
+
       if (req.method === "POST" && parts.length === 2) {
         const payload = await readBody(req);
         const createdAt = nowIso();
@@ -1317,10 +1339,6 @@ async function handleApi(req, res) {
       const id = parts[2];
       const server = state.servers.find((item) => item.id === id && !item.deletedAt);
       if (!server) return notFound(res);
-
-      if (req.method === "GET" && parts.length === 3) {
-        return sendJson(res, 200, publicServer(server));
-      }
 
       if (req.method === "PUT" && parts.length === 3) {
         const payload = await readBody(req);
@@ -1368,12 +1386,6 @@ async function handleApi(req, res) {
         server.nextCheckAt = Date.now();
         await checkServer(server);
         return sendJson(res, 200, { status: "checked", server: publicServer(server) });
-      }
-
-      if (req.method === "GET" && parts[3] === "history") {
-        const limit = Number(url.searchParams.get("limit") || 100);
-        const events = state.events.filter((event) => event.serverId === id).slice(0, Math.min(limit, 500));
-        return sendJson(res, 200, events);
       }
     }
 

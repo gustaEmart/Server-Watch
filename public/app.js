@@ -723,10 +723,32 @@ function renderDetail() {
         <span>Este servidor esta cadastrado, mas nao esta recebendo pings nem gerando alertas.</span>
       </div>
     `;
-  const checkButton = server.isActive
+  const checkButton = isAdmin() && server.isActive
     ? `<button class="ghost-button compact" type="button" data-action="check" data-id="${server.id}">${
         server.checkSource === "probe" ? "Solicitar checagem" : "Checar agora"
       }</button>`
+    : "";
+  const adminActions = isAdmin()
+    ? `
+      <div class="detail-actions">
+        ${checkButton}
+        <button class="ghost-button compact" type="button" data-action="edit" data-id="${server.id}">Editar</button>
+        <button class="ghost-button compact" type="button" data-action="toggle" data-id="${server.id}">
+          ${server.isActive ? "Desativar" : "Reativar"}
+        </button>
+      </div>
+    `
+    : "";
+  const dangerZone = isAdmin()
+    ? `
+      <div class="danger-zone">
+        <div>
+          <strong>Excluir servidor</strong>
+          <span>Remove da listagem e para definitivamente o monitoramento deste cadastro.</span>
+        </div>
+        <button class="danger-button compact" type="button" data-action="delete" data-id="${server.id}">Excluir servidor</button>
+      </div>
+    `
     : "";
   const probeStats =
     server.checkSource === "probe"
@@ -767,13 +789,7 @@ function renderDetail() {
       ${probeStats}
     </div>
 
-    <div class="detail-actions">
-      ${checkButton}
-      <button class="ghost-button compact" type="button" data-action="edit" data-id="${server.id}">Editar</button>
-      <button class="ghost-button compact" type="button" data-action="toggle" data-id="${server.id}">
-        ${server.isActive ? "Desativar" : "Reativar"}
-      </button>
-    </div>
+    ${adminActions}
 
     <div class="panel-title">
       <h2>Historico recente</h2>
@@ -787,13 +803,7 @@ function renderDetail() {
       }
     </div>
 
-    <div class="danger-zone">
-      <div>
-        <strong>Excluir servidor</strong>
-        <span>Remove da listagem e para definitivamente o monitoramento deste cadastro.</span>
-      </div>
-      <button class="danger-button compact" type="button" data-action="delete" data-id="${server.id}">Excluir servidor</button>
-    </div>
+    ${dangerZone}
   `;
 }
 
@@ -866,7 +876,7 @@ function renderGroups() {
             <span>${activeServers.length} ativos</span>
             <span>${offline} offline</span>
           </div>
-          <button class="ghost-button compact" type="button" data-group-action="edit" data-id="${group.id}">Editar</button>
+          ${isAdmin() ? `<button class="ghost-button compact" type="button" data-group-action="edit" data-id="${group.id}">Editar</button>` : ""}
         </article>
       `;
     })
@@ -963,11 +973,11 @@ function probeToken() {
 
 function probeInstallCommand() {
   const token = probeToken();
-  return `curl -fsSL ${location.origin}/downloads/probe/linux-installer | sudo bash -s -- --server-url ${location.origin} --probe-id cliente-acme-sp --token ${token} --name "Cliente ACME"`;
+  return `curl -fsSL -H "X-ServerWatch-Probe-Token: ${token}" ${location.origin}/downloads/probe/linux-installer | sudo bash -s -- --server-url ${location.origin} --probe-id cliente-acme-sp --token ${token} --name "Cliente ACME"`;
 }
 
 function renderProbes() {
-  if (!els.probeTokenValue) return;
+  if (!els.probeTokenValue || !isAdmin()) return;
   const token = probeToken();
   els.probeTokenValue.value = token;
   els.probeInstallCommand.textContent = token ? probeInstallCommand() : "Token ainda nao disponivel.";
@@ -1334,6 +1344,7 @@ function bindEvents() {
   });
 
   els.groupsList.addEventListener("click", (event) => {
+    if (!isAdmin()) return;
     const button = event.target.closest("[data-group-action]");
     if (!button) return;
     const group = state.groups.find((item) => item.id === button.dataset.id);
@@ -1349,6 +1360,7 @@ function bindEvents() {
   });
 
   els.detailPanel.addEventListener("click", async (event) => {
+    if (!isAdmin()) return;
     const button = event.target.closest("[data-action]");
     if (!button) return;
     const server = state.servers.find((item) => item.id === button.dataset.id);
