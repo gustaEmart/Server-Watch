@@ -52,6 +52,8 @@ const els = {
   searchInput: document.querySelector("#searchInput"),
   environmentFilter: document.querySelector("#environmentFilter"),
   groupFilter: document.querySelector("#groupFilter"),
+  activeFilterCount: document.querySelector("#activeFilterCount"),
+  clearFilters: document.querySelector("#clearFilters"),
   companyNav: document.querySelector("#companyNav"),
   groupsList: document.querySelector("#groupsList"),
   groupCount: document.querySelector("#groupCount"),
@@ -401,6 +403,17 @@ function updateTopbarContext() {
 function updateMetricsVisibility() {
   if (!els.metricsGrid) return;
   els.metricsGrid.hidden = !["dashboard", "groups"].includes(activeViewName());
+}
+
+function updateActiveFilterCount() {
+  if (!els.activeFilterCount) return;
+  const active = [
+    state.filters.status !== "all",
+    state.filters.environment !== "all",
+    state.filters.groupId !== "all",
+    Boolean(state.filters.query)
+  ].filter(Boolean).length;
+  els.activeFilterCount.textContent = active ? `${active} ${active === 1 ? "ativo" : "ativos"}` : "Todos";
 }
 
 function upsertServer(server) {
@@ -1078,6 +1091,7 @@ function renderProbes() {
 function render() {
   updateTopbarContext();
   updateMetricsVisibility();
+  updateActiveFilterCount();
   renderMetrics();
   renderCompanyNav();
   renderServers();
@@ -1312,6 +1326,7 @@ function bindEvents() {
       document.querySelectorAll(".segment").forEach((item) => item.classList.remove("active"));
       button.classList.add("active");
       state.filters.status = button.dataset.status;
+      updateActiveFilterCount();
       renderMetrics();
       renderServers();
     });
@@ -1319,18 +1334,35 @@ function bindEvents() {
 
   els.searchInput.addEventListener("input", () => {
     state.filters.query = els.searchInput.value.trim();
+    updateActiveFilterCount();
     renderMetrics();
     renderServers();
   });
 
   els.environmentFilter.addEventListener("change", () => {
     state.filters.environment = els.environmentFilter.value;
+    updateActiveFilterCount();
     renderMetrics();
     renderServers();
   });
 
   els.groupFilter.addEventListener("change", () => {
     state.filters.groupId = els.groupFilter.value;
+    updateActiveFilterCount();
+    render();
+  });
+
+  els.clearFilters?.addEventListener("click", () => {
+    state.filters.status = "all";
+    state.filters.environment = "all";
+    state.filters.groupId = "all";
+    state.filters.query = "";
+    els.searchInput.value = "";
+    els.environmentFilter.value = "all";
+    els.groupFilter.value = "all";
+    document.querySelectorAll(".segment").forEach((item) => {
+      item.classList.toggle("active", item.dataset.status === "all");
+    });
     render();
   });
 

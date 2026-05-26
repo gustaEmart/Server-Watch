@@ -122,27 +122,49 @@
 
         <section class="view active" id="dashboardView">
           <div class="toolbar">
-            <div class="segmented" role="group" aria-label="Filtro de status">
-              <button class="segment active" data-status="all">Todos</button>
-              <button class="segment" data-status="online">Online</button>
-              <button class="segment" data-status="offline">Offline</button>
-              <button class="segment" data-status="unknown">Sem status</button>
-              <button class="segment" data-status="paused">Pausado</button>
-            </div>
-            <label class="search-field">
-              <span>Buscar</span>
-              <input id="searchInput" type="search" placeholder="Nome, IP, tag ou ambiente" />
-            </label>
-            <select id="environmentFilter" aria-label="Filtrar por ambiente">
-              <option value="all">Todos ambientes</option>
-              <option value="production">Producao</option>
-              <option value="staging">Homologacao</option>
-              <option value="development">Desenvolvimento</option>
-            </select>
-            <select id="groupFilter" aria-label="Filtrar por empresa">
-              <option value="all">Todas empresas</option>
-              <option value="none">Sem empresa</option>
-            </select>
+            <details class="filter-menu" id="filterMenu">
+              <summary class="filter-toggle">
+                <span>Filtrar</span>
+                <small id="activeFilterCount">Todos</small>
+              </summary>
+              <div class="filter-panel" aria-label="Filtros de servidores">
+                <div>
+                  <span class="filter-label">Status</span>
+                  <div class="segmented" role="group" aria-label="Filtro de status">
+                    <button class="segment active" data-status="all" type="button">Todos</button>
+                    <button class="segment" data-status="online" type="button">Online</button>
+                    <button class="segment" data-status="offline" type="button">Offline</button>
+                    <button class="segment" data-status="unknown" type="button">Sem status</button>
+                    <button class="segment" data-status="paused" type="button">Pausado</button>
+                  </div>
+                </div>
+                <label class="search-field">
+                  <span>Buscar</span>
+                  <input id="searchInput" type="search" placeholder="Nome, IP, tag ou ambiente" />
+                </label>
+                <div class="filter-grid">
+                  <label>
+                    Ambiente
+                    <select id="environmentFilter" aria-label="Filtrar por ambiente">
+                      <option value="all">Todos ambientes</option>
+                      <option value="production">Producao</option>
+                      <option value="staging">Homologacao</option>
+                      <option value="development">Desenvolvimento</option>
+                    </select>
+                  </label>
+                  <label>
+                    Empresa
+                    <select id="groupFilter" aria-label="Filtrar por empresa">
+                      <option value="all">Todas empresas</option>
+                      <option value="none">Sem empresa</option>
+                    </select>
+                  </label>
+                </div>
+                <div class="filter-actions">
+                  <button class="ghost-button compact" id="clearFilters" type="button">Limpar filtros</button>
+                </div>
+              </div>
+            </details>
           </div>
 
           <div class="server-layout">

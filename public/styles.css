@@ -570,6 +570,89 @@ button {
   gap: 12px;
   margin-bottom: 12px;
   flex-wrap: wrap;
+  position: relative;
+  z-index: 2;
+}
+
+.filter-menu {
+  position: relative;
+}
+
+.filter-menu[open] .filter-toggle {
+  border-color: var(--accent);
+  color: var(--accent-strong);
+  box-shadow: 0 0 0 3px rgba(18, 60, 105, 0.1);
+}
+
+.filter-toggle {
+  min-height: 40px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 0 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  list-style: none;
+  background: var(--surface);
+  color: var(--text);
+  font-weight: 900;
+  cursor: pointer;
+  user-select: none;
+}
+
+.filter-toggle::-webkit-details-marker {
+  display: none;
+}
+
+.filter-toggle::before {
+  content: "";
+  width: 14px;
+  height: 14px;
+  background: currentColor;
+  clip-path: polygon(9% 16%, 91% 16%, 60% 52%, 60% 84%, 40% 84%, 40% 52%);
+  opacity: 0.78;
+}
+
+.filter-toggle small {
+  border-radius: 999px;
+  padding: 3px 8px;
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+  font-size: 0.72rem;
+  font-weight: 900;
+}
+
+.filter-panel {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  width: min(720px, calc(100vw - 48px));
+  display: grid;
+  gap: 14px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: var(--shadow);
+}
+
+.filter-label {
+  display: block;
+  margin-bottom: 6px;
+  color: #334447;
+  font-size: 0.9rem;
+  font-weight: 800;
+}
+
+.filter-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.filter-actions {
+  display: flex;
+  justify-content: flex-end;
 }
 
 .segmented {
@@ -578,6 +661,10 @@ button {
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--surface);
+}
+
+.filter-panel .segmented {
+  flex-wrap: wrap;
 }
 
 .segment {
@@ -604,6 +691,17 @@ button {
   width: 1px;
   height: 1px;
   overflow: hidden;
+}
+
+.filter-panel .search-field {
+  min-width: 0;
+}
+
+.filter-panel .search-field span {
+  position: static;
+  width: auto;
+  height: auto;
+  overflow: visible;
 }
 
 input,
@@ -1401,8 +1499,24 @@ label {
   .detail-grid,
   .probe-grid,
   .token-control,
-  .probe-card {
+  .probe-card,
+  .filter-grid {
     grid-template-columns: 1fr;
+  }
+
+  .filter-menu,
+  .filter-toggle {
+    width: 100%;
+  }
+
+  .filter-toggle {
+    justify-content: space-between;
+  }
+
+  .filter-panel {
+    position: static;
+    width: 100%;
+    margin-top: 8px;
   }
 
   .server-row {
