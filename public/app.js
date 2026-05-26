@@ -31,6 +31,8 @@ const els = {
   loginError: document.querySelector("#loginError"),
   currentUserName: document.querySelector("#currentUserName"),
   logoutButton: document.querySelector("#logoutButton"),
+  topbarEyebrow: document.querySelector("#topbarEyebrow"),
+  topbarTitle: document.querySelector("#topbarTitle"),
   metricTotal: document.querySelector("#metricTotal"),
   metricOnline: document.querySelector("#metricOnline"),
   metricOffline: document.querySelector("#metricOffline"),
@@ -334,6 +336,21 @@ function applySnapshot(payload) {
 
 function activeViewName() {
   return document.querySelector(".nav-tab.active")?.dataset.view || "dashboard";
+}
+
+function updateTopbarContext() {
+  const titles = {
+    dashboard: ["Monitoramento em tempo real", "Disponibilidade dos servidores"],
+    groups: ["Organizacao operacional", "Empresas e grupos"],
+    probes: ["Instalacao e coleta", "Probe Collector"],
+    users: ["Controle de acesso", "Usuarios"],
+    settings: ["Identidade do sistema", "Configuracoes"],
+    history: ["Auditoria operacional", "Historico de eventos"],
+    alerts: ["Incidentes e recuperacoes", "Alertas"]
+  };
+  const [eyebrow, title] = titles[activeViewName()] || titles.dashboard;
+  if (els.topbarEyebrow) els.topbarEyebrow.textContent = eyebrow;
+  if (els.topbarTitle) els.topbarTitle.textContent = title;
 }
 
 function updateMetricsVisibility() {
@@ -1014,6 +1031,7 @@ function renderProbes() {
 }
 
 function render() {
+  updateTopbarContext();
   updateMetricsVisibility();
   renderMetrics();
   renderCompanyNav();
@@ -1243,6 +1261,7 @@ function bindEvents() {
       document.querySelectorAll(".view").forEach((item) => item.classList.remove("active"));
       button.classList.add("active");
       document.querySelector(`#${button.dataset.view}View`).classList.add("active");
+      updateTopbarContext();
       updateMetricsVisibility();
     });
   });
@@ -1283,6 +1302,7 @@ function bindEvents() {
     document.querySelectorAll(".view").forEach((item) => item.classList.remove("active"));
     document.querySelector('[data-view="dashboard"]').classList.add("active");
     document.querySelector("#dashboardView").classList.add("active");
+    updateTopbarContext();
     updateMetricsVisibility();
     render();
   });
