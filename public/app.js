@@ -110,6 +110,18 @@ const els = {
   serverDescription: document.querySelector("#serverDescription")
 };
 
+const VIEW_ROUTES = {
+  dashboard: "/dashboard",
+  groups: "/empresas",
+  probes: "/probes",
+  users: "/usuarios",
+  settings: "/configuracoes",
+  history: "/historico",
+  alerts: "/alertas"
+};
+
+const ROUTE_VIEWS = Object.fromEntries(Object.entries(VIEW_ROUTES).map(([view, route]) => [route, view]));
+
 function api(path, options = {}) {
   return fetch(path, {
     ...options,
@@ -190,9 +202,7 @@ function showApp(user) {
   document.querySelectorAll(".admin-only").forEach((item) => {
     item.hidden = !isAdmin();
   });
-  if (!isAdmin() && document.querySelector(".nav-tab.active")?.classList.contains("admin-only")) {
-    document.querySelector('[data-view="dashboard"]').click();
-  }
+  syncViewFromLocation({ replace: true });
 }
 
 function statusLabel(status) {
@@ -336,6 +346,41 @@ function applySnapshot(payload) {
 
 function activeViewName() {
   return document.querySelector(".nav-tab.active")?.dataset.view || "dashboard";
+}
+
+function viewFromPath(pathname = window.location.pathname) {
+  const normalized = pathname.length > 1 ? pathname.replace(/\/+$/, "") : pathname;
+  return ROUTE_VIEWS[normalized] || "dashboard";
+}
+
+function routeForView(viewName) {
+  return VIEW_ROUTES[viewName] || VIEW_ROUTES.dashboard;
+}
+
+function setActiveView(viewName, options = {}) {
+  const { push = true, replace = false } = options;
+  const requestedTab = document.querySelector(`.nav-tab[data-view="${viewName}"]`);
+  const nextView = requestedTab?.hidden ? "dashboard" : viewName;
+  const tab = document.querySelector(`.nav-tab[data-view="${nextView}"]`) || document.querySelector('[data-view="dashboard"]');
+  const view = document.querySelector(`#${tab.dataset.view}View`);
+  if (!tab || !view) return;
+
+  document.querySelectorAll(".nav-tab").forEach((item) => item.classList.remove("active"));
+  document.querySelectorAll(".view").forEach((item) => item.classList.remove("active"));
+  tab.classList.add("active");
+  view.classList.add("active");
+  updateTopbarContext();
+  updateMetricsVisibility();
+
+  const nextRoute = routeForView(tab.dataset.view);
+  if (push && window.location.pathname !== nextRoute) {
+    const method = replace ? "replaceState" : "pushState";
+    window.history[method]({}, "", nextRoute);
+  }
+}
+
+function syncViewFromLocation(options = {}) {
+  setActiveView(viewFromPath(), { push: true, replace: options.replace ?? true });
 }
 
 function updateTopbarContext() {
@@ -1255,14 +1300,10 @@ function bindEvents() {
   });
 
   document.querySelectorAll(".nav-tab").forEach((button) => {
-    button.addEventListener("click", () => {
+    button.addEventListener("click", (event) => {
+      event.preventDefault();
       if (button.hidden) return;
-      document.querySelectorAll(".nav-tab").forEach((item) => item.classList.remove("active"));
-      document.querySelectorAll(".view").forEach((item) => item.classList.remove("active"));
-      button.classList.add("active");
-      document.querySelector(`#${button.dataset.view}View`).classList.add("active");
-      updateTopbarContext();
-      updateMetricsVisibility();
+      setActiveView(button.dataset.view);
     });
   });
 
@@ -1298,12 +1339,7 @@ function bindEvents() {
     if (!button) return;
     state.filters.groupId = button.dataset.companyId;
     els.groupFilter.value = state.filters.groupId;
-    document.querySelectorAll(".nav-tab").forEach((item) => item.classList.remove("active"));
-    document.querySelectorAll(".view").forEach((item) => item.classList.remove("active"));
-    document.querySelector('[data-view="dashboard"]').classList.add("active");
-    document.querySelector("#dashboardView").classList.add("active");
-    updateTopbarContext();
-    updateMetricsVisibility();
+    setActiveView("dashboard");
     render();
   });
 
@@ -1464,6 +1500,11 @@ function bindEvents() {
     state.alerts = state.alerts.map((alert) => ({ ...alert, read: true }));
     renderAlerts();
     renderMetrics();
+  });
+
+  window.addEventListener("popstate", () => {
+    if (!state.currentUser) return;
+    syncViewFromLocation({ replace: false });
   });
 }
 
