@@ -61,7 +61,15 @@ let state = {
     brandName: "ServerWatch",
     brandSubtitle: "MVP LAN",
     logoDataUrl: "",
-    theme: "light"
+    theme: "light",
+    probeStaleGraceSeconds: 45,
+    soundAlertsEnabled: true,
+    browserNotificationsEnabled: true,
+    alertSeverityByEnvironment: {
+      production: "critical",
+      staging: "warning",
+      development: "info"
+    }
   }
 };
 let saveTimer = null;
@@ -216,6 +224,43 @@ function normalizeBranding(payload, existing = {}) {
     brandSubtitle,
     logoDataUrl,
     theme
+  };
+}
+
+function normalizeAlertSettings(payload = {}, existing = {}) {
+  const probeStaleGraceSeconds = Number(payload.probeStaleGraceSeconds ?? existing.probeStaleGraceSeconds ?? 45);
+  const defaultFailureThreshold = Number(payload.defaultFailureThreshold ?? existing.defaultFailureThreshold ?? 2);
+  const soundAlertsEnabled = Boolean(payload.soundAlertsEnabled ?? existing.soundAlertsEnabled ?? true);
+  const browserNotificationsEnabled = Boolean(payload.browserNotificationsEnabled ?? existing.browserNotificationsEnabled ?? true);
+  const normalizeSeverity = (value, fallback) => {
+    const severity = String(value || fallback || "critical").trim().toLowerCase();
+    return ["critical", "warning", "info"].includes(severity) ? severity : fallback;
+  };
+  const currentSeverity = existing.alertSeverityByEnvironment || {};
+  const incomingSeverity = payload.alertSeverityByEnvironment || {};
+
+  if (!Number.isFinite(probeStaleGraceSeconds) || probeStaleGraceSeconds < 15 || probeStaleGraceSeconds > 3600) {
+    const error = new Error("Tempo sem contato do probe deve ficar entre 15 e 3600 segundos.");
+    error.statusCode = 400;
+    throw error;
+  }
+  if (!Number.isFinite(defaultFailureThreshold) || defaultFailureThreshold < 1 || defaultFailureThreshold > 10) {
+    const error = new Error("Falhas padrao antes de offline deve ficar entre 1 e 10.");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  return {
+    ...existing,
+    probeStaleGraceSeconds: Math.round(probeStaleGraceSeconds),
+    defaultFailureThreshold: Math.round(defaultFailureThreshold),
+    soundAlertsEnabled,
+    browserNotificationsEnabled,
+    alertSeverityByEnvironment: {
+      production: normalizeSeverity(incomingSeverity.production, currentSeverity.production || "critical"),
+      staging: normalizeSeverity(incomingSeverity.staging, currentSeverity.staging || "warning"),
+      development: normalizeSeverity(incomingSeverity.development, currentSeverity.development || "info")
+    }
   };
 }
 
@@ -388,15 +433,13 @@ async function loadState() {
     needsSave = true;
   }
   const normalizedSettings = normalizeBranding(state.settings, state.settings);
+  const normalizedAlertSettings = normalizeAlertSettings(state.settings, normalizedSettings);
   if (
-    normalizedSettings.brandName !== state.settings.brandName ||
-    normalizedSettings.brandSubtitle !== state.settings.brandSubtitle ||
-    normalizedSettings.logoDataUrl !== state.settings.logoDataUrl ||
-    normalizedSettings.theme !== state.settings.theme
+    JSON.stringify(normalizedAlertSettings) !== JSON.stringify(state.settings)
   ) {
     needsSave = true;
   }
-  state.settings = normalizedSettings;
+  state.settings = normalizedAlertSettings;
   if (ensureDefaultAdmin()) {
     needsSave = true;
   }
@@ -428,6 +471,12 @@ function scheduleSave() {
   }, 250);
 }
 
+function alertSeverityForServer(server, currentStatus) {
+  if (currentStatus !== "offline") return "info";
+  const byEnvironment = state.settings.alertSeverityByEnvironment || {};
+  return byEnvironment[server.environment] || byEnvironment.production || "critical";
+}
+
 function addEvent(server, previousStatus, currentStatus, latencyMs, message) {
   const event = {
     id: randomUUID(),
@@ -448,13 +497,16 @@ function addEvent(server, previousStatus, currentStatus, latencyMs, message) {
       serverId: server.id,
       serverName: server.name,
       type: currentStatus === "offline" ? "down" : "recovery",
-      severity: currentStatus === "offline" ? "critical" : "info",
+      severity: alertSeverityForServer(server, currentStatus),
       message:
         currentStatus === "offline"
           ? `${server.name} parou de responder em ${server.hostname}.`
           : `${server.name} voltou a responder em ${server.hostname}.`,
       createdAt: event.createdAt,
-      read: false
+      read: false,
+      acknowledgedAt: null,
+      acknowledgedBy: null,
+      acknowledgmentNote: ""
     };
     state.alerts.unshift(alert);
     state.alerts = state.alerts.slice(0, 200);
@@ -467,7 +519,8 @@ function addEvent(server, previousStatus, currentStatus, latencyMs, message) {
 function probeStaleAfterMs(server) {
   const intervalMs = Math.max(3, Number(server.checkInterval || state.settings.defaultInterval || 10)) * 1000;
   const threshold = Math.max(1, Number(server.failureThreshold || state.settings.defaultFailureThreshold || 2));
-  return Math.max(45000, intervalMs * (threshold + 1) + 15000);
+  const graceMs = Math.max(15, Number(state.settings.probeStaleGraceSeconds || 45)) * 1000;
+  return Math.max(graceMs, intervalMs * (threshold + 1) + 15000);
 }
 
 function newestTimestamp(...values) {
@@ -921,6 +974,15 @@ function publicSettings(currentUser = null) {
     brandSubtitle: state.settings.brandSubtitle || "MVP LAN",
     logoDataUrl: state.settings.logoDataUrl || "",
     theme: state.settings.theme === "dark" ? "dark" : "light",
+    probeStaleGraceSeconds: state.settings.probeStaleGraceSeconds || 45,
+    defaultFailureThreshold: state.settings.defaultFailureThreshold || 2,
+    soundAlertsEnabled: state.settings.soundAlertsEnabled !== false,
+    browserNotificationsEnabled: state.settings.browserNotificationsEnabled !== false,
+    alertSeverityByEnvironment: {
+      production: state.settings.alertSeverityByEnvironment?.production || "critical",
+      staging: state.settings.alertSeverityByEnvironment?.staging || "warning",
+      development: state.settings.alertSeverityByEnvironment?.development || "info"
+    },
     probeToken: currentUser?.role === "admin" ? getProbeToken() : "",
     probeTokenSource: process.env.SERVERWATCH_PROBE_TOKEN ? "environment" : "generated"
   };
@@ -1428,6 +1490,14 @@ async function handleApi(req, res) {
         broadcastSnapshot();
         return sendJson(res, 200, publicSettings(session.user));
       }
+
+      if (req.method === "PUT" && parts[2] === "alerts") {
+        const payload = await readBody(req);
+        state.settings = normalizeAlertSettings(payload, state.settings);
+        scheduleSave();
+        broadcastSnapshot();
+        return sendJson(res, 200, publicSettings(session.user));
+      }
     }
 
     if (parts[1] === "users") {
@@ -1635,8 +1705,27 @@ async function handleApi(req, res) {
       return sendJson(res, 200, state.alerts.slice(0, 100));
     }
 
+    if (req.method === "POST" && parts[1] === "alerts" && parts[3] === "ack") {
+      const alert = state.alerts.find((item) => item.id === parts[2]);
+      if (!alert) return notFound(res);
+      const payload = await readBody(req);
+      alert.read = true;
+      alert.acknowledgedAt = nowIso();
+      alert.acknowledgedBy = session.user.name;
+      alert.acknowledgmentNote = String(payload.note || "").trim().slice(0, 500);
+      scheduleSave();
+      broadcastSnapshot();
+      return sendJson(res, 200, alert);
+    }
+
     if (req.method === "POST" && parts[1] === "alerts" && parts[2] === "read") {
-      state.alerts = state.alerts.map((alert) => ({ ...alert, read: true }));
+      const acknowledgedAt = nowIso();
+      state.alerts = state.alerts.map((alert) => ({
+        ...alert,
+        read: true,
+        acknowledgedAt: alert.acknowledgedAt || acknowledgedAt,
+        acknowledgedBy: alert.acknowledgedBy || session.user.name
+      }));
       scheduleSave();
       broadcastSnapshot();
       return sendJson(res, 200, { ok: true });

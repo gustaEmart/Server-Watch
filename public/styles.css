@@ -1292,6 +1292,26 @@ textarea:focus {
   border-left-color: var(--offline);
 }
 
+.alert-card.warning {
+  border-left-color: var(--warning);
+}
+
+.alert-card.info {
+  border-left-color: var(--accent);
+}
+
+.alert-card.read {
+  opacity: 0.72;
+}
+
+.alert-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
 .group-card {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto auto;
@@ -1342,6 +1362,12 @@ textarea:focus {
 .settings-form {
   display: grid;
   gap: 14px;
+}
+
+.settings-block {
+  margin-top: 22px;
+  border-top: 1px solid var(--line);
+  padding-top: 18px;
 }
 
 .brand-preview {
@@ -1407,6 +1433,23 @@ textarea:focus {
   color: var(--muted);
   font-weight: 700;
   margin-top: 3px;
+}
+
+.toggle-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.toggle-row {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px;
+  background: var(--surface);
+  font-weight: 800;
 }
 
 .group-stats {
@@ -1790,6 +1833,7 @@ label {
   .probe-detail-grid,
   .probe-grid,
   .theme-options,
+  .toggle-grid,
   .token-control,
   .probe-target-row,
   .probe-card,
