@@ -341,6 +341,68 @@
                 <button class="primary-button" type="submit">Salvar identidade</button>
               </div>
             </form>
+
+            <form class="settings-form settings-block" id="alertSettingsForm">
+              <div class="panel-title compact-title">
+                <div>
+                  <h2>Alertas</h2>
+                  <span>Comportamento operacional</span>
+                </div>
+              </div>
+
+              <div class="form-grid">
+                <label>
+                  Probe sem contato apos
+                  <input id="probeStaleGraceSeconds" type="number" min="15" max="3600" step="1" />
+                </label>
+                <label>
+                  Falhas padrao antes de offline
+                  <input id="defaultFailureThreshold" type="number" min="1" max="10" step="1" />
+                </label>
+              </div>
+
+              <div class="form-grid">
+                <label>
+                  Producao
+                  <select id="severityProduction">
+                    <option value="critical">Critico</option>
+                    <option value="warning">Atencao</option>
+                    <option value="info">Informativo</option>
+                  </select>
+                </label>
+                <label>
+                  Homologacao
+                  <select id="severityStaging">
+                    <option value="critical">Critico</option>
+                    <option value="warning">Atencao</option>
+                    <option value="info">Informativo</option>
+                  </select>
+                </label>
+                <label>
+                  Desenvolvimento
+                  <select id="severityDevelopment">
+                    <option value="critical">Critico</option>
+                    <option value="warning">Atencao</option>
+                    <option value="info">Informativo</option>
+                  </select>
+                </label>
+              </div>
+
+              <div class="toggle-grid">
+                <label class="toggle-row">
+                  <input id="soundAlertsEnabled" type="checkbox" />
+                  <span>Som de alerta</span>
+                </label>
+                <label class="toggle-row">
+                  <input id="browserNotificationsEnabled" type="checkbox" />
+                  <span>Notificacao do navegador</span>
+                </label>
+              </div>
+
+              <div class="dialog-actions">
+                <button class="primary-button" type="submit">Salvar alertas</button>
+              </div>
+            </form>
           </div>
         </section>
 

@@ -61,11 +61,19 @@ const els = {
   usersList: document.querySelector("#usersList"),
   userCount: document.querySelector("#userCount"),
   brandingForm: document.querySelector("#brandingForm"),
+  alertSettingsForm: document.querySelector("#alertSettingsForm"),
   brandNameInput: document.querySelector("#brandNameInput"),
   brandSubtitleInput: document.querySelector("#brandSubtitleInput"),
   brandLogoInput: document.querySelector("#brandLogoInput"),
   removeBrandLogo: document.querySelector("#removeBrandLogo"),
   themeModeInputs: document.querySelectorAll('input[name="themeMode"]'),
+  probeStaleGraceSeconds: document.querySelector("#probeStaleGraceSeconds"),
+  defaultFailureThreshold: document.querySelector("#defaultFailureThreshold"),
+  severityProduction: document.querySelector("#severityProduction"),
+  severityStaging: document.querySelector("#severityStaging"),
+  severityDevelopment: document.querySelector("#severityDevelopment"),
+  soundAlertsEnabled: document.querySelector("#soundAlertsEnabled"),
+  browserNotificationsEnabled: document.querySelector("#browserNotificationsEnabled"),
   brandPreviewLogo: document.querySelector("#brandPreviewLogo"),
   brandPreviewInitials: document.querySelector("#brandPreviewInitials"),
   brandPreviewName: document.querySelector("#brandPreviewName"),
@@ -156,6 +164,21 @@ function branding() {
   };
 }
 
+function alertSettings() {
+  const severity = state.settings.alertSeverityByEnvironment || {};
+  return {
+    probeStaleGraceSeconds: Number(state.settings.probeStaleGraceSeconds || 45),
+    defaultFailureThreshold: Number(state.settings.defaultFailureThreshold || 2),
+    soundAlertsEnabled: state.settings.soundAlertsEnabled !== false,
+    browserNotificationsEnabled: state.settings.browserNotificationsEnabled !== false,
+    alertSeverityByEnvironment: {
+      production: severity.production || "critical",
+      staging: severity.staging || "warning",
+      development: severity.development || "info"
+    }
+  };
+}
+
 function brandInitials(name) {
   return String(name || "SW")
     .split(/\s+/)
@@ -235,6 +258,14 @@ function probeStatusLabel(status) {
     unknown: "Probe sem status",
     not_applicable: "Sem probe"
   }[status || "unknown"];
+}
+
+function severityLabel(severity) {
+  return {
+    critical: "Critico",
+    warning: "Atencao",
+    info: "Informativo"
+  }[severity || "info"] || "Informativo";
 }
 
 function environmentLabel(environment) {
@@ -952,15 +983,23 @@ function renderAlerts() {
     ? state.alerts
         .map(
           (alert) => `
-            <article class="alert-card ${alert.severity === "critical" ? "critical" : ""}">
+            <article class="alert-card ${alert.severity || "info"} ${alert.read ? "read" : "unread"}">
               <div>
                 <strong>${escapeHtml(alert.serverName)}</strong>
                 <div>${escapeHtml(alert.message)}</div>
-                <small>${formatDate(alert.createdAt)} · ${alert.read ? "lido" : "novo"}</small>
+                <small>${formatDate(alert.createdAt)} · ${alert.read ? "reconhecido" : "novo"} · ${severityLabel(alert.severity)}</small>
+                ${
+                  alert.acknowledgedAt
+                    ? `<small>Reconhecido por ${escapeHtml(alert.acknowledgedBy || "-")} em ${formatDate(alert.acknowledgedAt)}${alert.acknowledgmentNote ? ` · ${escapeHtml(alert.acknowledgmentNote)}` : ""}</small>`
+                    : ""
+                }
               </div>
-              <span class="status-badge ${alert.type === "down" ? "offline" : "online"}">
-                ${alert.type === "down" ? "Offline" : "Recuperado"}
-              </span>
+              <div class="alert-actions">
+                <span class="status-badge ${alert.type === "down" ? "offline" : "online"}">
+                  ${alert.type === "down" ? "Offline" : "Recuperado"}
+                </span>
+                ${alert.read ? "" : `<button class="ghost-button compact" type="button" data-alert-action="ack" data-alert-id="${alert.id}">Reconhecer</button>`}
+              </div>
             </article>
           `
         )
@@ -1047,6 +1086,22 @@ function renderBrandingForm() {
   paintBrandLogo(els.brandPreviewLogo, current.logoDataUrl, current.brandName);
 }
 
+function renderAlertSettingsForm() {
+  if (!els.alertSettingsForm || !isAdmin()) return;
+  const current = alertSettings();
+  if (document.activeElement !== els.probeStaleGraceSeconds) {
+    els.probeStaleGraceSeconds.value = current.probeStaleGraceSeconds;
+  }
+  if (document.activeElement !== els.defaultFailureThreshold) {
+    els.defaultFailureThreshold.value = current.defaultFailureThreshold;
+  }
+  els.severityProduction.value = current.alertSeverityByEnvironment.production;
+  els.severityStaging.value = current.alertSeverityByEnvironment.staging;
+  els.severityDevelopment.value = current.alertSeverityByEnvironment.development;
+  els.soundAlertsEnabled.checked = current.soundAlertsEnabled;
+  els.browserNotificationsEnabled.checked = current.browserNotificationsEnabled;
+}
+
 function readLogoFile(file) {
   return new Promise((resolve, reject) => {
     if (!file) {
@@ -1087,6 +1142,29 @@ async function submitBranding(event) {
     showToast("Identidade salva", "A marca da interface foi atualizada.");
   } catch (error) {
     showToast("Falha ao salvar identidade", error.message);
+  }
+}
+
+async function submitAlertSettings(event) {
+  event.preventDefault();
+  const payload = {
+    probeStaleGraceSeconds: Number(els.probeStaleGraceSeconds.value),
+    defaultFailureThreshold: Number(els.defaultFailureThreshold.value),
+    soundAlertsEnabled: els.soundAlertsEnabled.checked,
+    browserNotificationsEnabled: els.browserNotificationsEnabled.checked,
+    alertSeverityByEnvironment: {
+      production: els.severityProduction.value,
+      staging: els.severityStaging.value,
+      development: els.severityDevelopment.value
+    }
+  };
+  try {
+    const settings = await api("/api/settings/alerts", { method: "PUT", body: JSON.stringify(payload) });
+    state.settings = { ...state.settings, ...settings };
+    renderAlertSettingsForm();
+    showToast("Alertas salvos", "As regras de alerta foram atualizadas.");
+  } catch (error) {
+    showToast("Falha ao salvar alertas", error.message);
   }
 }
 
@@ -1258,6 +1336,7 @@ function render() {
   renderProbes();
   renderUsers();
   renderBrandingForm();
+  renderAlertSettingsForm();
 }
 
 function showToast(title, message) {
@@ -1291,9 +1370,14 @@ function showIncidentNotification(event) {
   const title = `${event.serverName} offline`;
   const message = event.message || "Servidor parou de responder.";
   showToast(title, message);
-  playAlertTone();
+  if (alertSettings().soundAlertsEnabled) playAlertTone();
 
-  if (state.notificationsEnabled && "Notification" in window && Notification.permission === "granted") {
+  if (
+    alertSettings().browserNotificationsEnabled &&
+    state.notificationsEnabled &&
+    "Notification" in window &&
+    Notification.permission === "granted"
+  ) {
     new Notification(title, {
       body: message,
       tag: event.serverId,
@@ -1628,6 +1712,7 @@ function bindEvents() {
   document.querySelector("#cancelUserForm").addEventListener("click", closeUserDialog);
   els.userForm.addEventListener("submit", submitUser);
   els.brandingForm?.addEventListener("submit", submitBranding);
+  els.alertSettingsForm?.addEventListener("submit", submitAlertSettings);
   els.removeBrandLogo?.addEventListener("click", async () => {
     try {
       const settings = await api("/api/settings/branding", {
@@ -1732,7 +1817,33 @@ function bindEvents() {
     }
   });
 
+  els.alertsList.addEventListener("click", async (event) => {
+    const button = event.target.closest("[data-alert-action]");
+    if (!button) return;
+    const alert = state.alerts.find((item) => item.id === button.dataset.alertId);
+    if (!alert) return;
+    if (button.dataset.alertAction === "ack") {
+      const note = window.prompt("Observacao do reconhecimento (opcional):", "") || "";
+      try {
+        const updated = await api(`/api/alerts/${encodeURIComponent(alert.id)}/ack`, {
+          method: "POST",
+          body: JSON.stringify({ note })
+        });
+        state.alerts = state.alerts.map((item) => (item.id === updated.id ? updated : item));
+        renderAlerts();
+        renderMetrics();
+        showToast("Alerta reconhecido", `${alert.serverName} foi marcado como tratado.`);
+      } catch (error) {
+        showToast("Falha ao reconhecer alerta", error.message);
+      }
+    }
+  });
+
   document.querySelector("#notifyButton").addEventListener("click", async () => {
+    if (!alertSettings().browserNotificationsEnabled) {
+      showToast("Notificacoes desativadas", "Ative notificacoes do navegador nas configuracoes de alertas.");
+      return;
+    }
     if (!("Notification" in window)) {
       showToast("Notificacoes indisponiveis", "Este navegador nao suporta Notification API.");
       return;

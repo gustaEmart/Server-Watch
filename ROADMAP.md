@@ -23,22 +23,6 @@ Funcionalidades sugeridas:
   - servidor voltou a responder.
 - Filtro especifico para `Probes sem contato`.
 
-### Alertas configuraveis
-
-Objetivo:
-
-- Permitir ajustar o comportamento de alertas conforme o cliente ou ambiente.
-
-Funcionalidades sugeridas:
-
-- Tempo sem contato para considerar um probe offline.
-- Quantidade de falhas antes de marcar servidor como offline.
-- Nivel de severidade por ambiente ou tag.
-- Ativar/desativar som de alerta.
-- Ativar/desativar notificacao do navegador.
-- Marcar alerta como reconhecido.
-- Campo de observacao no reconhecimento do alerta.
-
 ### Historico mais claro por servidor
 
 Objetivo:
