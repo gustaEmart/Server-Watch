@@ -60,7 +60,8 @@ let state = {
     probeToken: randomUUID(),
     brandName: "ServerWatch",
     brandSubtitle: "MVP LAN",
-    logoDataUrl: ""
+    logoDataUrl: "",
+    theme: "light"
   }
 };
 let saveTimer = null;
@@ -179,6 +180,7 @@ function normalizeBranding(payload, existing = {}) {
   const brandName = String(payload.brandName ?? existing.brandName ?? "ServerWatch").trim() || "ServerWatch";
   const brandSubtitle = String(payload.brandSubtitle ?? existing.brandSubtitle ?? "MVP LAN").trim();
   const logoDataUrl = String(payload.logoDataUrl ?? existing.logoDataUrl ?? "").trim();
+  const theme = String(payload.theme ?? existing.theme ?? "light").trim().toLowerCase();
 
   if (brandName.length > 60) {
     const error = new Error("Nome da marca deve ter no maximo 60 caracteres.");
@@ -201,11 +203,18 @@ function normalizeBranding(payload, existing = {}) {
     throw error;
   }
 
+  if (!["light", "dark"].includes(theme)) {
+    const error = new Error("Tema invalido. Escolha claro ou escuro.");
+    error.statusCode = 400;
+    throw error;
+  }
+
   return {
     ...existing,
     brandName,
     brandSubtitle,
-    logoDataUrl
+    logoDataUrl,
+    theme
   };
 }
 
@@ -381,7 +390,8 @@ async function loadState() {
   if (
     normalizedSettings.brandName !== state.settings.brandName ||
     normalizedSettings.brandSubtitle !== state.settings.brandSubtitle ||
-    normalizedSettings.logoDataUrl !== state.settings.logoDataUrl
+    normalizedSettings.logoDataUrl !== state.settings.logoDataUrl ||
+    normalizedSettings.theme !== state.settings.theme
   ) {
     needsSave = true;
   }
@@ -725,6 +735,7 @@ function publicSettings(currentUser = null) {
     brandName: state.settings.brandName || "ServerWatch",
     brandSubtitle: state.settings.brandSubtitle || "MVP LAN",
     logoDataUrl: state.settings.logoDataUrl || "",
+    theme: state.settings.theme === "dark" ? "dark" : "light",
     probeToken: currentUser?.role === "admin" ? getProbeToken() : "",
     probeTokenSource: process.env.SERVERWATCH_PROBE_TOKEN ? "environment" : "generated"
   };

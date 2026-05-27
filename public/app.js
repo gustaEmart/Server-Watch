@@ -64,6 +64,7 @@ const els = {
   brandSubtitleInput: document.querySelector("#brandSubtitleInput"),
   brandLogoInput: document.querySelector("#brandLogoInput"),
   removeBrandLogo: document.querySelector("#removeBrandLogo"),
+  themeModeInputs: document.querySelectorAll('input[name="themeMode"]'),
   brandPreviewLogo: document.querySelector("#brandPreviewLogo"),
   brandPreviewInitials: document.querySelector("#brandPreviewInitials"),
   brandPreviewName: document.querySelector("#brandPreviewName"),
@@ -148,7 +149,8 @@ function branding() {
   return {
     brandName: state.settings.brandName || "ServerWatch",
     brandSubtitle: state.settings.brandSubtitle || "MVP LAN",
-    logoDataUrl: state.settings.logoDataUrl || ""
+    logoDataUrl: state.settings.logoDataUrl || "",
+    theme: state.settings.theme === "dark" ? "dark" : "light"
   };
 }
 
@@ -174,6 +176,8 @@ function paintBrandLogo(element, logoDataUrl, name) {
 function applyBranding() {
   const current = branding();
   document.title = current.brandName;
+  document.documentElement.dataset.theme = current.theme;
+  document.documentElement.style.colorScheme = current.theme;
   document.querySelectorAll(".brand-name").forEach((item) => {
     item.textContent = current.brandName;
   });
@@ -1005,6 +1009,9 @@ function renderBrandingForm() {
   const current = branding();
   if (document.activeElement !== els.brandNameInput) els.brandNameInput.value = current.brandName;
   if (document.activeElement !== els.brandSubtitleInput) els.brandSubtitleInput.value = current.brandSubtitle;
+  els.themeModeInputs?.forEach((input) => {
+    input.checked = input.value === current.theme;
+  });
   if (els.brandPreviewName) els.brandPreviewName.textContent = current.brandName;
   if (els.brandPreviewSubtitle) els.brandPreviewSubtitle.textContent = current.brandSubtitle || "Sem subtitulo";
   paintBrandLogo(els.brandPreviewLogo, current.logoDataUrl, current.brandName);
@@ -1040,7 +1047,8 @@ async function submitBranding(event) {
     const payload = {
       brandName: els.brandNameInput.value,
       brandSubtitle: els.brandSubtitleInput.value,
-      logoDataUrl: selectedLogo ?? current.logoDataUrl
+      logoDataUrl: selectedLogo ?? current.logoDataUrl,
+      theme: document.querySelector('input[name="themeMode"]:checked')?.value || current.theme
     };
     const settings = await api("/api/settings/branding", { method: "PUT", body: JSON.stringify(payload) });
     state.settings = { ...state.settings, ...settings };
@@ -1413,7 +1421,8 @@ function bindEvents() {
         body: JSON.stringify({
           brandName: els.brandNameInput.value,
           brandSubtitle: els.brandSubtitleInput.value,
-          logoDataUrl: ""
+          logoDataUrl: "",
+          theme: document.querySelector('input[name="themeMode"]:checked')?.value || branding().theme
         })
       });
       state.settings = { ...state.settings, ...settings };
