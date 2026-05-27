@@ -463,6 +463,21 @@ function addEvent(server, previousStatus, currentStatus, latencyMs, message) {
   broadcast({ type: "status_changed", event, server: publicServer(server) });
 }
 
+function probeStaleAfterMs(server) {
+  const intervalMs = Math.max(3, Number(server.checkInterval || state.settings.defaultInterval || 10)) * 1000;
+  const threshold = Math.max(1, Number(server.failureThreshold || state.settings.defaultFailureThreshold || 2));
+  return Math.max(45000, intervalMs * (threshold + 1) + 15000);
+}
+
+function newestTimestamp(...values) {
+  return (
+    values
+      .map((value) => new Date(value || 0).getTime())
+      .filter((value) => Number.isFinite(value) && value > 0)
+      .sort((a, b) => b - a)[0] || 0
+  );
+}
+
 function trimEvents(events) {
   const byServer = new Map();
   const trimmed = [];
@@ -690,6 +705,41 @@ async function checkServer(server) {
   scheduleSave();
 }
 
+function checkProbeStaleness(nowMs = Date.now()) {
+  let changed = false;
+  for (const server of state.servers) {
+    if (server.deletedAt || !server.isActive || server.checkSource !== "probe") continue;
+    const probe = (state.probes || []).find((item) => item.id === server.probeId);
+    const lastSeenMs = newestTimestamp(probe?.lastSeenAt, server.lastProbeSeenAt);
+    if (!lastSeenMs) continue;
+    if (nowMs - lastSeenMs <= probeStaleAfterMs(server)) continue;
+
+    const checkedAt = nowIso();
+    const previousStatus = server.currentStatus || "unknown";
+    const lastSeenLabel = new Date(lastSeenMs).toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" });
+    const message = `Probe collector sem contato desde ${lastSeenLabel}.`;
+    const needsUpdate = previousStatus !== "offline" || server.lastError !== message || server.probeCheckRequestedAt;
+    if (!needsUpdate) continue;
+
+    server.lastCheckedAt = checkedAt;
+    server.lastLatencyMs = null;
+    server.lastError = message;
+    server.probeCheckRequestedAt = null;
+    server.consecutiveFailures = Math.max(server.failureThreshold || 1, server.consecutiveFailures || 0);
+    server.currentStatus = "offline";
+
+    if (previousStatus !== "offline") {
+      server.previousStatus = previousStatus;
+      server.statusChangedAt = checkedAt;
+      addEvent(server, previousStatus, server.currentStatus, null, message);
+    } else {
+      broadcast({ type: "server_checked", server: publicServer(server), summary: summary() });
+    }
+    changed = true;
+  }
+  if (changed) scheduleSave();
+}
+
 function startMonitor() {
   setInterval(() => {
     const now = Date.now();
@@ -699,6 +749,7 @@ function startMonitor() {
         checkServer(server).catch((error) => console.error("Falha ao verificar servidor", server.hostname, error));
       }
     }
+    checkProbeStaleness(now);
   }, CHECK_LOOP_MS);
 }
 
