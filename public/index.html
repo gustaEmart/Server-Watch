@@ -209,14 +209,19 @@
 
             <div class="probe-grid">
               <section class="probe-token-panel" aria-label="Token de instalacao do probe">
-                <div>
-                  <p class="eyebrow">Instalacao</p>
-                  <h3>Token do Probe Collector</h3>
+                <div class="probe-panel-heading">
+                  <div>
+                    <p class="eyebrow">Instalacao</p>
+                    <h3>Credenciais do collector</h3>
+                  </div>
                 </div>
-                <div class="token-control">
-                  <input id="probeTokenValue" type="password" readonly value="" aria-label="Token do probe" />
-                  <button class="ghost-button compact" id="toggleProbeToken" type="button">Mostrar</button>
-                  <button class="primary-button compact" id="copyProbeToken" type="button">Copiar</button>
+                <div class="probe-field">
+                  <label for="probeTokenValue">Token</label>
+                  <div class="token-control">
+                    <input id="probeTokenValue" type="password" readonly value="" aria-label="Token do probe" />
+                    <button class="ghost-button compact" id="toggleProbeToken" type="button">Mostrar</button>
+                    <button class="primary-button compact" id="copyProbeToken" type="button">Copiar</button>
+                  </div>
                 </div>
                 <div class="install-command">
                   <div class="install-command-header">

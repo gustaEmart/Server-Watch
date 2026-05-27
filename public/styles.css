@@ -1391,21 +1391,23 @@ textarea:focus {
 
 .probe-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1.05fr) minmax(280px, 0.95fr);
+  grid-template-columns: minmax(320px, 0.9fr) minmax(360px, 1.1fr);
   gap: 14px;
+  align-items: start;
 }
 
 .probe-token-panel,
 .probe-list-panel {
   border: 1px solid var(--line);
   border-radius: 8px;
-  padding: 14px;
+  padding: 16px;
   background: var(--surface-muted);
 }
 
 .probe-token-panel {
   display: grid;
-  gap: 14px;
+  gap: 12px;
+  align-content: start;
 }
 
 .probe-token-panel h3,
@@ -1413,14 +1415,28 @@ textarea:focus {
   margin: 0;
 }
 
+.probe-panel-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.probe-field {
+  display: grid;
+  gap: 7px;
+}
+
 .token-control {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
+  grid-template-columns: minmax(0, 1fr) minmax(82px, auto) minmax(82px, auto);
   gap: 8px;
+  align-items: center;
 }
 
 .token-control input {
   font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+  min-height: 38px;
 }
 
 .install-command {
@@ -1429,9 +1445,9 @@ textarea:focus {
 }
 
 .download-actions {
-  display: flex;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
-  flex-wrap: wrap;
 }
 
 .install-command-header,
@@ -1446,11 +1462,13 @@ textarea:focus {
   display: block;
   border: 1px solid var(--line);
   border-radius: 8px;
-  padding: 12px;
+  padding: 10px 12px;
   background: var(--code-bg);
   color: var(--code-text);
   line-height: 1.45;
   overflow-wrap: anywhere;
+  max-height: 118px;
+  overflow-y: auto;
 }
 
 .probe-card {
@@ -1458,6 +1476,7 @@ textarea:focus {
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 12px;
   align-items: center;
+  min-height: 74px;
 }
 
 .probe-card span {

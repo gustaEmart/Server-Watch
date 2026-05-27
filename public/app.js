@@ -1289,10 +1289,34 @@ async function loadInitialData() {
   applySnapshot(payload);
 }
 
+function fallbackCopyText(value) {
+  const textarea = document.createElement("textarea");
+  textarea.value = value;
+  textarea.setAttribute("readonly", "");
+  textarea.style.position = "fixed";
+  textarea.style.left = "-9999px";
+  textarea.style.top = "0";
+  document.body.append(textarea);
+  textarea.focus();
+  textarea.select();
+  textarea.setSelectionRange(0, textarea.value.length);
+  const copied = document.execCommand("copy");
+  textarea.remove();
+  return copied;
+}
+
 async function copyText(value, successMessage) {
   if (!value) return;
-  await navigator.clipboard.writeText(value);
-  showToast("Copiado", successMessage);
+  try {
+    if (navigator.clipboard && window.isSecureContext) {
+      await navigator.clipboard.writeText(value);
+    } else if (!fallbackCopyText(value)) {
+      throw new Error("Clipboard fallback failed.");
+    }
+    showToast("Copiado", successMessage);
+  } catch {
+    showToast("Falha ao copiar", "Selecione o texto manualmente e copie com Ctrl+C.");
+  }
 }
 
 function toggleProbeOptions() {
