@@ -1428,13 +1428,14 @@ textarea:focus {
 
 .probe-grid {
   display: grid;
-  grid-template-columns: minmax(320px, 0.9fr) minmax(360px, 1.1fr);
+  grid-template-columns: minmax(300px, 0.85fr) minmax(340px, 1fr) minmax(380px, 1.15fr);
   gap: 14px;
   align-items: start;
 }
 
 .probe-token-panel,
-.probe-list-panel {
+.probe-list-panel,
+.probe-detail-panel {
   border: 1px solid var(--line);
   border-radius: 8px;
   padding: 16px;
@@ -1448,7 +1449,8 @@ textarea:focus {
 }
 
 .probe-token-panel h3,
-.probe-list-panel h3 {
+.probe-list-panel h3,
+.probe-detail-panel h3 {
   margin: 0;
 }
 
@@ -1514,6 +1516,16 @@ textarea:focus {
   gap: 12px;
   align-items: center;
   min-height: 74px;
+  width: 100%;
+  text-align: left;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.probe-card.selected {
+  border-color: var(--accent);
+  background: var(--selected-bg);
+  box-shadow: 0 0 0 3px var(--accent-ring);
 }
 
 .probe-card span {
@@ -1524,6 +1536,105 @@ textarea:focus {
   color: var(--muted);
   font-size: 0.84rem;
   margin-top: 3px;
+}
+
+.probe-detail-panel {
+  display: grid;
+  gap: 14px;
+  align-content: start;
+}
+
+.compact-empty {
+  min-height: 240px;
+}
+
+.probe-detail-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.probe-detail-header h3,
+.probe-detail-header span {
+  display: block;
+}
+
+.probe-detail-header h3 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.probe-detail-header span {
+  color: var(--muted);
+  margin-top: 3px;
+}
+
+.probe-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 9px;
+}
+
+.probe-issue {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 11px;
+  background: var(--surface);
+}
+
+.probe-issue span,
+.probe-issue strong {
+  display: block;
+}
+
+.probe-issue span {
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.probe-targets {
+  display: grid;
+  gap: 8px;
+}
+
+.probe-target-row {
+  width: 100%;
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 1fr) auto;
+  gap: 9px;
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px;
+  background: var(--surface);
+  color: var(--text);
+  text-align: left;
+}
+
+.probe-target-row span,
+.probe-target-row small {
+  display: block;
+}
+
+.probe-target-row small {
+  color: var(--muted);
+  margin-top: 2px;
+}
+
+.probe-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  color: var(--muted);
+  font-size: 0.84rem;
+}
+
+.danger-button:disabled {
+  opacity: 0.48;
+  cursor: not-allowed;
 }
 
 .server-dialog {
@@ -1641,7 +1752,8 @@ label {
     grid-template-columns: 1fr 1fr;
   }
 
-  .detail-panel {
+  .detail-panel,
+  .probe-detail-panel {
     grid-column: 1 / -1;
   }
 }
@@ -1675,9 +1787,11 @@ label {
   .server-layout,
   .form-grid,
   .detail-grid,
+  .probe-detail-grid,
   .probe-grid,
   .theme-options,
   .token-control,
+  .probe-target-row,
   .probe-card,
   .filter-grid {
     grid-template-columns: 1fr;

@@ -10,6 +10,7 @@ const state = {
   summary: {},
   selectedServerId: null,
   selectedGroupId: null,
+  selectedProbeId: null,
   filters: {
     status: "all",
     environment: "all",
@@ -80,6 +81,7 @@ const els = {
   userPassword: document.querySelector("#userPassword"),
   probeCount: document.querySelector("#probeCount"),
   probesList: document.querySelector("#probesList"),
+  probeDetailPanel: document.querySelector("#probeDetailPanel"),
   probeTokenValue: document.querySelector("#probeTokenValue"),
   toggleProbeToken: document.querySelector("#toggleProbeToken"),
   copyProbeToken: document.querySelector("#copyProbeToken"),
@@ -1093,8 +1095,118 @@ function probeToken() {
 }
 
 function probeInstallCommand() {
+  return probeInstallCommandFor({
+    id: "cliente-acme-sp",
+    name: "Cliente ACME"
+  });
+}
+
+function shellQuote(value) {
+  return `"${String(value || "").replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`;
+}
+
+function probeInstallCommandFor(probe) {
   const token = probeToken();
-  return `curl -fsSL -H "X-ServerWatch-Probe-Token: ${token}" ${location.origin}/downloads/probe/linux-installer | sudo bash -s -- --server-url ${location.origin} --probe-id cliente-acme-sp --token ${token} --name "Cliente ACME"`;
+  const probeId = probe?.id || "cliente-acme-sp";
+  const probeName = probe?.name || probe?.hostName || probeId;
+  return `curl -fsSL -H "X-ServerWatch-Probe-Token: ${token}" ${location.origin}/downloads/probe/linux-installer | sudo bash -s -- --server-url ${location.origin} --probe-id ${shellQuote(probeId)} --token ${shellQuote(token)} --name ${shellQuote(probeName)}`;
+}
+
+function probeLinkedServers(probeId) {
+  return state.servers.filter((server) => !server.deletedAt && server.checkSource === "probe" && server.probeId === probeId);
+}
+
+function probeLastIssue(probe, linkedServers) {
+  if (!probe) return "Sem dados do probe.";
+  if (probe.status === "stale") return "Probe sem contato. Verifique rede, servico local ou credenciais.";
+  const issue = linkedServers.find((server) => server.lastError)?.lastError;
+  return issue || "Nenhuma falha recente reportada.";
+}
+
+function renderProbeDetail(probe) {
+  if (!els.probeDetailPanel) return;
+  if (!probe) {
+    els.probeDetailPanel.innerHTML = `
+      <div class="empty-state compact-empty">
+        <strong>Nenhum probe selecionado</strong>
+        <span>Selecione um probe para ver alvos, identificacao e acoes.</span>
+      </div>
+    `;
+    return;
+  }
+
+  const linkedServers = probeLinkedServers(probe.id);
+  const reinstallCommand = probeInstallCommandFor(probe);
+  const mac = primaryMac(probe);
+  const address = probe.primaryAddress || probe.addresses?.[0] || probe.lastAddress || "-";
+  const canRemove = linkedServers.length === 0;
+  els.probeDetailPanel.innerHTML = `
+    <div class="probe-detail-header">
+      <div>
+        <h3>${platformIcon(probe.platform)}${escapeHtml(probe.name || probe.id)}</h3>
+        <span>${escapeHtml(probe.id)} · ${probeStatusLabel(probe.status)}</span>
+      </div>
+      <span class="status-badge ${probe.status === "stale" ? "probe_stale" : probe.status || "unknown"}">${probeStatusLabel(probe.status)}</span>
+    </div>
+
+    <div class="probe-detail-grid">
+      <div class="detail-stat"><span>Ultimo contato</span><strong>${formatDate(probe.lastSeenAt)}</strong></div>
+      <div class="detail-stat"><span>IP principal</span><strong>${escapeHtml(address)}</strong></div>
+      <div class="detail-stat"><span>MAC</span><strong>${escapeHtml(mac || "-")}</strong></div>
+      <div class="detail-stat"><span>Hostname</span><strong>${escapeHtml(probe.hostName || "-")}</strong></div>
+      <div class="detail-stat"><span>Sistema</span><strong>${platformIcon(probe.platform)}${platformLabel(probe.platform)}</strong></div>
+      <div class="detail-stat"><span>Versao</span><strong>${escapeHtml(probe.version || "-")}</strong></div>
+      <div class="detail-stat"><span>Endereco remoto</span><strong>${escapeHtml(probe.lastAddress || "-")}</strong></div>
+      <div class="detail-stat"><span>Alvos vinculados</span><strong>${linkedServers.length}</strong></div>
+    </div>
+
+    <div class="probe-issue">
+      <span>Ultima falha conhecida</span>
+      <strong>${escapeHtml(probeLastIssue(probe, linkedServers))}</strong>
+    </div>
+
+    <div class="probe-targets">
+      <div class="panel-title compact-title">
+        <h3>Servidores vinculados</h3>
+        <span>${linkedServers.length} ${linkedServers.length === 1 ? "alvo" : "alvos"}</span>
+      </div>
+      ${
+        linkedServers.length
+          ? linkedServers
+              .map((server) => {
+                const status = displayStatus(server);
+                return `
+                  <button class="probe-target-row" type="button" data-server-id="${server.id}">
+                    <span class="status-pulse ${status}"></span>
+                    ${platformIcon(server.platform)}
+                    <span>
+                      <strong>${escapeHtml(server.name)}</strong>
+                      <small>${escapeHtml(server.hostname)} · ${environmentLabel(server.environment)}</small>
+                    </span>
+                    <span class="status-badge ${status}">${statusLabel(status)}</span>
+                  </button>
+                `;
+              })
+              .join("")
+          : `<div class="empty-list">Nenhum servidor vinculado a este probe.</div>`
+      }
+    </div>
+
+    <div class="install-command probe-repair-command">
+      <div class="install-command-header">
+        <strong>Reinstalacao / reparo Linux</strong>
+        <button class="ghost-button compact" type="button" data-action="copy-probe-repair" data-probe-id="${escapeHtml(probe.id)}">Copiar</button>
+      </div>
+      <code>${escapeHtml(reinstallCommand)}</code>
+    </div>
+
+    <div class="probe-actions">
+      <button class="danger-button compact" type="button" data-action="delete-probe" data-probe-id="${escapeHtml(probe.id)}" ${canRemove ? "" : "disabled"}>
+        Remover probe antigo
+      </button>
+      <span>${canRemove ? "Remove um cadastro sem alvos ativos." : "Reatribua ou remova os servidores vinculados antes de excluir."}</span>
+    </div>
+  `;
 }
 
 function renderProbes() {
@@ -1103,12 +1215,18 @@ function renderProbes() {
   els.probeTokenValue.value = token;
   els.probeInstallCommand.textContent = token ? probeInstallCommand() : "Token ainda nao disponivel.";
   els.probeCount.textContent = `${state.probes.length} ${state.probes.length === 1 ? "probe conectado" : "probes conectados"}`;
+  if (state.selectedProbeId && !state.probes.some((probe) => probe.id === state.selectedProbeId)) {
+    state.selectedProbeId = null;
+  }
+  if (!state.selectedProbeId && state.probes.length) {
+    state.selectedProbeId = state.probes[0].id;
+  }
 
   els.probesList.innerHTML = state.probes.length
     ? state.probes
         .map(
           (probe) => `
-            <article class="probe-card">
+            <button class="probe-card ${state.selectedProbeId === probe.id ? "selected" : ""}" type="button" data-probe-id="${escapeHtml(probe.id)}">
               <div>
                 <strong>${platformIcon(probe.platform)}${escapeHtml(probe.name || probe.id)}</strong>
                 <span>${escapeHtml(probe.id)} · ${platformLabel(probe.platform)} · ${escapeHtml(probe.primaryAddress || probe.addresses?.[0] || probe.lastAddress || "sem IP")} · ${escapeHtml(primaryMac(probe) || "sem MAC")} · ${probe.targetCount || 0} ${probe.targetCount === 1 ? "alvo" : "alvos"}</span>
@@ -1118,11 +1236,12 @@ function renderProbes() {
                 <span>${formatDate(probe.lastSeenAt)}</span>
                 <span>${escapeHtml(probe.lastAddress || "sem endereco")}</span>
               </div>
-            </article>
+            </button>
           `
         )
         .join("")
     : `<div class="empty-list">Nenhum probe se conectou ainda.</div>`;
+  renderProbeDetail(state.probes.find((probe) => probe.id === state.selectedProbeId) || null);
 }
 
 function render() {
@@ -1455,6 +1574,48 @@ function bindEvents() {
 
   els.copyProbeInstallCommand?.addEventListener("click", () => {
     copyText(probeInstallCommand(), "Comando de instalacao do probe copiado.");
+  });
+
+  els.probesList?.addEventListener("click", (event) => {
+    const card = event.target.closest("[data-probe-id]");
+    if (!card) return;
+    state.selectedProbeId = card.dataset.probeId;
+    renderProbes();
+  });
+
+  els.probeDetailPanel?.addEventListener("click", async (event) => {
+    const serverRow = event.target.closest("[data-server-id]");
+    if (serverRow) {
+      state.selectedServerId = serverRow.dataset.serverId;
+      setActiveView("dashboard");
+      render();
+      return;
+    }
+
+    const button = event.target.closest("[data-action]");
+    if (!button) return;
+    const probe = state.probes.find((item) => item.id === button.dataset.probeId);
+    if (!probe) return;
+
+    if (button.dataset.action === "copy-probe-repair") {
+      copyText(probeInstallCommandFor(probe), "Comando de reparo do probe copiado.");
+      return;
+    }
+
+    if (button.dataset.action === "delete-probe") {
+      const confirmed = window.confirm(`Remover o probe "${probe.name || probe.id}"?\n\nUse isto apenas para cadastros antigos sem servidores vinculados.`);
+      if (!confirmed) return;
+      try {
+        await api(`/api/probes/${encodeURIComponent(probe.id)}`, { method: "DELETE" });
+        state.probes = state.probes.filter((item) => item.id !== probe.id);
+        state.selectedProbeId = state.probes[0]?.id || null;
+        renderProbeOptions();
+        renderProbes();
+        showToast("Probe removido", `${probe.name || probe.id} saiu da lista de collectors.`);
+      } catch (error) {
+        showToast("Nao foi possivel remover", error.message);
+      }
+    }
   });
 
   document.querySelector("#openGroupForm").addEventListener("click", () => openGroupDialog());

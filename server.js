@@ -602,7 +602,7 @@ function snapshot(currentUser = null) {
     summary: summary(),
     servers: listedServers().map(publicServer),
     groups: listedGroups().map(publicGroup),
-    probes: currentUser?.role === "admin" ? (state.probes || []).map(publicProbe) : [],
+    probes: currentUser?.role === "admin" ? (state.probes || []).filter((probe) => !probe.deletedAt).map(publicProbe) : [],
     users: currentUser?.role === "admin" ? listedUsers().map(publicUser) : [],
     currentUser: currentUser ? publicUser(currentUser) : null,
     settings: publicSettings(currentUser),
@@ -908,6 +908,7 @@ function publicProbe(probe) {
     macAddresses: Array.isArray(probe.macAddresses) ? probe.macAddresses : [],
     lastSeenAt: probe.lastSeenAt || null,
     lastAddress: probe.lastAddress || null,
+    deletedAt: probe.deletedAt || null,
     status: staleServers ? "stale" : probe.lastSeenAt ? "online" : "unknown",
     targetCount: servers.length,
     staleTargetCount: staleServers
@@ -992,7 +993,8 @@ function upsertProbe({ probeId, name, version, hostName, primaryAddress, address
     primaryMac: normalizedPrimaryMac,
     macAddresses: normalizedMacAddresses.length ? normalizedMacAddresses : Array.isArray(existing?.macAddresses) ? existing.macAddresses : [],
     lastSeenAt: nowIso(),
-    lastAddress: remoteAddress || existing?.lastAddress || null
+    lastAddress: remoteAddress || existing?.lastAddress || null,
+    deletedAt: null
   };
   if (existing) {
     const changed =
@@ -1004,7 +1006,8 @@ function upsertProbe({ probeId, name, version, hostName, primaryAddress, address
       existing.platform !== payload.platform ||
       existing.primaryMac !== payload.primaryMac ||
       JSON.stringify(existing.macAddresses || []) !== JSON.stringify(payload.macAddresses || []) ||
-      existing.lastAddress !== payload.lastAddress;
+      existing.lastAddress !== payload.lastAddress ||
+      existing.deletedAt !== payload.deletedAt;
     Object.assign(existing, payload);
     return { probe: existing, changed };
   }
@@ -1392,9 +1395,27 @@ async function handleApi(req, res) {
       return sendJson(res, 200, snapshot(session.user));
     }
 
-    if (req.method === "GET" && parts[1] === "probes") {
+    if (parts[1] === "probes") {
       if (!requireAdmin(req, res)) return;
-      return sendJson(res, 200, (state.probes || []).map(publicProbe));
+      if (req.method === "GET" && parts.length === 2) {
+        return sendJson(res, 200, (state.probes || []).filter((probe) => !probe.deletedAt).map(publicProbe));
+      }
+
+      const id = parts[2];
+      const probe = (state.probes || []).find((item) => item.id === id && !item.deletedAt);
+      if (!probe) return notFound(res);
+
+      if (req.method === "DELETE" && parts.length === 3) {
+        const linkedServers = listedServers().filter((server) => server.checkSource === "probe" && server.probeId === probe.id);
+        if (linkedServers.length) {
+          return sendJson(res, 409, { error: "Reatribua ou remova os servidores vinculados antes de excluir este probe." });
+        }
+        probe.deletedAt = nowIso();
+        probe.updatedAt = probe.deletedAt;
+        scheduleSave();
+        broadcastSnapshot();
+        return sendJson(res, 200, publicProbe(probe));
+      }
     }
 
     if (parts[1] === "settings") {

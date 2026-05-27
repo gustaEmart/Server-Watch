@@ -23,21 +23,6 @@ Funcionalidades sugeridas:
   - servidor voltou a responder.
 - Filtro especifico para `Probes sem contato`.
 
-### Pagina de detalhes do probe
-
-Objetivo:
-
-- Transformar a aba Probes em uma tela operacional completa, nao apenas uma lista.
-
-Funcionalidades sugeridas:
-
-- Abrir detalhe de um probe ao selecionar na lista.
-- Exibir ultimo contato, IP, MAC, hostname, sistema operacional e versao do collector.
-- Exibir servidores vinculados ao probe e seus status.
-- Mostrar ultima falha de comunicacao ou erro reportado.
-- Botao para copiar comando de reinstalacao ou reparo.
-- Botao para desativar/remover um probe antigo.
-
 ### Alertas configuraveis
 
 Objetivo:
