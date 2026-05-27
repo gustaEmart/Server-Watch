@@ -65,6 +65,7 @@ let state = {
   }
 };
 let saveTimer = null;
+let probeStalenessCheckRunning = false;
 const storage = createStorage({
   type: STORAGE_TYPE,
   dataFile: DATA_FILE,
@@ -415,7 +416,7 @@ async function loadState() {
 async function persistState() {
   const payload = {
     ...state,
-    servers: state.servers.map(({ nextCheckAt, ...server }) => server)
+    servers: state.servers.map(({ nextCheckAt, nextProbeFallbackCheckAt, ...server }) => server)
   };
   await storage.saveState(payload);
 }
@@ -654,6 +655,80 @@ function pingHasReply(output, latencyMs) {
   );
 }
 
+function ipv4ToInt(address) {
+  const parts = String(address || "").split(".").map(Number);
+  if (parts.length !== 4 || parts.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) return null;
+  return parts.reduce((acc, part) => ((acc << 8) | part) >>> 0, 0);
+}
+
+function isIpv4Address(value) {
+  return ipv4ToInt(value) !== null;
+}
+
+function localSubnets() {
+  return Object.values(os.networkInterfaces())
+    .flatMap((items) => items || [])
+    .filter((item) => item.family === "IPv4" && !item.internal && item.address && item.netmask)
+    .map((item) => ({
+      address: ipv4ToInt(item.address),
+      mask: ipv4ToInt(item.netmask)
+    }))
+    .filter((item) => item.address !== null && item.mask !== null);
+}
+
+function isLocalNetworkTarget(hostname) {
+  const target = ipv4ToInt(hostname);
+  if (target === null) return false;
+  return localSubnets().some((subnet) => (target & subnet.mask) === (subnet.address & subnet.mask));
+}
+
+function sameIpv4Slash24(left, right) {
+  const leftInt = ipv4ToInt(left);
+  const rightInt = ipv4ToInt(right);
+  if (leftInt === null || rightInt === null) return false;
+  return (leftInt & 0xffffff00) === (rightInt & 0xffffff00);
+}
+
+function uniqueIpv4Addresses(values) {
+  return [...new Set(values.map((value) => String(value || "").trim()).filter(isIpv4Address))];
+}
+
+function probeIpv4Addresses(probe) {
+  if (!probe) return [];
+  return uniqueIpv4Addresses([
+    probe.primaryAddress,
+    probe.lastAddress,
+    ...normalizeProbeAddresses(probe.addresses)
+  ]);
+}
+
+function serverLanAddresses(server) {
+  const ownerProbe = (state.probes || []).find((probe) => probe.id === server.probeId);
+  return uniqueIpv4Addresses([server.hostname, ...probeIpv4Addresses(ownerProbe)]);
+}
+
+function sameProbeLan(probe, server) {
+  const verifierAddresses = probeIpv4Addresses(probe);
+  const targetAddresses = serverLanAddresses(server);
+  return verifierAddresses.some((verifierAddress) =>
+    targetAddresses.some((targetAddress) => sameIpv4Slash24(verifierAddress, targetAddress))
+  );
+}
+
+function canProbeVerifyServer(verifierProbe, server) {
+  return Boolean(
+    verifierProbe &&
+      server &&
+      server.isActive &&
+      !server.deletedAt &&
+      server.checkSource === "probe" &&
+      server.probeId &&
+      server.probeId !== verifierProbe.id &&
+      probeConnection(server).status === "stale" &&
+      sameProbeLan(verifierProbe, server)
+  );
+}
+
 function pingHost(hostname, timeoutMs = 2500) {
   return new Promise((resolvePing) => {
     const args = buildPingArgs(hostname, timeoutMs);
@@ -723,38 +798,74 @@ async function checkServer(server) {
   scheduleSave();
 }
 
-function checkProbeStaleness(nowMs = Date.now()) {
+async function checkProbeStaleness(nowMs = Date.now()) {
+  if (probeStalenessCheckRunning) return;
+  probeStalenessCheckRunning = true;
   let changed = false;
-  for (const server of state.servers) {
-    if (server.deletedAt || !server.isActive || server.checkSource !== "probe") continue;
-    const probe = (state.probes || []).find((item) => item.id === server.probeId);
-    const lastSeenMs = newestTimestamp(probe?.lastSeenAt, server.lastProbeSeenAt);
-    if (!lastSeenMs) continue;
-    if (nowMs - lastSeenMs <= probeStaleAfterMs(server)) continue;
 
-    const checkedAt = nowIso();
-    const previousStatus = server.currentStatus || "unknown";
-    const lastSeenLabel = new Date(lastSeenMs).toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" });
-    const message = `Probe collector sem contato desde ${lastSeenLabel}.`;
-    const needsUpdate = previousStatus !== "offline" || server.lastError !== message || server.probeCheckRequestedAt;
-    if (!needsUpdate) continue;
+  try {
+    for (const server of state.servers) {
+      if (server.deletedAt || !server.isActive || server.checkSource !== "probe") continue;
+      const probe = (state.probes || []).find((item) => item.id === server.probeId);
+      const lastSeenMs = newestTimestamp(probe?.lastSeenAt, server.lastProbeSeenAt);
+      if (!lastSeenMs) continue;
+      if (nowMs - lastSeenMs <= probeStaleAfterMs(server)) continue;
 
-    server.lastCheckedAt = checkedAt;
-    server.lastLatencyMs = null;
-    server.lastError = message;
-    server.probeCheckRequestedAt = null;
-    server.consecutiveFailures = Math.max(server.failureThreshold || 1, server.consecutiveFailures || 0);
-    server.currentStatus = "offline";
+      const requested = Boolean(server.probeCheckRequestedAt);
+      const nextFallbackCheckAt = Number(server.nextProbeFallbackCheckAt || 0);
+      if (!requested && nextFallbackCheckAt && nowMs < nextFallbackCheckAt) continue;
 
-    if (previousStatus !== "offline") {
-      server.previousStatus = previousStatus;
-      server.statusChangedAt = checkedAt;
-      addEvent(server, previousStatus, server.currentStatus, null, message);
-    } else {
-      broadcast({ type: "server_checked", server: publicServer(server), summary: summary() });
+      const checkedAt = nowIso();
+      const previousStatus = server.currentStatus || "unknown";
+      const lastSeenLabel = new Date(lastSeenMs).toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" });
+      const baseMessage = `Probe collector sem contato desde ${lastSeenLabel}.`;
+      const nextDelayMs = Math.max(10000, Math.max(3, Number(server.checkInterval || state.settings.defaultInterval || 10)) * 1000);
+      server.nextProbeFallbackCheckAt = nowMs + nextDelayMs;
+
+      if (isLocalNetworkTarget(server.hostname)) {
+        const result = await pingHost(server.hostname);
+        const message = result.online
+          ? `${baseMessage} Servidor respondeu ao ping da central.`
+          : `${baseMessage} Ping da central falhou: ${result.error || "sem resposta"}`;
+
+        server.lastCheckedAt = checkedAt;
+        server.lastLatencyMs = result.latencyMs;
+        server.lastError = message;
+        server.probeCheckRequestedAt = null;
+
+        if (result.online) {
+          server.consecutiveFailures = 0;
+          server.currentStatus = "online";
+        } else {
+          server.consecutiveFailures = (server.consecutiveFailures || 0) + 1;
+          if (server.consecutiveFailures >= server.failureThreshold) {
+            server.currentStatus = "offline";
+          }
+        }
+
+        if (server.currentStatus !== previousStatus) {
+          server.previousStatus = previousStatus;
+          server.statusChangedAt = checkedAt;
+          addEvent(server, previousStatus, server.currentStatus, result.latencyMs, message);
+        } else {
+          broadcast({ type: "server_checked", server: publicServer(server), summary: summary() });
+        }
+        changed = true;
+        continue;
+      }
+
+      const message = `${baseMessage} A central aguardara outro probe da mesma rede confirmar o status.`;
+      if (server.lastError !== message || requested) {
+        server.lastError = message;
+        server.probeCheckRequestedAt = null;
+        broadcast({ type: "server_checked", server: publicServer(server), summary: summary() });
+        changed = true;
+      }
     }
-    changed = true;
+  } finally {
+    probeStalenessCheckRunning = false;
   }
+
   if (changed) scheduleSave();
 }
 
@@ -767,7 +878,7 @@ function startMonitor() {
         checkServer(server).catch((error) => console.error("Falha ao verificar servidor", server.hostname, error));
       }
     }
-    checkProbeStaleness(now);
+    checkProbeStaleness(now).catch((error) => console.error("Falha ao verificar probes sem contato", error));
   }, CHECK_LOOP_MS);
 }
 
@@ -977,29 +1088,47 @@ function ensureProbeServer(probe) {
 }
 
 function probeTargets(probeId) {
-  return listedServers()
+  const probe = (state.probes || []).find((item) => item.id === probeId);
+  const toTarget = (server, verification = false) => ({
+    id: server.id,
+    name: server.name,
+    hostname: server.hostname,
+    checkMethod: "ping",
+    checkInterval: server.checkInterval,
+    failureThreshold: server.failureThreshold,
+    verification,
+    ownerProbeId: server.probeId,
+    forceCheck: Boolean(
+      server.probeCheckRequestedAt &&
+        (!server.lastCheckedAt || new Date(server.probeCheckRequestedAt).getTime() > new Date(server.lastCheckedAt).getTime())
+    )
+  });
+  const ownedTargets = listedServers()
     .filter((server) => server.isActive && server.checkSource === "probe" && server.probeId === probeId)
-    .map((server) => ({
-      id: server.id,
-      name: server.name,
-      hostname: server.hostname,
-      checkMethod: "ping",
-      checkInterval: server.checkInterval,
-      failureThreshold: server.failureThreshold,
-      forceCheck: Boolean(
-        server.probeCheckRequestedAt &&
-          (!server.lastCheckedAt || new Date(server.probeCheckRequestedAt).getTime() > new Date(server.lastCheckedAt).getTime())
-      )
-    }));
+    .map((server) => toTarget(server, false));
+  const verificationTargets = probe
+    ? listedServers()
+        .filter((server) => canProbeVerifyServer(probe, server))
+        .map((server) => toTarget(server, true))
+    : [];
+
+  return [...ownedTargets, ...verificationTargets];
 }
 
-function applyProbeResult(server, result, probeId) {
+function applyProbeResult(server, result, probeId, options = {}) {
   const previousStatus = server.currentStatus || "unknown";
+  const verification = Boolean(options.verification);
   server.lastCheckedAt = result.checkedAt || nowIso();
-  server.lastProbeSeenAt = nowIso();
+  if (!verification) {
+    server.lastProbeSeenAt = nowIso();
+  }
   server.probeCheckRequestedAt = null;
   server.lastLatencyMs = result.latencyMs ?? null;
-  server.lastError = result.error || null;
+  server.lastError = verification
+    ? result.online
+      ? `Probe local sem contato; servidor respondeu via probe ${probeId}.`
+      : `Probe local sem contato; servidor nao respondeu via probe ${probeId}. ${result.error || "Sem resposta ao ping."}`
+    : result.error || null;
 
   if (result.online) {
     server.consecutiveFailures = 0;
@@ -1014,7 +1143,13 @@ function applyProbeResult(server, result, probeId) {
   if (server.currentStatus !== previousStatus) {
     server.previousStatus = previousStatus;
     server.statusChangedAt = server.lastCheckedAt;
-    addEvent(server, previousStatus, server.currentStatus, server.lastLatencyMs, result.error || `Resultado recebido do probe ${probeId}.`);
+    addEvent(
+      server,
+      previousStatus,
+      server.currentStatus,
+      server.lastLatencyMs,
+      server.lastError || `Resultado recebido do probe ${probeId}.`
+    );
   } else {
     broadcast({ type: "server_checked", server: publicServer(server), summary: summary() });
   }
@@ -1231,11 +1366,13 @@ async function handleApi(req, res) {
             (item) =>
               item.id === result.serverId &&
               !item.deletedAt &&
-              item.checkSource === "probe" &&
-              item.probeId === probe.id
+              item.checkSource === "probe"
           );
           if (!server) continue;
-          applyProbeResult(server, result, probe.id);
+          const ownsTarget = server.probeId === probe.id;
+          const verifiesPeer = !ownsTarget && canProbeVerifyServer(probe, server);
+          if (!ownsTarget && !verifiesPeer) continue;
+          applyProbeResult(server, result, probe.id, { verification: verifiesPeer });
           accepted += 1;
         }
         scheduleSave();

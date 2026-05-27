@@ -223,7 +223,6 @@ function statusLabel(status) {
 
 function displayStatus(server) {
   if (!server.isActive) return "paused";
-  if (server.checkSource === "probe" && server.probeStatus === "stale") return "probe_stale";
   return server.currentStatus || "unknown";
 }
 
@@ -641,9 +640,11 @@ function filteredServers() {
   return state.servers.filter((server) => {
     const visibleStatus = displayStatus(server);
     const statusOk =
-      state.filters.status === "all" ||
-      visibleStatus === state.filters.status ||
-      (!server.isActive && state.filters.status === "unknown");
+      state.filters.status === "probe_stale"
+        ? server.checkSource === "probe" && server.probeStatus === "stale"
+        : state.filters.status === "all" ||
+          visibleStatus === state.filters.status ||
+          (!server.isActive && state.filters.status === "unknown");
     const envOk = state.filters.environment === "all" || server.environment === state.filters.environment;
     const groupOk = groupFilterMatches(server);
     const haystack = [
@@ -675,6 +676,9 @@ function statusCounts(servers) {
     (acc, server) => {
       const status = displayStatus(server);
       acc[status] = (acc[status] || 0) + 1;
+      if (server.checkSource === "probe" && server.probeStatus === "stale") {
+        acc.probe_stale = (acc.probe_stale || 0) + 1;
+      }
       return acc;
     },
     { online: 0, offline: 0, probe_stale: 0, unknown: 0, paused: 0 }
@@ -685,12 +689,11 @@ function renderMetrics() {
   const servers = scopedServers();
   const counts = statusCounts(servers);
   const activeTotal = servers.filter((server) => server.isActive).length;
-  const total = servers.length || 1;
-  const onlinePct = (counts.online / total) * 100;
-  const offlinePct = (counts.offline / total) * 100;
-  const probeStalePct = (counts.probe_stale / total) * 100;
-  const unknownPct = (counts.unknown / total) * 100;
-  const pausedPct = (counts.paused / total) * 100;
+  const statusTotal = counts.online + counts.offline + counts.unknown + counts.paused || 1;
+  const onlinePct = (counts.online / statusTotal) * 100;
+  const offlinePct = (counts.offline / statusTotal) * 100;
+  const unknownPct = (counts.unknown / statusTotal) * 100;
+  const pausedPct = (counts.paused / statusTotal) * 100;
 
   els.overviewScope.textContent = groupScopeLabel();
   els.metricTotal.textContent = activeTotal;
@@ -703,9 +706,8 @@ function renderMetrics() {
     ? `conic-gradient(
         var(--online) 0 ${onlinePct}%,
         var(--offline) ${onlinePct}% ${onlinePct + offlinePct}%,
-        var(--probe-stale) ${onlinePct + offlinePct}% ${onlinePct + offlinePct + probeStalePct}%,
-        var(--unknown) ${onlinePct + offlinePct + probeStalePct}% ${onlinePct + offlinePct + probeStalePct + unknownPct}%,
-        #9ca3af ${onlinePct + offlinePct + probeStalePct + unknownPct}% ${onlinePct + offlinePct + probeStalePct + unknownPct + pausedPct}%
+        var(--unknown) ${onlinePct + offlinePct}% ${onlinePct + offlinePct + unknownPct}%,
+        #9ca3af ${onlinePct + offlinePct + unknownPct}% ${onlinePct + offlinePct + unknownPct + pausedPct}%
       )`
     : "conic-gradient(#dbe3e4 0 100%)";
   els.statusDonut.dataset.total = String(servers.length);
@@ -727,7 +729,7 @@ function renderServerRow(server) {
   const inactive = server.isActive ? "" : "inactive";
   const latency = server.lastLatencyMs === null || server.lastLatencyMs === undefined ? "-" : `${server.lastLatencyMs} ms`;
   const offlineFor =
-    server.isActive && visibleStatus === "probe_stale"
+    server.isActive && server.checkSource === "probe" && server.probeStatus === "stale"
       ? `<span>Probe sem contato ha ${formatDurationSince(server.probeLastSeenAt || server.lastProbeSeenAt)}</span>`
       : server.isActive && server.currentStatus === "offline"
       ? `<span>Offline ha ${formatDurationSince(server.statusChangedAt)}</span>`
