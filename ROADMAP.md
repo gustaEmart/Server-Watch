@@ -1,142 +1,229 @@
 # Roadmap e backlog
 
-## Hierarquia de infraestrutura e clusters
+Este roadmap lista apenas evolucoes ainda pendentes para o ServerWatch. Itens ja implementados, como login, MongoDB, cadastro de usuarios, empresas, probes basicos, instaladores, white label, tema claro/escuro e rotas da interface foram removidos daqui.
 
-Para futuras versoes, o ServerWatch deve permitir cadastrar relacoes entre servidores, clusters e maquinas virtuais.
+## Prioridade 1 - Confianca operacional
 
-Objetivo:
-
-- Representar clusters de servidores fisicos, como clusters Proxmox.
-- Indicar que um servidor monitorado e uma VM hospedada em um virtualizador especifico.
-- Mostrar dependencias visuais no dashboard, por exemplo:
-  - Cluster Proxmox
-  - Host fisico Proxmox
-  - VM dentro do host
-  - Servicos ou servidores dependentes da VM
-- Alertar de forma mais inteligente quando um host pai cair, evitando confusao com varias VMs offline ao mesmo tempo.
-
-Modelo sugerido:
-
-- `node_type`: `physical`, `hypervisor`, `cluster`, `vm`, `service`
-- `parent_id`: servidor, host ou cluster do qual este item depende
-- `platform`: `proxmox`, `vmware`, `hyper-v`, `bare-metal`, `cloud`, etc.
-- `dependency_status`: calculado com base no status do item e dos pais
-
-UI sugerida:
-
-- Visao em arvore para hierarquia operacional.
-- Agrupamento por cluster/host no dashboard.
-- Indicador visual quando uma VM esta offline porque o virtualizador ou host pai caiu.
-- Filtro por plataforma e por tipo de node.
-
-Essa funcionalidade deve ser implementada depois do MVP basico de CRUD, ping, historico e alertas estar estavel.
-
-## Probe Collector para clientes externos
-
-Adicionar suporte a um coletor local por cliente, evitando VPN e portas de entrada nas redes dos clientes.
+### Estado do probe separado do estado do servidor
 
 Objetivo:
 
-- Instalar um Probe Collector dentro da rede do cliente.
-- Fazer checagens locais a partir do probe, inicialmente por ping.
-- Enviar resultados para o ServerWatch central via HTTP/HTTPS de saida.
-- Permitir que cada servidor seja monitorado pelo ServerWatch central ou por um probe especifico.
-- Manter tolerancia a falhas consecutivas antes de marcar offline.
-- Evitar exposicao de ICMP, SNMP ou portas internas na internet.
+- Diferenciar claramente falha do servidor monitorado e falha do Probe Collector.
+- Exibir estados como `Online`, `Offline`, `Probe sem contato`, `Pausado` e `Sem status`.
+- Evitar que o operador confunda uma maquina desligada com uma falha de rede ou falha do collector.
 
-Implementacao inicial:
+Funcionalidades sugeridas:
 
-- Endpoint para o probe buscar alvos atribuidos ao seu `probe_id`.
-- Endpoint para o probe enviar resultados de checagem.
-- Autenticacao por token compartilhado.
-- Probe em Node.js, instalavel em Linux e Windows.
-- UI local do probe em `http://localhost:8777/setup` para facilitar a configuracao.
-- Instalador Windows `.exe` com UI para configurar, instalar e iniciar o probe.
-- Cadastro de servidor com origem `serverwatch` ou `probe`.
+- Card de detalhe mostrando `Status do servidor` e `Status do probe`.
+- Historico separado para eventos do probe: ultimo contato, perda de contato e retorno.
+- Alertas com mensagens diferentes para:
+  - servidor nao respondeu ao ping;
+  - probe collector ficou sem contato;
+  - probe collector voltou a se comunicar;
+  - servidor voltou a responder.
+- Filtro especifico para `Probes sem contato`.
 
-Evolucoes futuras:
-
-- SNMP dentro da LAN do cliente, coletado pelo probe.
-- Coleta de CPU, memoria, disco, interfaces e inventario.
-- Fila local no probe para reenviar resultados quando a internet cair.
-- Atualizacao automatica do probe.
-- Token individual por cliente/probe.
-- Tela de gestao de probes com ultimo contato, versao e quantidade de alvos.
-
-## Identidade visual
-
-Evoluir a interface para uma identidade visual mais proprietaria, misturando azul escuro com vermelho.
-
-Direcao sugerida:
-
-- Azul escuro como base institucional para navegacao, headers e superficies principais.
-- Vermelho como cor de alerta, indisponibilidade, acoes destrutivas e pontos de atencao.
-- Manter verde apenas para status ONLINE, sem deixar a paleta dominar a interface.
-- Usar cinza neutro para estados pausados/desativados.
-- Evitar excesso de saturacao para preservar legibilidade em uso operacional continuo.
-
-## Login, banco de dados e dados por usuario
-
-Adicionar autenticacao e persistencia real em banco de dados.
+### Pagina de detalhes do probe
 
 Objetivo:
 
-- Tela de login com e-mail e senha.
-- Cadastro inicial de usuario administrador.
-- Banco de dados para guardar usuarios, servidores, historico, alertas e preferencias.
-- Cada usuario deve acessar apenas os servidores permitidos para ele.
-- Preparar o modelo para organizacoes/equipes no futuro.
+- Transformar a aba Probes em uma tela operacional completa, nao apenas uma lista.
 
-Modelo inicial sugerido:
+Funcionalidades sugeridas:
 
-- `users`: nome, e-mail, senha com hash, papel/perfil, status ativo.
-- `groups`: empresas, clientes, unidades ou grupos operacionais.
-- `servers`: dados do servidor monitorado, empresa/grupo, dono/organizacao, status atual.
-- `status_events`: historico de transicoes e checagens relevantes.
-- `alerts`: alertas gerados e leitura/acknowledgement.
-- `user_settings`: preferencias do usuario.
+- Abrir detalhe de um probe ao selecionar na lista.
+- Exibir ultimo contato, IP, MAC, hostname, sistema operacional e versao do collector.
+- Exibir servidores vinculados ao probe e seus status.
+- Mostrar ultima falha de comunicacao ou erro reportado.
+- Botao para copiar comando de reinstalacao ou reparo.
+- Botao para desativar/remover um probe antigo.
 
-Recomendacao tecnica:
-
-- Banco escolhido para a persistencia central: MongoDB.
-- Migrar a persistencia atual em JSON para MongoDB de forma gradual, mantendo uma camada de storage para reduzir risco durante a transicao.
-- Usar `MONGODB_URI` e `MONGODB_DB` por variaveis de ambiente.
-- Manter o MongoDB acessivel apenas ao backend do ServerWatch; probes e clientes continuam comunicando somente via HTTP/HTTPS.
-- Separar historico de checagens em uma colecao propria, com indices por servidor/probe/data e politica futura de retencao.
-- Autenticacao com sessao ou JWT.
-- Senhas com bcrypt/argon2.
-
-## Configuracoes e notificacoes por e-mail
-
-Adicionar uma tela de configuracoes do usuario com preferencias de notificacao.
-
-Funcionalidades futuras:
-
-- Ativar/desativar notificacoes diarias por e-mail.
-- Configurar horario do resumo diario.
-- Escolher quais eventos entram no e-mail: offline, recuperacoes, disponibilidade diaria, servidores pausados.
-- Permitir destinatarios adicionais por usuario ou por grupo.
-- Guardar preferencias em `user_settings`.
-
-Resumo diario sugerido:
-
-- Total de servidores monitorados.
-- Quantos ficaram online/offline no periodo.
-- Incidentes do dia.
-- Servidores atualmente offline.
-- Disponibilidade percentual por servidor ou grupo.
-
-## Exportacao e importacao CSV
-
-Adicionar a possibilidade de exportar e importar configuracoes em arquivo CSV.
+### Alertas configuraveis
 
 Objetivo:
 
-- Exportar empresas/grupos cadastrados.
-- Exportar servidores monitorados, incluindo IP/hostname, empresa, ambiente, tags, intervalo e limite de falhas.
-- Importar servidores em massa a partir de CSV.
-- Atualizar servidores existentes quando houver correspondencia por identificador, hostname ou nome.
-- Validar erros de importacao antes de aplicar mudancas.
+- Permitir ajustar o comportamento de alertas conforme o cliente ou ambiente.
+
+Funcionalidades sugeridas:
+
+- Tempo sem contato para considerar um probe offline.
+- Quantidade de falhas antes de marcar servidor como offline.
+- Nivel de severidade por ambiente ou tag.
+- Ativar/desativar som de alerta.
+- Ativar/desativar notificacao do navegador.
+- Marcar alerta como reconhecido.
+- Campo de observacao no reconhecimento do alerta.
+
+### Historico mais claro por servidor
+
+Objetivo:
+
+- Facilitar auditoria e diagnostico de incidentes.
+
+Eventos sugeridos:
+
+- Servidor ficou online.
+- Servidor ficou offline.
+- Probe ficou sem contato.
+- Probe voltou.
+- Checagem manual solicitada.
+- Servidor editado.
+- Servidor pausado ou reativado.
+- Servidor excluido.
+
+Melhorias de UI:
+
+- Linha do tempo filtravel por servidor.
+- Separar eventos tecnicos de eventos administrativos.
+- Mostrar duracao de indisponibilidade quando houver recuperacao.
+
+## Prioridade 2 - Operacao multi-cliente
+
+### Permissoes por empresa
+
+Objetivo:
+
+- Permitir que usuarios nao administradores vejam apenas empresas autorizadas.
+
+Funcionalidades sugeridas:
+
+- Vincular usuarios a uma ou mais empresas.
+- Perfis:
+  - administrador global;
+  - operador global;
+  - operador por empresa;
+  - somente leitura.
+- Restringir dashboard, servidores, historico e alertas por empresa.
+- Impedir acesso direto por URL a dados fora do escopo do usuario.
+
+### Configuracoes por empresa
+
+Objetivo:
+
+- Tornar cada cliente mais autonomo dentro do ServerWatch.
+
+Campos sugeridos:
+
+- Nome da empresa.
+- Logo da empresa.
+- Contatos tecnicos.
+- E-mails de alerta.
+- Intervalo padrao de checagem.
+- Limite padrao de falhas.
+- Probes vinculados.
+- Observacoes contratuais ou operacionais.
+
+### Dashboard executivo
+
+Objetivo:
+
+- Dar uma visao mais rapida para operacao diaria.
+
+Blocos sugeridos:
+
+- Clientes com alerta aberto.
+- Probes sem contato.
+- Servidores criticos offline.
+- Ultimas quedas.
+- Recuperacoes recentes.
+- Piores latencias.
+- Disponibilidade por empresa.
+- Total de servidores por ambiente.
+
+## Prioridade 3 - Probe Collector
+
+### Instalador mais inteligente
+
+Objetivo:
+
+- Reduzir falhas de instalacao e facilitar suporte remoto.
+
+Melhorias sugeridas:
+
+- Testar conexao com o ServerWatch antes de instalar.
+- Validar token antes da instalacao.
+- Exibir log de instalacao na propria interface.
+- Botao de reparar instalacao.
+- Botao de remover servico.
+- Mostrar progresso por etapa.
+- Detectar Node.js ausente ou versao incompatibil sem erro tecnico cru.
+
+### Atualizacao automatica do probe
+
+Objetivo:
+
+- Manter collectors atualizados sem reinstalacao manual em cada servidor.
+
+Funcionalidades sugeridas:
+
+- Collector informar versao atual.
+- ServerWatch indicar probes desatualizados.
+- Comando de atualizacao por Linux e Windows.
+- Modo de atualizacao segura, com rollback simples.
+- Registro no historico quando o probe for atualizado.
+
+### Fila local do probe
+
+Objetivo:
+
+- Preservar resultados quando a internet do cliente cair.
+
+Funcionalidades sugeridas:
+
+- Salvar resultados localmente quando o ServerWatch central estiver indisponivel.
+- Reenviar resultados quando a conexao voltar.
+- Limite de tamanho da fila local.
+- Registro de tempo em que o probe ficou sem conseguir enviar dados.
+
+### Metricas adicionais pelo probe
+
+Objetivo:
+
+- Evoluir alem do ping.
+
+Coletas futuras:
+
+- CPU.
+- Memoria.
+- Disco.
+- Interfaces de rede.
+- Uptime.
+- Inventario basico.
+- SNMP dentro da LAN do cliente.
+- Status de servicos especificos.
+
+## Prioridade 4 - Dados, backup e retencao
+
+### Backup e restore
+
+Objetivo:
+
+- Reduzir risco operacional com MongoDB em producao.
+
+Funcionalidades sugeridas:
+
+- Backup manual pelo painel.
+- Rotina automatica de backup.
+- Download do backup.
+- Restore documentado.
+- Retencao configuravel dos backups.
+- Exportacao de configuracoes principais em JSON.
+
+### Exportacao e importacao CSV
+
+Objetivo:
+
+- Facilitar carga inicial e manutencao em massa.
+
+Escopo sugerido:
+
+- Exportar empresas.
+- Exportar servidores.
+- Importar servidores em massa.
+- Atualizar servidores existentes por identificador, hostname ou nome.
+- Pre-visualizar mudancas antes de aplicar.
+- Validar linhas com erro sem cancelar toda a importacao.
+- Criar empresas automaticamente apenas com confirmacao.
 
 Campos sugeridos para CSV de servidores:
 
@@ -144,9 +231,65 @@ Campos sugeridos para CSV de servidores:
 name,hostname,company,environment,location,tags,check_source,probe_id,check_interval,failure_threshold,is_active
 ```
 
-Cuidados:
+### Historico em colecoes proprias
 
-- Mostrar pre-visualizacao antes de importar.
-- Informar linhas com erro sem interromper toda a importacao.
-- Criar empresas automaticamente apenas se o usuario confirmar.
-- Gerar backup das configuracoes antes de importacao em massa.
+Objetivo:
+
+- Preparar o MongoDB para crescimento.
+
+Melhorias sugeridas:
+
+- Separar eventos e alertas em colecoes proprias.
+- Criar indices por servidor, empresa, probe e data.
+- Definir politica de retencao de eventos.
+- Manter snapshot atual separado do historico.
+- Criar rotina de compactacao/limpeza.
+
+## Prioridade 5 - Notificacoes externas
+
+### Notificacoes por e-mail
+
+Objetivo:
+
+- Enviar incidentes e resumo diario para responsaveis.
+
+Funcionalidades sugeridas:
+
+- Configurar SMTP.
+- Destinatarios por empresa.
+- Eventos enviados: offline, recuperacao, probe sem contato.
+- Resumo diario com disponibilidade.
+- Teste de envio pela interface.
+
+### Integrações futuras
+
+Opcoes:
+
+- Telegram.
+- Discord.
+- Slack.
+- Microsoft Teams.
+- Webhook generico.
+- GLPI para abertura de chamado.
+
+## Prioridade 6 - Hierarquia de infraestrutura
+
+### Clusters, hosts fisicos e VMs
+
+Objetivo:
+
+- Representar dependencias entre servidores, hosts fisicos, clusters e maquinas virtuais.
+
+Modelo sugerido:
+
+- `node_type`: `physical`, `hypervisor`, `cluster`, `vm`, `service`.
+- `parent_id`: servidor, host ou cluster do qual o item depende.
+- `platform`: `proxmox`, `vmware`, `hyper-v`, `bare-metal`, `cloud`.
+- `dependency_status`: calculado com base no status do item e dos pais.
+
+UI sugerida:
+
+- Visao em arvore.
+- Agrupamento por cluster ou host.
+- Indicador quando uma VM esta offline porque o host pai caiu.
+- Filtro por plataforma e tipo de node.
