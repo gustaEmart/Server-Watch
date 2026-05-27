@@ -47,6 +47,8 @@ const els = {
   overviewScope: document.querySelector("#overviewScope"),
   statusDonut: document.querySelector("#statusDonut"),
   statusLegend: document.querySelector("#statusLegend"),
+  executiveDashboard: document.querySelector("#executiveDashboard"),
+  executiveGrid: document.querySelector("#executiveGrid"),
   serverList: document.querySelector("#serverList"),
   serverCount: document.querySelector("#serverCount"),
   detailPanel: document.querySelector("#detailPanel"),
@@ -488,7 +490,9 @@ function updateTopbarContext() {
 
 function updateMetricsVisibility() {
   if (!els.metricsGrid) return;
-  els.metricsGrid.hidden = !["dashboard", "groups"].includes(activeViewName());
+  const viewName = activeViewName();
+  els.metricsGrid.hidden = !["dashboard", "groups"].includes(viewName);
+  if (els.executiveDashboard) els.executiveDashboard.hidden = viewName !== "dashboard";
 }
 
 function updateActiveFilterCount() {
@@ -792,6 +796,253 @@ function renderMetrics() {
     .filter(([, , count]) => count > 0)
     .map(([key, label, count]) => `<span><i class="${key}"></i>${label}: ${count}</span>`)
     .join("");
+}
+
+function serverById(id) {
+  return state.servers.find((server) => server.id === id) || null;
+}
+
+function eventServer(event) {
+  return serverById(event.serverId);
+}
+
+function availabilityForServers(servers) {
+  const active = servers.filter((server) => server.isActive);
+  if (!active.length) return 0;
+  const online = active.filter((server) => server.currentStatus === "online").length;
+  return Math.round((online / active.length) * 1000) / 10;
+}
+
+function executiveItem({ title, meta, badge, status = "", serverId = "", companyId = "" }) {
+  return `
+    <button class="executive-item" type="button" ${serverId ? `data-server-id="${escapeHtml(serverId)}"` : ""} ${companyId ? `data-company-id="${escapeHtml(companyId)}"` : ""}>
+      <span class="executive-item-main">
+        <strong>${escapeHtml(title)}</strong>
+        <small>${escapeHtml(meta || "")}</small>
+      </span>
+      ${badge ? `<span class="mini-badge ${status}">${escapeHtml(badge)}</span>` : ""}
+    </button>
+  `;
+}
+
+function executiveEmpty(message) {
+  return `<div class="executive-empty">${escapeHtml(message)}</div>`;
+}
+
+function renderExecutiveDashboard() {
+  if (!els.executiveGrid) return;
+  const activeServers = state.servers.filter((server) => server.isActive);
+  const openAlerts = state.alerts.filter((alert) => !alert.read && alert.type === "down");
+  const staleProbes = state.probes.filter((probe) => probe.status === "stale");
+  const criticalOffline = activeServers
+    .filter((server) => server.currentStatus === "offline")
+    .sort((left, right) => {
+      const priority = { production: 0, staging: 1, development: 2 };
+      return (priority[left.environment] ?? 3) - (priority[right.environment] ?? 3);
+    })
+    .slice(0, 5);
+  const recentDrops = state.events
+    .filter((event) => (event.kind || "") === "server_offline" || event.currentStatus === "offline")
+    .slice(0, 4);
+  const recentRecoveries = state.events
+    .filter((event) => (event.kind || "") === "server_recovered" || (event.currentStatus === "online" && event.previousStatus === "offline"))
+    .slice(0, 4);
+  const worstLatencies = activeServers
+    .filter((server) => server.currentStatus === "online" && Number.isFinite(Number(server.lastLatencyMs)))
+    .sort((left, right) => Number(right.lastLatencyMs) - Number(left.lastLatencyMs))
+    .slice(0, 4);
+  const clientsWithAlerts = groupedServers(state.servers)
+    .map((group) => {
+      const serverIds = new Set(group.servers.map((server) => server.id));
+      return {
+        ...group,
+        openAlerts: openAlerts.filter((alert) => serverIds.has(alert.serverId)).length,
+        offline: group.servers.filter((server) => server.isActive && server.currentStatus === "offline").length,
+        availability: availabilityForServers(group.servers)
+      };
+    })
+    .filter((group) => group.openAlerts || group.offline)
+    .sort((left, right) => right.openAlerts - left.openAlerts || right.offline - left.offline)
+    .slice(0, 4);
+  const availabilityByCompany = groupedServers(state.servers)
+    .map((group) => ({ ...group, availability: availabilityForServers(group.servers) }))
+    .filter((group) => group.servers.some((server) => server.isActive))
+    .sort((left, right) => left.availability - right.availability)
+    .slice(0, 4);
+  const byEnvironment = ["production", "staging", "development"].map((environment) => {
+    const servers = activeServers.filter((server) => server.environment === environment);
+    const counts = statusCounts(servers);
+    return { environment, total: servers.length, online: counts.online, offline: counts.offline };
+  });
+
+  els.executiveGrid.innerHTML = `
+    <article class="executive-card attention">
+      <header><span>Clientes com alerta</span><strong>${clientsWithAlerts.length}</strong></header>
+      <div class="executive-list">
+        ${
+          clientsWithAlerts.length
+            ? clientsWithAlerts
+                .map((group) =>
+                  executiveItem({
+                    title: group.name,
+                    meta: `${group.offline} offline · ${group.availability}% online`,
+                    badge: `${group.openAlerts} alerta${group.openAlerts === 1 ? "" : "s"}`,
+                    status: "offline",
+                    companyId: group.id
+                  })
+                )
+                .join("")
+            : executiveEmpty("Nenhum cliente com alerta aberto.")
+        }
+      </div>
+    </article>
+
+    <article class="executive-card">
+      <header><span>Probes sem contato</span><strong>${staleProbes.length}</strong></header>
+      <div class="executive-list">
+        ${
+          staleProbes.length
+            ? staleProbes
+                .slice(0, 4)
+                .map((probe) =>
+                  executiveItem({
+                    title: probe.name || probe.id,
+                    meta: `${probe.primaryAddress || probe.lastAddress || "sem IP"} · ${formatDate(probe.lastSeenAt)}`,
+                    badge: `${probe.staleTargetCount || 0} alvos`,
+                    status: "probe_stale"
+                  })
+                )
+                .join("")
+            : executiveEmpty("Todos os probes estao se comunicando.")
+        }
+      </div>
+    </article>
+
+    <article class="executive-card attention">
+      <header><span>Criticos offline</span><strong>${criticalOffline.length}</strong></header>
+      <div class="executive-list">
+        ${
+          criticalOffline.length
+            ? criticalOffline
+                .map((server) =>
+                  executiveItem({
+                    title: server.name,
+                    meta: `${server.hostname} · ${groupLabel(server.groupId)} · ${environmentLabel(server.environment)}`,
+                    badge: "Offline",
+                    status: "offline",
+                    serverId: server.id
+                  })
+                )
+                .join("")
+            : executiveEmpty("Nenhum servidor ativo offline.")
+        }
+      </div>
+    </article>
+
+    <article class="executive-card">
+      <header><span>Ultimas quedas</span><strong>${recentDrops.length}</strong></header>
+      <div class="executive-list">
+        ${
+          recentDrops.length
+            ? recentDrops
+                .map((event) => {
+                  const server = eventServer(event);
+                  return executiveItem({
+                    title: event.serverName || "Servidor",
+                    meta: `${formatDate(event.createdAt)}${event.message ? ` · ${event.message}` : ""}`,
+                    badge: "Queda",
+                    status: "offline",
+                    serverId: server?.id || ""
+                  });
+                })
+                .join("")
+            : executiveEmpty("Sem quedas recentes.")
+        }
+      </div>
+    </article>
+
+    <article class="executive-card">
+      <header><span>Recuperacoes recentes</span><strong>${recentRecoveries.length}</strong></header>
+      <div class="executive-list">
+        ${
+          recentRecoveries.length
+            ? recentRecoveries
+                .map((event) => {
+                  const server = eventServer(event);
+                  return executiveItem({
+                    title: event.serverName || "Servidor",
+                    meta: `${formatDate(event.createdAt)}${event.durationMs ? ` · indisponivel por ${formatDurationMs(event.durationMs)}` : ""}`,
+                    badge: "Online",
+                    status: "online",
+                    serverId: server?.id || ""
+                  });
+                })
+                .join("")
+            : executiveEmpty("Sem recuperacoes recentes.")
+        }
+      </div>
+    </article>
+
+    <article class="executive-card">
+      <header><span>Piores latencias</span><strong>${worstLatencies.length}</strong></header>
+      <div class="executive-list">
+        ${
+          worstLatencies.length
+            ? worstLatencies
+                .map((server) =>
+                  executiveItem({
+                    title: server.name,
+                    meta: `${server.hostname} · ${groupLabel(server.groupId)}`,
+                    badge: `${server.lastLatencyMs} ms`,
+                    status: "unknown",
+                    serverId: server.id
+                  })
+                )
+                .join("")
+            : executiveEmpty("Sem latencias registradas.")
+        }
+      </div>
+    </article>
+
+    <article class="executive-card">
+      <header><span>Disponibilidade por empresa</span><strong>${availabilityByCompany.length}</strong></header>
+      <div class="executive-list">
+        ${
+          availabilityByCompany.length
+            ? availabilityByCompany
+                .map((group) =>
+                  executiveItem({
+                    title: group.name,
+                    meta: `${group.servers.filter((server) => server.isActive).length} ativos`,
+                    badge: `${group.availability}%`,
+                    status: group.availability >= 99 ? "online" : group.availability >= 90 ? "probe_stale" : "offline",
+                    companyId: group.id
+                  })
+                )
+                .join("")
+            : executiveEmpty("Sem empresas com servidores ativos.")
+        }
+      </div>
+    </article>
+
+    <article class="executive-card">
+      <header><span>Servidores por ambiente</span><strong>${activeServers.length}</strong></header>
+      <div class="environment-bars">
+        ${byEnvironment
+          .map((item) => {
+            const pct = item.total ? Math.round((item.online / item.total) * 100) : 0;
+            return `
+              <div class="environment-row">
+                <span>${environmentLabel(item.environment)}</span>
+                <strong>${item.online}/${item.total}</strong>
+                <i><b style="width:${pct}%"></b></i>
+              </div>
+            `;
+          })
+          .join("")}
+      </div>
+    </article>
+  `;
 }
 
 function renderServerRow(server) {
@@ -1401,6 +1652,7 @@ function render() {
   updateMetricsVisibility();
   updateActiveFilterCount();
   renderMetrics();
+  renderExecutiveDashboard();
   renderCompanyNav();
   renderServers();
   renderDetail();
@@ -1721,6 +1973,23 @@ function bindEvents() {
     els.groupFilter.value = state.filters.groupId;
     setActiveView("dashboard");
     render();
+  });
+
+  els.executiveDashboard?.addEventListener("click", (event) => {
+    const serverButton = event.target.closest("[data-server-id]");
+    if (serverButton?.dataset.serverId) {
+      state.selectedServerId = serverButton.dataset.serverId;
+      setActiveView("dashboard");
+      render();
+      return;
+    }
+    const companyButton = event.target.closest("[data-company-id]");
+    if (companyButton?.dataset.companyId) {
+      state.filters.groupId = companyButton.dataset.companyId;
+      els.groupFilter.value = state.filters.groupId;
+      setActiveView("dashboard");
+      render();
+    }
   });
 
   document.querySelector("#openServerForm").addEventListener("click", () => openDialog());

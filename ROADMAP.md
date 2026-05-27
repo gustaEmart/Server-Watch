@@ -59,23 +59,6 @@ Campos sugeridos:
 - Probes vinculados.
 - Observacoes contratuais ou operacionais.
 
-### Dashboard executivo
-
-Objetivo:
-
-- Dar uma visao mais rapida para operacao diaria.
-
-Blocos sugeridos:
-
-- Clientes com alerta aberto.
-- Probes sem contato.
-- Servidores criticos offline.
-- Ultimas quedas.
-- Recuperacoes recentes.
-- Piores latencias.
-- Disponibilidade por empresa.
-- Total de servidores por ambiente.
-
 ## Prioridade 3 - Probe Collector
 
 ### Instalador mais inteligente

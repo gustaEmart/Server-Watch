@@ -628,6 +628,125 @@ button {
   background: #9ca3af;
 }
 
+.executive-dashboard {
+  margin-bottom: 14px;
+}
+
+.executive-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(220px, 1fr));
+  gap: 12px;
+}
+
+.executive-card {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px;
+  background: var(--surface-raised);
+  min-height: 214px;
+  display: grid;
+  align-content: start;
+  gap: 10px;
+}
+
+.executive-card.attention {
+  border-top: 3px solid var(--offline);
+}
+
+.executive-card header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.executive-card header span {
+  color: var(--muted);
+  font-weight: 800;
+}
+
+.executive-card header strong {
+  font-size: 1.45rem;
+  line-height: 1;
+}
+
+.executive-list {
+  display: grid;
+  gap: 7px;
+}
+
+.executive-item {
+  width: 100%;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 9px;
+  background: var(--surface);
+  color: var(--text);
+  text-align: left;
+}
+
+.executive-item-main,
+.executive-item-main strong,
+.executive-item-main small {
+  display: block;
+  min-width: 0;
+}
+
+.executive-item-main strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.executive-item-main small,
+.executive-empty {
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.executive-empty {
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+  padding: 10px;
+  background: var(--surface);
+}
+
+.environment-bars {
+  display: grid;
+  gap: 10px;
+}
+
+.environment-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px 10px;
+  align-items: center;
+}
+
+.environment-row span {
+  color: var(--muted);
+  font-weight: 800;
+}
+
+.environment-row i {
+  grid-column: 1 / -1;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--surface-subtle);
+  overflow: hidden;
+}
+
+.environment-row b {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--online);
+}
+
 .view {
   display: none;
 }
@@ -1828,6 +1947,7 @@ label {
 
   .metrics-grid,
   .server-layout,
+  .executive-grid,
   .probe-grid {
     grid-template-columns: 1fr 1fr;
   }
@@ -1865,6 +1985,7 @@ label {
 
   .metrics-grid,
   .server-layout,
+  .executive-grid,
   .form-grid,
   .detail-grid,
   .probe-detail-grid,
