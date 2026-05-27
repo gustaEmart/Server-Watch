@@ -1631,6 +1631,14 @@ async function handleApi(req, res) {
   }
 }
 
+function withInitialTheme(content) {
+  const theme = state.settings.theme === "dark" ? "dark" : "light";
+  return String(content).replace(
+    '<html lang="pt-BR">',
+    `<html lang="pt-BR" data-theme="${theme}" style="color-scheme: ${theme};">`
+  );
+}
+
 async function serveStatic(req, res) {
   const { pathname } = getRouteParts(req);
   const safePath = pathname === "/" ? "/index.html" : pathname;
@@ -1640,11 +1648,12 @@ async function serveStatic(req, res) {
   try {
     const content = await readFile(filePath);
     const ext = extname(filePath);
+    const body = ext === ".html" ? withInitialTheme(content) : content;
     res.writeHead(200, {
       "Content-Type": mimeTypes[ext] || "application/octet-stream",
       "Cache-Control": "no-store"
     });
-    res.end(content);
+    res.end(body);
   } catch {
     if (!extname(filePath)) {
       req.url = "/";
