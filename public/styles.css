@@ -1246,6 +1246,13 @@ textarea:focus {
   gap: 10px;
 }
 
+.history-filters {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) minmax(180px, 260px);
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
 .timeline-item,
 .alert-card,
 .group-card,
@@ -1264,6 +1271,14 @@ textarea:focus {
   align-items: start;
 }
 
+.timeline-item.administrative {
+  border-left: 4px solid var(--accent);
+}
+
+.timeline-item.technical {
+  border-left: 4px solid var(--line);
+}
+
 .timeline-marker {
   width: 10px;
   height: 10px;
@@ -1278,6 +1293,28 @@ textarea:focus {
 
 .timeline-marker.offline {
   background: var(--offline);
+}
+
+.timeline-marker.server_offline {
+  background: var(--offline);
+}
+
+.timeline-marker.server_recovered,
+.timeline-marker.probe_recovered {
+  background: var(--online);
+}
+
+.timeline-marker.probe_stale,
+.timeline-marker.manual_check_requested {
+  background: var(--probe-stale);
+}
+
+.timeline-marker.server_created,
+.timeline-marker.server_edited,
+.timeline-marker.server_paused,
+.timeline-marker.server_reactivated,
+.timeline-marker.server_deleted {
+  background: var(--accent);
 }
 
 .alert-card {
@@ -1834,6 +1871,7 @@ label {
   .probe-grid,
   .theme-options,
   .toggle-grid,
+  .history-filters,
   .token-control,
   .probe-target-row,
   .probe-card,

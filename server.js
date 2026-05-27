@@ -471,6 +471,41 @@ function scheduleSave() {
   }, 250);
 }
 
+function downtimeDurationMs(serverId, recoveredAt) {
+  const recoveredMs = new Date(recoveredAt || nowIso()).getTime();
+  const lastOffline = state.events.find(
+    (event) =>
+      event.serverId === serverId &&
+      event.category === "technical" &&
+      event.kind === "server_offline" &&
+      new Date(event.createdAt).getTime() <= recoveredMs
+  );
+  if (!lastOffline) return null;
+  const startedMs = new Date(lastOffline.createdAt).getTime();
+  return Number.isFinite(startedMs) && Number.isFinite(recoveredMs) ? Math.max(0, recoveredMs - startedMs) : null;
+}
+
+function recordEvent(event) {
+  const payload = {
+    id: randomUUID(),
+    category: event.category || "technical",
+    kind: event.kind || "status_changed",
+    serverId: event.serverId || null,
+    serverName: event.serverName || null,
+    previousStatus: event.previousStatus || null,
+    currentStatus: event.currentStatus || null,
+    latencyMs: event.latencyMs ?? null,
+    durationMs: event.durationMs ?? null,
+    actorName: event.actorName || null,
+    message: event.message || null,
+    createdAt: event.createdAt || nowIso()
+  };
+  state.events.unshift(payload);
+  state.events = trimEvents(state.events);
+  broadcast({ type: "event_created", event: payload, summary: summary() });
+  return payload;
+}
+
 function alertSeverityForServer(server, currentStatus) {
   if (currentStatus !== "offline") return "info";
   const byEnvironment = state.settings.alertSeverityByEnvironment || {};
@@ -478,18 +513,19 @@ function alertSeverityForServer(server, currentStatus) {
 }
 
 function addEvent(server, previousStatus, currentStatus, latencyMs, message) {
-  const event = {
-    id: randomUUID(),
+  const createdAt = nowIso();
+  const event = recordEvent({
+    category: "technical",
+    kind: currentStatus === "offline" ? "server_offline" : currentStatus === "online" ? "server_recovered" : "status_changed",
     serverId: server.id,
     serverName: server.name,
     previousStatus,
     currentStatus,
     latencyMs,
+    durationMs: currentStatus === "online" && previousStatus === "offline" ? downtimeDurationMs(server.id, createdAt) : null,
     message: message || null,
-    createdAt: nowIso()
-  };
-  state.events.unshift(event);
-  state.events = trimEvents(state.events);
+    createdAt
+  });
 
   if (previousStatus !== currentStatus && currentStatus !== "unknown" && previousStatus !== "unknown") {
     const alert = {
@@ -502,7 +538,7 @@ function addEvent(server, previousStatus, currentStatus, latencyMs, message) {
         currentStatus === "offline"
           ? `${server.name} parou de responder em ${server.hostname}.`
           : `${server.name} voltou a responder em ${server.hostname}.`,
-      createdAt: event.createdAt,
+      createdAt,
       read: false,
       acknowledgedAt: null,
       acknowledgedBy: null,
@@ -514,6 +550,29 @@ function addEvent(server, previousStatus, currentStatus, latencyMs, message) {
   }
 
   broadcast({ type: "status_changed", event, server: publicServer(server) });
+}
+
+function addAdministrativeEvent(server, kind, message, actorName = null) {
+  return recordEvent({
+    category: "administrative",
+    kind,
+    serverId: server.id,
+    serverName: server.name,
+    currentStatus: server.currentStatus || "unknown",
+    actorName,
+    message
+  });
+}
+
+function addProbeEvent(server, kind, message) {
+  return recordEvent({
+    category: "technical",
+    kind,
+    serverId: server.id,
+    serverName: server.name,
+    currentStatus: server.currentStatus || "unknown",
+    message
+  });
 }
 
 function probeStaleAfterMs(server) {
@@ -874,6 +933,10 @@ async function checkProbeStaleness(nowMs = Date.now()) {
       const baseMessage = `Probe collector sem contato desde ${lastSeenLabel}.`;
       const nextDelayMs = Math.max(10000, Math.max(3, Number(server.checkInterval || state.settings.defaultInterval || 10)) * 1000);
       server.nextProbeFallbackCheckAt = nowMs + nextDelayMs;
+      if (server.probeEventStatus !== "stale") {
+        server.probeEventStatus = "stale";
+        addProbeEvent(server, "probe_stale", baseMessage);
+      }
 
       if (isLocalNetworkTarget(server.hostname)) {
         const result = await pingHost(server.hostname);
@@ -1183,9 +1246,11 @@ function probeTargets(probeId) {
 function applyProbeResult(server, result, probeId, options = {}) {
   const previousStatus = server.currentStatus || "unknown";
   const verification = Boolean(options.verification);
+  const wasProbeStale = !verification && server.probeEventStatus === "stale";
   server.lastCheckedAt = result.checkedAt || nowIso();
   if (!verification) {
     server.lastProbeSeenAt = nowIso();
+    server.probeEventStatus = "online";
   }
   server.probeCheckRequestedAt = null;
   server.lastLatencyMs = result.latencyMs ?? null;
@@ -1217,6 +1282,10 @@ function applyProbeResult(server, result, probeId, options = {}) {
     );
   } else {
     broadcast({ type: "server_checked", server: publicServer(server), summary: summary() });
+  }
+
+  if (wasProbeStale) {
+    addProbeEvent(server, "probe_recovered", `Probe ${probeId} voltou a se comunicar.`);
   }
 }
 
@@ -1643,6 +1712,7 @@ async function handleApi(req, res) {
           ...normalizeServer(payload)
         };
         state.servers.unshift(server);
+        addAdministrativeEvent(server, "server_created", "Servidor cadastrado.", session.user.name);
         scheduleSave();
         broadcastSnapshot();
         return sendJson(res, 201, publicServer(server));
@@ -1662,6 +1732,7 @@ async function handleApi(req, res) {
         if (manuallyRenamedAutoServer) {
           server.autoCreatedByProbe = false;
         }
+        addAdministrativeEvent(server, "server_edited", "Cadastro do servidor editado.", session.user.name);
         scheduleSave();
         broadcastSnapshot();
         return sendJson(res, 200, publicServer(server));
@@ -1671,6 +1742,7 @@ async function handleApi(req, res) {
         server.isActive = false;
         server.deletedAt = nowIso();
         server.updatedAt = nowIso();
+        addAdministrativeEvent(server, "server_deleted", "Servidor removido do monitoramento.", session.user.name);
         scheduleSave();
         broadcastSnapshot();
         return sendJson(res, 200, publicServer(server));
@@ -1680,6 +1752,12 @@ async function handleApi(req, res) {
         server.isActive = !server.isActive;
         server.updatedAt = nowIso();
         server.nextCheckAt = Date.now() + 300;
+        addAdministrativeEvent(
+          server,
+          server.isActive ? "server_reactivated" : "server_paused",
+          server.isActive ? "Monitoramento reativado." : "Monitoramento pausado.",
+          session.user.name
+        );
         scheduleSave();
         broadcastSnapshot();
         return sendJson(res, 200, publicServer(server));
@@ -1689,6 +1767,7 @@ async function handleApi(req, res) {
         if (!server.isActive) {
           return sendJson(res, 409, { error: "Reative o servidor antes de solicitar uma checagem." });
         }
+        addAdministrativeEvent(server, "manual_check_requested", "Checagem manual solicitada.", session.user.name);
         if (server.checkSource === "probe") {
           server.probeCheckRequestedAt = nowIso();
           scheduleSave();

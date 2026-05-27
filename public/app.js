@@ -17,6 +17,10 @@ const state = {
     groupId: "all",
     query: ""
   },
+  historyFilters: {
+    serverId: "all",
+    category: "all"
+  },
   socket: null,
   reconnectTimer: null,
   notificationsEnabled: false
@@ -48,6 +52,8 @@ const els = {
   detailPanel: document.querySelector("#detailPanel"),
   timeline: document.querySelector("#timeline"),
   eventCount: document.querySelector("#eventCount"),
+  historyServerFilter: document.querySelector("#historyServerFilter"),
+  historyCategoryFilter: document.querySelector("#historyCategoryFilter"),
   alertsList: document.querySelector("#alertsList"),
   toastStack: document.querySelector("#toastStack"),
   searchInput: document.querySelector("#searchInput"),
@@ -246,6 +252,26 @@ function statusLabel(status) {
   }[status || "unknown"];
 }
 
+function eventKindLabel(event) {
+  return {
+    server_created: "Servidor cadastrado",
+    server_edited: "Servidor editado",
+    server_deleted: "Servidor excluido",
+    server_paused: "Monitoramento pausado",
+    server_reactivated: "Monitoramento reativado",
+    manual_check_requested: "Checagem manual solicitada",
+    server_offline: "Servidor ficou offline",
+    server_recovered: "Servidor voltou",
+    probe_stale: "Probe sem contato",
+    probe_recovered: "Probe voltou",
+    status_changed: "Status alterado"
+  }[event.kind || "status_changed"] || "Evento";
+}
+
+function eventCategoryLabel(category) {
+  return category === "administrative" ? "Administrativo" : "Tecnico";
+}
+
 function displayStatus(server) {
   if (!server.isActive) return "paused";
   return server.currentStatus || "unknown";
@@ -347,6 +373,18 @@ function formatDurationSince(value) {
   const minutes = Math.floor((totalSeconds % 3600) / 60);
   const seconds = totalSeconds % 60;
   return [hours, minutes, seconds].map((item) => String(item).padStart(2, "0")).join(":");
+}
+
+function formatDurationMs(value) {
+  const ms = Number(value);
+  if (!Number.isFinite(ms) || ms < 0) return "";
+  const totalSeconds = Math.floor(ms / 1000);
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  if (hours) return `${hours}h ${minutes}m ${seconds}s`;
+  if (minutes) return `${minutes}m ${seconds}s`;
+  return `${seconds}s`;
 }
 
 function escapeHtml(value) {
@@ -504,7 +542,7 @@ function handleSocketMessage(payload) {
 
   if (payload.event) {
     state.events = [payload.event, ...state.events.filter((item) => item.id !== payload.event.id)].slice(0, 100);
-    if (payload.event.currentStatus === "offline" && payload.event.previousStatus !== "offline") {
+    if ((payload.event.kind || "status_changed") === "server_offline") {
       showIncidentNotification(payload.event);
     }
   }
@@ -957,14 +995,48 @@ function renderDetail() {
   `;
 }
 
+function renderHistoryFilters() {
+  if (!els.historyServerFilter) return;
+  const current = state.historyFilters.serverId;
+  const options = state.servers
+    .map((server) => `<option value="${escapeHtml(server.id)}">${escapeHtml(server.name)} (${escapeHtml(server.hostname)})</option>`)
+    .join("");
+  els.historyServerFilter.innerHTML = `<option value="all">Todos servidores</option>${options}`;
+  els.historyServerFilter.value = state.servers.some((server) => server.id === current) ? current : "all";
+  state.historyFilters.serverId = els.historyServerFilter.value;
+  if (els.historyCategoryFilter) {
+    els.historyCategoryFilter.value = state.historyFilters.category;
+  }
+}
+
+function filteredEvents() {
+  return state.events.filter((event) => {
+    const serverOk = state.historyFilters.serverId === "all" || event.serverId === state.historyFilters.serverId;
+    const categoryOk = state.historyFilters.category === "all" || (event.category || "technical") === state.historyFilters.category;
+    return serverOk && categoryOk;
+  });
+}
+
 function renderTimelineItem(event) {
+  const category = event.category || "technical";
+  const kind = event.kind || "status_changed";
+  const statusText =
+    event.previousStatus && event.currentStatus
+      ? `${statusLabel(event.previousStatus)} para ${statusLabel(event.currentStatus)}`
+      : event.currentStatus
+      ? statusLabel(event.currentStatus)
+      : eventCategoryLabel(category);
+  const duration = event.durationMs ? `<small>Duracao da indisponibilidade: ${formatDurationMs(event.durationMs)}</small>` : "";
+  const actor = event.actorName ? `<small>Responsavel: ${escapeHtml(event.actorName)}</small>` : "";
   return `
-    <article class="timeline-item">
-      <span class="timeline-marker ${event.currentStatus}"></span>
+    <article class="timeline-item ${category}">
+      <span class="timeline-marker ${event.currentStatus || kind}"></span>
       <div>
-        <strong>${escapeHtml(event.serverName)}</strong>
-        <div class="detail-meta">${statusLabel(event.previousStatus)} para ${statusLabel(event.currentStatus)}</div>
+        <strong>${escapeHtml(event.serverName || "Sistema")} · ${eventKindLabel(event)}</strong>
+        <div class="detail-meta">${statusText} · ${eventCategoryLabel(category)}</div>
         ${event.message ? `<small>${escapeHtml(event.message)}</small>` : ""}
+        ${duration}
+        ${actor}
       </div>
       <small>${formatDate(event.createdAt)}</small>
     </article>
@@ -972,9 +1044,11 @@ function renderTimelineItem(event) {
 }
 
 function renderTimeline() {
-  els.eventCount.textContent = `${state.events.length} eventos`;
-  els.timeline.innerHTML = state.events.length
-    ? state.events.map(renderTimelineItem).join("")
+  renderHistoryFilters();
+  const events = filteredEvents();
+  els.eventCount.textContent = `${events.length} ${events.length === 1 ? "evento" : "eventos"}`;
+  els.timeline.innerHTML = events.length
+    ? events.map(renderTimelineItem).join("")
     : `<div class="empty-list">A timeline aparecera quando um status mudar.</div>`;
 }
 
@@ -1614,6 +1688,16 @@ function bindEvents() {
     state.filters.groupId = els.groupFilter.value;
     updateActiveFilterCount();
     render();
+  });
+
+  els.historyServerFilter?.addEventListener("change", () => {
+    state.historyFilters.serverId = els.historyServerFilter.value;
+    renderTimeline();
+  });
+
+  els.historyCategoryFilter?.addEventListener("change", () => {
+    state.historyFilters.category = els.historyCategoryFilter.value;
+    renderTimeline();
   });
 
   els.clearFilters?.addEventListener("click", () => {
