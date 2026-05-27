@@ -478,6 +478,20 @@ function newestTimestamp(...values) {
   );
 }
 
+function probeConnection(server) {
+  if (!server || server.checkSource !== "probe") {
+    return { status: "not_applicable", lastSeenAt: null, staleAfterSeconds: null };
+  }
+  const probe = (state.probes || []).find((item) => item.id === server.probeId);
+  const lastSeenMs = newestTimestamp(probe?.lastSeenAt, server.lastProbeSeenAt);
+  const staleAfterMs = probeStaleAfterMs(server);
+  return {
+    status: lastSeenMs && Date.now() - lastSeenMs > staleAfterMs ? "stale" : lastSeenMs ? "online" : "unknown",
+    lastSeenAt: lastSeenMs ? new Date(lastSeenMs).toISOString() : null,
+    staleAfterSeconds: Math.round(staleAfterMs / 1000)
+  };
+}
+
 function trimEvents(events) {
   const byServer = new Map();
   const trimmed = [];
@@ -493,6 +507,7 @@ function trimEvents(events) {
 
 function publicServer(server) {
   const group = server.groupId ? listedGroups().find((item) => item.id === server.groupId) : null;
+  const probe = probeConnection(server);
   return {
     id: server.id,
     name: server.name,
@@ -516,6 +531,9 @@ function publicServer(server) {
     lastLatencyMs: server.lastLatencyMs,
     lastError: server.lastError,
     lastProbeSeenAt: server.lastProbeSeenAt || null,
+    probeStatus: probe.status,
+    probeLastSeenAt: probe.lastSeenAt,
+    probeStaleAfterSeconds: probe.staleAfterSeconds,
     probeCheckRequestedAt: server.probeCheckRequestedAt || null,
     platform: server.platform || null,
     primaryMac: server.primaryMac || null,
@@ -765,6 +783,8 @@ function authorizeProbe(req) {
 }
 
 function publicProbe(probe) {
+  const servers = listedServers().filter((server) => server.checkSource === "probe" && server.probeId === probe.id);
+  const staleServers = servers.filter((server) => probeConnection(server).status === "stale").length;
   return {
     id: probe.id,
     name: probe.name || probe.id,
@@ -777,7 +797,9 @@ function publicProbe(probe) {
     macAddresses: Array.isArray(probe.macAddresses) ? probe.macAddresses : [],
     lastSeenAt: probe.lastSeenAt || null,
     lastAddress: probe.lastAddress || null,
-    targetCount: listedServers().filter((server) => server.checkSource === "probe" && server.probeId === probe.id).length
+    status: staleServers ? "stale" : probe.lastSeenAt ? "online" : "unknown",
+    targetCount: servers.length,
+    staleTargetCount: staleServers
   };
 }
 

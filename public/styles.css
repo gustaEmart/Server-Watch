@@ -15,6 +15,7 @@
   --accent-ring: rgba(18, 60, 105, 0.12);
   --online: #16a34a;
   --offline: #dc2626;
+  --probe-stale: #d97706;
   --unknown: #6b7280;
   --warning: #d97706;
   --sidebar-bg: #0b2545;
@@ -37,6 +38,8 @@
   --online-text: #166534;
   --offline-soft: #fee2e2;
   --offline-text: #991b1b;
+  --probe-stale-soft: #fef3c7;
+  --probe-stale-text: #92400e;
   --paused-soft: #e5e7eb;
   --paused-text: #4b5563;
   --code-bg: #142022;
@@ -64,6 +67,7 @@
   --accent-ring: rgba(93, 162, 223, 0.2);
   --online: #22c55e;
   --offline: #f87171;
+  --probe-stale: #f59e0b;
   --unknown: #94a3b8;
   --warning: #f59e0b;
   --sidebar-bg: #081820;
@@ -86,6 +90,8 @@
   --online-text: #9af0b8;
   --offline-soft: rgba(248, 113, 113, 0.16);
   --offline-text: #fecaca;
+  --probe-stale-soft: rgba(245, 158, 11, 0.16);
+  --probe-stale-text: #fcd34d;
   --paused-soft: #27343a;
   --paused-text: #c8d2d6;
   --code-bg: #071114;
@@ -610,6 +616,10 @@ button {
   background: var(--offline);
 }
 
+.donut-legend .probe_stale {
+  background: var(--probe-stale);
+}
+
 .donut-legend .unknown {
   background: var(--unknown);
 }
@@ -953,6 +963,11 @@ textarea:focus {
   box-shadow: 0 0 0 5px rgba(220, 38, 38, 0.12);
 }
 
+.status-pulse.probe_stale {
+  background: var(--probe-stale);
+  box-shadow: 0 0 0 5px rgba(217, 119, 6, 0.14);
+}
+
 .status-pulse.paused {
   background: #9ca3af;
   box-shadow: 0 0 0 6px rgba(107, 114, 128, 0.14);
@@ -1075,9 +1090,31 @@ textarea:focus {
   color: var(--offline-text);
 }
 
+.status-badge.probe_stale,
+.probe-inline-badge.stale {
+  background: var(--probe-stale-soft);
+  color: var(--probe-stale-text);
+}
+
 .status-badge.paused {
   background: var(--tag-bg);
   color: var(--tag-text);
+}
+
+.probe-inline-badge {
+  display: inline-grid;
+  place-items: center;
+  border-radius: 999px;
+  padding: 4px 8px;
+  font-size: 0.72rem;
+  font-weight: 900;
+  background: var(--tag-bg);
+  color: var(--tag-text);
+}
+
+.probe-inline-badge.online {
+  background: var(--online-soft);
+  color: var(--online-text);
 }
 
 .detail-panel {

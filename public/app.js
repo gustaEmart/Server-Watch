@@ -215,13 +215,25 @@ function statusLabel(status) {
   return {
     online: "Online",
     offline: "Offline",
+    probe_stale: "Probe sem contato",
     unknown: "Sem status",
     paused: "Pausado"
   }[status || "unknown"];
 }
 
 function displayStatus(server) {
-  return server.isActive ? server.currentStatus || "unknown" : "paused";
+  if (!server.isActive) return "paused";
+  if (server.checkSource === "probe" && server.probeStatus === "stale") return "probe_stale";
+  return server.currentStatus || "unknown";
+}
+
+function probeStatusLabel(status) {
+  return {
+    online: "Probe online",
+    stale: "Probe sem contato",
+    unknown: "Probe sem status",
+    not_applicable: "Sem probe"
+  }[status || "unknown"];
 }
 
 function environmentLabel(environment) {
@@ -665,7 +677,7 @@ function statusCounts(servers) {
       acc[status] = (acc[status] || 0) + 1;
       return acc;
     },
-    { online: 0, offline: 0, unknown: 0, paused: 0 }
+    { online: 0, offline: 0, probe_stale: 0, unknown: 0, paused: 0 }
   );
 }
 
@@ -676,6 +688,7 @@ function renderMetrics() {
   const total = servers.length || 1;
   const onlinePct = (counts.online / total) * 100;
   const offlinePct = (counts.offline / total) * 100;
+  const probeStalePct = (counts.probe_stale / total) * 100;
   const unknownPct = (counts.unknown / total) * 100;
   const pausedPct = (counts.paused / total) * 100;
 
@@ -690,14 +703,16 @@ function renderMetrics() {
     ? `conic-gradient(
         var(--online) 0 ${onlinePct}%,
         var(--offline) ${onlinePct}% ${onlinePct + offlinePct}%,
-        var(--unknown) ${onlinePct + offlinePct}% ${onlinePct + offlinePct + unknownPct}%,
-        #9ca3af ${onlinePct + offlinePct + unknownPct}% ${onlinePct + offlinePct + unknownPct + pausedPct}%
+        var(--probe-stale) ${onlinePct + offlinePct}% ${onlinePct + offlinePct + probeStalePct}%,
+        var(--unknown) ${onlinePct + offlinePct + probeStalePct}% ${onlinePct + offlinePct + probeStalePct + unknownPct}%,
+        #9ca3af ${onlinePct + offlinePct + probeStalePct + unknownPct}% ${onlinePct + offlinePct + probeStalePct + unknownPct + pausedPct}%
       )`
     : "conic-gradient(#dbe3e4 0 100%)";
   els.statusDonut.dataset.total = String(servers.length);
   els.statusLegend.innerHTML = [
     ["online", "Online", counts.online],
     ["offline", "Offline", counts.offline],
+    ["probe_stale", "Probe sem contato", counts.probe_stale],
     ["unknown", "Sem status", counts.unknown],
     ["paused", "Pausado", counts.paused]
   ]
@@ -712,7 +727,15 @@ function renderServerRow(server) {
   const inactive = server.isActive ? "" : "inactive";
   const latency = server.lastLatencyMs === null || server.lastLatencyMs === undefined ? "-" : `${server.lastLatencyMs} ms`;
   const offlineFor =
-    server.isActive && server.currentStatus === "offline" ? `<span>Offline ha ${formatDurationSince(server.statusChangedAt)}</span>` : "";
+    server.isActive && visibleStatus === "probe_stale"
+      ? `<span>Probe sem contato ha ${formatDurationSince(server.probeLastSeenAt || server.lastProbeSeenAt)}</span>`
+      : server.isActive && server.currentStatus === "offline"
+      ? `<span>Offline ha ${formatDurationSince(server.statusChangedAt)}</span>`
+      : "";
+  const probeBadge =
+    server.checkSource === "probe"
+      ? `<span class="probe-inline-badge ${server.probeStatus || "unknown"}">${probeStatusLabel(server.probeStatus)}</span>`
+      : "";
   const mac = primaryMac(server);
   const subtitle = server.isActive
     ? `${escapeHtml(server.hostname)} · ${checkSourceLabel(server.checkSource)} · ${environmentLabel(server.environment)}${mac ? ` · ${escapeHtml(mac)}` : ""} ${offlineFor}`
@@ -726,6 +749,7 @@ function renderServerRow(server) {
         <span>${subtitle}</span>
       </span>
       <span class="server-meta">
+        ${probeBadge}
         <span class="status-badge ${visibleStatus}">${statusLabel(visibleStatus)}</span>
         <span>${server.isActive ? latency : "pausado"}</span>
       </span>
@@ -843,7 +867,9 @@ function renderDetail() {
     server.checkSource === "probe"
       ? `
         <div class="detail-stat"><span>Probe</span><strong>${escapeHtml(server.probeId || "-")}</strong></div>
+        <div class="detail-stat"><span>Status do probe</span><strong><span class="status-badge ${server.probeStatus === "stale" ? "probe_stale" : server.probeStatus || "unknown"}">${probeStatusLabel(server.probeStatus)}</span></strong></div>
         <div class="detail-stat"><span>Ultimo envio do probe</span><strong>${formatDate(server.lastProbeSeenAt)}</strong></div>
+        <div class="detail-stat"><span>Limite sem contato</span><strong>${server.probeStaleAfterSeconds ? `${server.probeStaleAfterSeconds}s` : "-"}</strong></div>
         ${
           server.probeCheckRequestedAt
             ? `<div class="detail-stat"><span>Checagem solicitada</span><strong>${formatDate(server.probeCheckRequestedAt)}</strong></div>`
@@ -1086,7 +1112,8 @@ function renderProbes() {
                 <span>${escapeHtml(probe.id)} · ${platformLabel(probe.platform)} · ${escapeHtml(probe.primaryAddress || probe.addresses?.[0] || probe.lastAddress || "sem IP")} · ${escapeHtml(primaryMac(probe) || "sem MAC")} · ${probe.targetCount || 0} ${probe.targetCount === 1 ? "alvo" : "alvos"}</span>
               </div>
               <div>
-                <strong>${formatDate(probe.lastSeenAt)}</strong>
+                <strong><span class="status-badge ${probe.status === "stale" ? "probe_stale" : probe.status || "unknown"}">${probeStatusLabel(probe.status)}</span></strong>
+                <span>${formatDate(probe.lastSeenAt)}</span>
                 <span>${escapeHtml(probe.lastAddress || "sem endereco")}</span>
               </div>
             </article>
