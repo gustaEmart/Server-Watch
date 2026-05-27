@@ -23,29 +23,6 @@ Funcionalidades sugeridas:
   - servidor voltou a responder.
 - Filtro especifico para `Probes sem contato`.
 
-### Historico mais claro por servidor
-
-Objetivo:
-
-- Facilitar auditoria e diagnostico de incidentes.
-
-Eventos sugeridos:
-
-- Servidor ficou online.
-- Servidor ficou offline.
-- Probe ficou sem contato.
-- Probe voltou.
-- Checagem manual solicitada.
-- Servidor editado.
-- Servidor pausado ou reativado.
-- Servidor excluido.
-
-Melhorias de UI:
-
-- Linha do tempo filtravel por servidor.
-- Separar eventos tecnicos de eventos administrativos.
-- Mostrar duracao de indisponibilidade quando houver recuperacao.
-
 ## Prioridade 2 - Operacao multi-cliente
 
 ### Permissoes por empresa

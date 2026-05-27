@@ -265,6 +265,22 @@
               <h2>Timeline de eventos</h2>
               <span id="eventCount">0 eventos</span>
             </div>
+            <div class="history-filters">
+              <label>
+                Servidor
+                <select id="historyServerFilter">
+                  <option value="all">Todos servidores</option>
+                </select>
+              </label>
+              <label>
+                Tipo
+                <select id="historyCategoryFilter">
+                  <option value="all">Todos eventos</option>
+                  <option value="technical">Tecnicos</option>
+                  <option value="administrative">Administrativos</option>
+                </select>
+              </label>
+            </div>
             <div class="timeline" id="timeline"></div>
           </div>
         </section>
