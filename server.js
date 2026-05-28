@@ -44,7 +44,7 @@ const SESSION_COOKIE = "sw_session";
 const SESSION_TTL_MS = 8 * 60 * 60 * 1000;
 const DEFAULT_ADMIN_EMAIL = process.env.SERVERWATCH_ADMIN_EMAIL || "admin@serverwatch.local";
 const DEFAULT_ADMIN_PASSWORD = process.env.SERVERWATCH_ADMIN_PASSWORD || "admin123";
-const PROBE_COLLECTOR_VERSION = "0.3.0";
+const PROBE_COLLECTOR_VERSION = "0.4.0";
 
 const sockets = new Set();
 const sessions = new Map();
@@ -622,6 +622,9 @@ function trimEvents(events) {
 function publicServer(server) {
   const group = server.groupId ? listedGroups().find((item) => item.id === server.groupId) : null;
   const probe = probeConnection(server);
+  const linkedProbe = server.checkSource === "probe"
+    ? (state.probes || []).find((item) => item.id === server.probeId && !item.deletedAt)
+    : null;
   return {
     id: server.id,
     name: server.name,
@@ -649,6 +652,9 @@ function publicServer(server) {
     probeLastSeenAt: probe.lastSeenAt,
     probeStaleAfterSeconds: probe.staleAfterSeconds,
     probeCheckRequestedAt: server.probeCheckRequestedAt || null,
+    probeHostMetrics: linkedProbe?.hostMetrics || null,
+    probeHostMetricsUpdatedAt: linkedProbe?.hostMetricsUpdatedAt || null,
+    probeHostName: linkedProbe?.hostName || null,
     platform: server.platform || null,
     primaryMac: server.primaryMac || null,
     macAddresses: Array.isArray(server.macAddresses) ? server.macAddresses : [],
@@ -1053,6 +1059,8 @@ function publicProbe(probe) {
     platform: probe.platform || null,
     primaryMac: probe.primaryMac || null,
     macAddresses: Array.isArray(probe.macAddresses) ? probe.macAddresses : [],
+    hostMetrics: probe.hostMetrics || null,
+    hostMetricsUpdatedAt: probe.hostMetricsUpdatedAt || null,
     lastSeenAt: probe.lastSeenAt || null,
     lastAddress: probe.lastAddress || null,
     deletedAt: probe.deletedAt || null,
@@ -1130,6 +1138,59 @@ function normalizeProbePlatform(value, fallback = "") {
   return platform || null;
 }
 
+function normalizeNumber(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
+function normalizeHostMetrics(value, fallback = null) {
+  let metrics = value;
+  if (!metrics) return fallback || null;
+  if (typeof metrics === "string") {
+    try {
+      metrics = JSON.parse(metrics);
+    } catch {
+      return fallback || null;
+    }
+  }
+  if (!metrics || typeof metrics !== "object") return fallback || null;
+
+  const disk = metrics.disk && typeof metrics.disk === "object"
+    ? {
+        mount: String(metrics.disk.mount || "").trim() || null,
+        totalBytes: normalizeNumber(metrics.disk.totalBytes),
+        usedBytes: normalizeNumber(metrics.disk.usedBytes),
+        freeBytes: normalizeNumber(metrics.disk.freeBytes),
+        usedPercent: normalizeNumber(metrics.disk.usedPercent)
+      }
+    : null;
+
+  return {
+    collectedAt: String(metrics.collectedAt || nowIso()),
+    cpu: {
+      usagePercent: normalizeNumber(metrics.cpu?.usagePercent),
+      cores: normalizeNumber(metrics.cpu?.cores),
+      model: String(metrics.cpu?.model || "").trim() || null,
+      loadAverage: Array.isArray(metrics.cpu?.loadAverage)
+        ? metrics.cpu.loadAverage.map(normalizeNumber).filter((item) => item !== null).slice(0, 3)
+        : []
+    },
+    memory: {
+      totalBytes: normalizeNumber(metrics.memory?.totalBytes),
+      usedBytes: normalizeNumber(metrics.memory?.usedBytes),
+      freeBytes: normalizeNumber(metrics.memory?.freeBytes),
+      usedPercent: normalizeNumber(metrics.memory?.usedPercent)
+    },
+    disk,
+    system: {
+      uptimeSeconds: normalizeNumber(metrics.system?.uptimeSeconds),
+      arch: String(metrics.system?.arch || "").trim() || null,
+      release: String(metrics.system?.release || "").trim() || null,
+      type: String(metrics.system?.type || "").trim() || null
+    }
+  };
+}
+
 function linkedServerForProbe(probeId) {
   return listedServers().find((server) => server.checkSource === "probe" && server.probeId === probeId) || null;
 }
@@ -1142,7 +1203,7 @@ function recordProbeVersionChange(probeId, previousVersion, nextVersion) {
   addProbeEvent(server, "probe_updated", `Probe atualizado de ${previousVersion} para ${nextVersion}.`);
 }
 
-function upsertProbe({ probeId, name, version, hostName, primaryAddress, addresses, platform, primaryMac, macAddresses, remoteAddress }) {
+function upsertProbe({ probeId, name, version, hostName, primaryAddress, addresses, platform, primaryMac, macAddresses, hostMetrics, remoteAddress }) {
   const id = String(probeId || "").trim();
   if (!id) return null;
   const existing = state.probes.find((probe) => probe.id === id);
@@ -1150,6 +1211,7 @@ function upsertProbe({ probeId, name, version, hostName, primaryAddress, address
   const normalizedMacAddresses = normalizeMacAddresses(macAddresses);
   const normalizedPrimaryMac = normalizeMacAddresses([primaryMac || normalizedMacAddresses[0] || existing?.primaryMac || ""])[0] || null;
   const normalizedPrimaryAddress = String(primaryAddress || normalizedAddresses[0] || existing?.primaryAddress || "").trim() || null;
+  const normalizedHostMetrics = normalizeHostMetrics(hostMetrics, existing?.hostMetrics || null);
   const payload = {
     id,
     name: String(name || existing?.name || id).trim(),
@@ -1160,6 +1222,8 @@ function upsertProbe({ probeId, name, version, hostName, primaryAddress, address
     platform: normalizeProbePlatform(platform, existing?.platform),
     primaryMac: normalizedPrimaryMac,
     macAddresses: normalizedMacAddresses.length ? normalizedMacAddresses : Array.isArray(existing?.macAddresses) ? existing.macAddresses : [],
+    hostMetrics: normalizedHostMetrics,
+    hostMetricsUpdatedAt: normalizedHostMetrics ? normalizedHostMetrics.collectedAt || nowIso() : existing?.hostMetricsUpdatedAt || null,
     lastSeenAt: nowIso(),
     lastAddress: remoteAddress || existing?.lastAddress || null,
     deletedAt: null
@@ -1175,6 +1239,8 @@ function upsertProbe({ probeId, name, version, hostName, primaryAddress, address
       existing.platform !== payload.platform ||
       existing.primaryMac !== payload.primaryMac ||
       JSON.stringify(existing.macAddresses || []) !== JSON.stringify(payload.macAddresses || []) ||
+      JSON.stringify(existing.hostMetrics || null) !== JSON.stringify(payload.hostMetrics || null) ||
+      existing.hostMetricsUpdatedAt !== payload.hostMetricsUpdatedAt ||
       existing.lastAddress !== payload.lastAddress ||
       existing.deletedAt !== payload.deletedAt;
     Object.assign(existing, payload);
@@ -1519,6 +1585,7 @@ async function handleApi(req, res) {
           platform: url.searchParams.get("platform") || null,
           primaryMac: url.searchParams.get("primaryMac") || null,
           macAddresses: url.searchParams.get("macAddresses") || [],
+          hostMetrics: url.searchParams.get("hostMetrics") || null,
           remoteAddress: req.socket.remoteAddress
         });
         if (!registered) return sendJson(res, 400, { error: "Informe probeId." });
@@ -1543,6 +1610,7 @@ async function handleApi(req, res) {
           platform: payload.platform || null,
           primaryMac: payload.primaryMac || null,
           macAddresses: payload.macAddresses || [],
+          hostMetrics: payload.hostMetrics || null,
           remoteAddress: req.socket.remoteAddress
         });
         if (!registered) return sendJson(res, 400, { error: "Informe probeId." });

@@ -5,7 +5,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const DEFAULT_CONFIG = new URL("./config.json", import.meta.url);
-const VERSION = "0.3.0";
+const VERSION = "0.4.0";
 const DEFAULT_QUEUE_MAX_BATCHES = 1000;
 
 function argValue(name) {
@@ -79,7 +79,136 @@ function localMacAddresses() {
   )];
 }
 
-function probeMetadata(config) {
+function cpuSnapshot() {
+  return os.cpus().map((cpu) => {
+    const times = cpu.times;
+    const idle = times.idle;
+    const total = Object.values(times).reduce((sum, value) => sum + value, 0);
+    return { idle, total };
+  });
+}
+
+function cpuUsageFromSnapshots(start, end) {
+  const usages = end.map((item, index) => {
+    const previous = start[index];
+    if (!previous) return null;
+    const idle = item.idle - previous.idle;
+    const total = item.total - previous.total;
+    if (total <= 0) return null;
+    return Math.max(0, Math.min(100, (1 - idle / total) * 100));
+  }).filter((value) => value !== null);
+  if (!usages.length) return null;
+  return Math.round(usages.reduce((sum, value) => sum + value, 0) / usages.length);
+}
+
+function runCommand(command, args, timeoutMs = 2500) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, { shell: false });
+    let stdout = "";
+    let stderr = "";
+    let finished = false;
+    const timeout = setTimeout(() => {
+      if (!finished) child.kill();
+    }, timeoutMs);
+
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk.toString();
+    });
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk.toString();
+    });
+    child.on("error", (error) => {
+      clearTimeout(timeout);
+      finished = true;
+      reject(error);
+    });
+    child.on("close", (code) => {
+      clearTimeout(timeout);
+      if (finished) return;
+      finished = true;
+      if (code === 0) resolve(stdout);
+      else reject(new Error(stderr.trim() || `${command} exited with ${code}`));
+    });
+  });
+}
+
+async function diskUsage() {
+  try {
+    if (os.platform() === "win32") {
+      const output = await runCommand("powershell.exe", [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-Command",
+        "$d=Get-CimInstance Win32_LogicalDisk -Filter \"DeviceID='C:'\"; if($d){[pscustomobject]@{mount=$d.DeviceID;totalBytes=[int64]$d.Size;freeBytes=[int64]$d.FreeSpace}|ConvertTo-Json -Compress}"
+      ]);
+      const parsed = JSON.parse(output.trim());
+      const totalBytes = Number(parsed.totalBytes || 0);
+      const freeBytes = Number(parsed.freeBytes || 0);
+      return totalBytes > 0
+        ? {
+            mount: parsed.mount || "C:",
+            totalBytes,
+            freeBytes,
+            usedBytes: totalBytes - freeBytes,
+            usedPercent: Math.round(((totalBytes - freeBytes) / totalBytes) * 100)
+          }
+        : null;
+    }
+
+    const output = await runCommand("df", ["-kP", "/"]);
+    const line = output.trim().split(/\r?\n/)[1];
+    if (!line) return null;
+    const parts = line.split(/\s+/);
+    const totalBytes = Number(parts[1]) * 1024;
+    const usedBytes = Number(parts[2]) * 1024;
+    const freeBytes = Number(parts[3]) * 1024;
+    return totalBytes > 0
+      ? {
+          mount: parts[5] || "/",
+          totalBytes,
+          usedBytes,
+          freeBytes,
+          usedPercent: Math.round((usedBytes / totalBytes) * 100)
+        }
+      : null;
+  } catch (error) {
+    return null;
+  }
+}
+
+async function hostMetrics() {
+  const start = cpuSnapshot();
+  await new Promise((resolve) => setTimeout(resolve, 120));
+  const end = cpuSnapshot();
+  const totalMemoryBytes = os.totalmem();
+  const freeMemoryBytes = os.freemem();
+  const usedMemoryBytes = Math.max(0, totalMemoryBytes - freeMemoryBytes);
+  return {
+    collectedAt: new Date().toISOString(),
+    cpu: {
+      usagePercent: cpuUsageFromSnapshots(start, end),
+      cores: os.cpus().length,
+      model: os.cpus()[0]?.model || null,
+      loadAverage: os.loadavg()
+    },
+    memory: {
+      totalBytes: totalMemoryBytes,
+      freeBytes: freeMemoryBytes,
+      usedBytes: usedMemoryBytes,
+      usedPercent: totalMemoryBytes > 0 ? Math.round((usedMemoryBytes / totalMemoryBytes) * 100) : null
+    },
+    disk: await diskUsage(),
+    system: {
+      uptimeSeconds: Math.floor(os.uptime()),
+      arch: os.arch(),
+      release: os.release(),
+      type: os.type()
+    }
+  };
+}
+
+async function probeMetadata(config) {
   const addresses = localAddresses();
   const macAddresses = localMacAddresses();
   return {
@@ -91,7 +220,8 @@ function probeMetadata(config) {
     primaryAddress: addresses[0] || "",
     addresses,
     primaryMac: macAddresses[0] || "",
-    macAddresses
+    macAddresses,
+    hostMetrics: await hostMetrics()
   };
 }
 
@@ -241,7 +371,7 @@ async function flushQueue(config) {
 }
 
 async function getTargets(config) {
-  const metadata = probeMetadata(config);
+  const metadata = await probeMetadata(config);
   const params = new URLSearchParams({
     probeId: metadata.probeId,
     name: metadata.name,
@@ -251,14 +381,15 @@ async function getTargets(config) {
     addresses: JSON.stringify(metadata.addresses),
     platform: metadata.platform,
     primaryMac: metadata.primaryMac,
-    macAddresses: JSON.stringify(metadata.macAddresses)
+    macAddresses: JSON.stringify(metadata.macAddresses),
+    hostMetrics: JSON.stringify(metadata.hostMetrics)
   });
   return requestJson(config, `/api/probe/targets?${params.toString()}`);
 }
 
 async function sendResults(config, results) {
   if (!results.length) return;
-  const metadata = probeMetadata(config);
+  const metadata = await probeMetadata(config);
   await requestJson(config, "/api/probe/results", {
     method: "POST",
     body: JSON.stringify({
