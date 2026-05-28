@@ -5,7 +5,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const DEFAULT_CONFIG = new URL("./config.json", import.meta.url);
-const VERSION = "0.4.0";
+const VERSION = "0.5.0";
 const DEFAULT_QUEUE_MAX_BATCHES = 1000;
 
 function argValue(name) {
@@ -177,6 +177,96 @@ async function diskUsage() {
   }
 }
 
+function parseLinkSpeedMbps(value) {
+  const text = String(value || "").trim();
+  if (!text) return null;
+  const number = Number(text.replace(",", ".").match(/[\d.]+/)?.[0]);
+  if (!Number.isFinite(number)) return null;
+  if (/gbps|gbit|g\b/i.test(text)) return Math.round(number * 1000);
+  if (/kbps|kbit|k\b/i.test(text)) return Math.max(1, Math.round(number / 1000));
+  return Math.round(number);
+}
+
+async function windowsAdapterDetails() {
+  if (os.platform() !== "win32") return new Map();
+  try {
+    const output = await runCommand("powershell.exe", [
+      "-NoProfile",
+      "-ExecutionPolicy",
+      "Bypass",
+      "-Command",
+      "Get-NetAdapter | Select-Object Name,InterfaceDescription,Status,LinkSpeed,MacAddress | ConvertTo-Json -Compress"
+    ]);
+    const parsed = JSON.parse(output.trim() || "[]");
+    const rows = Array.isArray(parsed) ? parsed : [parsed];
+    const byName = new Map();
+    for (const row of rows) {
+      const normalized = {
+        description: String(row.InterfaceDescription || "").trim() || null,
+        status: String(row.Status || "").trim() || null,
+        speedMbps: parseLinkSpeedMbps(row.LinkSpeed),
+        mac: String(row.MacAddress || "").toLowerCase().replace(/-/g, ":")
+      };
+      if (row.Name) byName.set(String(row.Name).toLowerCase(), normalized);
+      if (normalized.mac) byName.set(normalized.mac, normalized);
+    }
+    return byName;
+  } catch {
+    return new Map();
+  }
+}
+
+async function linuxInterfaceDetails(name) {
+  if (os.platform() === "win32") return {};
+  const readSys = async (file) => {
+    try {
+      return (await readFile(`/sys/class/net/${name}/${file}`, "utf8")).trim();
+    } catch {
+      return "";
+    }
+  };
+  const [operstate, speed] = await Promise.all([readSys("operstate"), readSys("speed")]);
+  const speedNumber = Number(speed);
+  return {
+    status: operstate || null,
+    speedMbps: Number.isFinite(speedNumber) && speedNumber > 0 ? speedNumber : null
+  };
+}
+
+async function networkInterfaceMetrics() {
+  const windowsDetails = await windowsAdapterDetails();
+  const entries = await Promise.all(
+    Object.entries(os.networkInterfaces()).map(async ([name, items]) => {
+      const addresses = (items || [])
+        .filter((item) => !item.internal && !item.address.startsWith("169.254."))
+        .map((item) => ({
+          family: item.family,
+          address: item.address,
+          netmask: item.netmask || null,
+          cidr: item.cidr || null
+        }));
+      const mac = String((items || []).find((item) => item.mac && item.mac !== "00:00:00:00:00:00")?.mac || "")
+        .toLowerCase();
+      const extra = os.platform() === "win32"
+        ? windowsDetails.get(name.toLowerCase()) || windowsDetails.get(mac) || {}
+        : await linuxInterfaceDetails(name);
+      return {
+        name,
+        description: extra.description || null,
+        status: extra.status || null,
+        speedMbps: extra.speedMbps || null,
+        mac: mac || null,
+        addresses
+      };
+    })
+  );
+
+  return entries
+    .filter((entry) => entry.addresses.length || entry.mac)
+    .sort((left, right) => Number(Boolean(right.addresses.length)) - Number(Boolean(left.addresses.length)) || left.name.localeCompare(right.name))
+    .slice(0, 24);
+}
+
 async function hostMetrics() {
   const start = cpuSnapshot();
   await new Promise((resolve) => setTimeout(resolve, 120));
@@ -199,6 +289,7 @@ async function hostMetrics() {
       usedPercent: totalMemoryBytes > 0 ? Math.round((usedMemoryBytes / totalMemoryBytes) * 100) : null
     },
     disk: await diskUsage(),
+    networkInterfaces: await networkInterfaceMetrics(),
     system: {
       uptimeSeconds: Math.floor(os.uptime()),
       arch: os.arch(),
