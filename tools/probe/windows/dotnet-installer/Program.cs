@@ -68,6 +68,7 @@ internal static class Program
         private readonly Button installButton = new();
         private readonly Button repairButton = new();
         private readonly Button removeButton = new();
+        private readonly Panel card = new();
 
         public InstallerForm()
         {
@@ -76,100 +77,162 @@ internal static class Program
             FormBorderStyle = FormBorderStyle.FixedDialog;
             MaximizeBox = false;
             MinimizeBox = false;
-            ClientSize = new Size(620, 520);
+            ClientSize = new Size(640, 590);
             Font = new Font("Segoe UI", 9);
+            BackColor = Color("#eef2f3");
+            Icon = CreateServerWatchIcon();
+
+            var header = new Panel
+            {
+                Location = new Point(0, 0),
+                Size = new Size(640, 112),
+                BackColor = Color("#0b2545")
+            };
+            Controls.Add(header);
+
+            var brandMark = new Label
+            {
+                Text = "SW",
+                TextAlign = ContentAlignment.MiddleCenter,
+                Font = new Font("Segoe UI", 11, FontStyle.Bold),
+                ForeColor = System.Drawing.Color.White,
+                BackColor = Color("#dc2626"),
+                Location = new Point(26, 24),
+                Size = new Size(42, 42)
+            };
+            header.Controls.Add(brandMark);
+
+            var brand = new Label
+            {
+                Text = "ServerWatch",
+                Font = new Font("Segoe UI", 10, FontStyle.Bold),
+                ForeColor = System.Drawing.Color.White,
+                BackColor = Color("#0b2545"),
+                Location = new Point(80, 22),
+                Size = new Size(200, 22)
+            };
+            header.Controls.Add(brand);
+
+            var caption = new Label
+            {
+                Text = "Probe Collector",
+                ForeColor = Color("#9fb9b9"),
+                BackColor = Color("#0b2545"),
+                Location = new Point(80, 44),
+                Size = new Size(200, 20)
+            };
+            header.Controls.Add(caption);
 
             var title = new Label
             {
-                Text = "Instalar ServerWatch Probe Collector",
-                Font = new Font("Segoe UI", 13, FontStyle.Bold),
-                Location = new Point(22, 18),
-                Size = new Size(500, 26)
+                Text = "Instalar probe local",
+                Font = new Font("Segoe UI", 14, FontStyle.Bold),
+                ForeColor = System.Drawing.Color.White,
+                BackColor = Color("#0b2545"),
+                TextAlign = ContentAlignment.MiddleRight,
+                Location = new Point(318, 24),
+                Size = new Size(290, 28)
             };
-            Controls.Add(title);
+            header.Controls.Add(title);
 
             var subtitle = new Label
             {
-                Text = "Configure o coletor local que enviara resultados para o ServerWatch central.",
-                Location = new Point(24, 50),
-                Size = new Size(500, 22)
+                Text = "Configure a conexao de saida com o ServerWatch central.",
+                ForeColor = System.Drawing.Color.White,
+                BackColor = Color("#0b2545"),
+                TextAlign = ContentAlignment.MiddleRight,
+                Location = new Point(248, 55),
+                Size = new Size(360, 22)
             };
-            Controls.Add(subtitle);
+            header.Controls.Add(subtitle);
 
-            AddLabel("URL do ServerWatch", 24, 92);
-            ConfigureTextBox(serverUrl, 24, 114, 510);
+            card.Location = new Point(22, 132);
+            card.Size = new Size(596, 392);
+            card.BackColor = System.Drawing.Color.White;
+            card.BorderStyle = BorderStyle.None;
+            Controls.Add(card);
 
-            AddLabel("ID do probe", 24, 152);
-            ConfigureTextBox(probeId, 24, 174, 240);
+            AddLabel("URL do ServerWatch", 22, 22);
+            ConfigureTextBox(serverUrl, 22, 44, 552);
 
-            AddLabel("Nome", 294, 152);
-            ConfigureTextBox(probeName, 294, 174, 240);
+            AddLabel("ID do probe", 22, 84);
+            ConfigureTextBox(probeId, 22, 106, 238);
 
-            AddLabel("Token", 24, 212);
-            ConfigureTextBox(token, 24, 234, 510);
+            AddLabel("Nome", 314, 84);
+            ConfigureTextBox(probeName, 314, 106, 260);
+
+            AddLabel("Token", 22, 146);
+            ConfigureTextBox(token, 22, 168, 552);
             token.UseSystemPasswordChar = true;
 
-            AddLabel("Intervalo em segundos", 24, 272);
-            ConfigureNumber(intervalSeconds, 24, 294, 120, 3, 3600, 10);
+            AddLabel("Intervalo em segundos", 22, 208, 140);
+            ConfigureNumber(intervalSeconds, 22, 230, 120, 3, 3600, 10);
 
-            AddLabel("Timeout em ms", 174, 272);
-            ConfigureNumber(timeoutMs, 174, 294, 120, 500, 60000, 2500);
+            AddLabel("Timeout em ms", 172, 208, 140);
+            ConfigureNumber(timeoutMs, 172, 230, 120, 500, 60000, 2500);
 
-            progress.Location = new Point(24, 334);
-            progress.Size = new Size(570, 18);
+            progress.Location = new Point(22, 272);
+            progress.Size = new Size(552, 18);
             progress.Minimum = 0;
             progress.Maximum = 100;
-            Controls.Add(progress);
+            card.Controls.Add(progress);
 
-            status.Location = new Point(24, 360);
-            status.Size = new Size(570, 24);
+            status.Location = new Point(22, 300);
+            status.Size = new Size(552, 18);
             status.Text = $"O probe sera instalado em {InstallDir}.";
-            Controls.Add(status);
+            status.ForeColor = Color("#657477");
+            card.Controls.Add(status);
 
-            logBox.Location = new Point(24, 388);
-            logBox.Size = new Size(570, 58);
+            logBox.Location = new Point(22, 326);
+            logBox.Size = new Size(552, 52);
             logBox.Multiline = true;
             logBox.ReadOnly = true;
             logBox.ScrollBars = ScrollBars.Vertical;
-            Controls.Add(logBox);
+            card.Controls.Add(logBox);
 
             installButton.Text = "Instalar e iniciar";
-            installButton.Location = new Point(434, 466);
-            installButton.Size = new Size(160, 30);
+            installButton.Location = new Point(458, 540);
+            installButton.Size = new Size(160, 34);
+            StylePrimaryButton(installButton);
             installButton.Click += (_, _) => Install();
             Controls.Add(installButton);
 
             repairButton.Text = "Reparar";
-            repairButton.Location = new Point(322, 466);
-            repairButton.Size = new Size(100, 30);
+            repairButton.Location = new Point(344, 540);
+            repairButton.Size = new Size(100, 34);
+            StyleSecondaryButton(repairButton);
             repairButton.Click += (_, _) => Install();
             Controls.Add(repairButton);
 
             removeButton.Text = "Remover";
-            removeButton.Location = new Point(210, 466);
-            removeButton.Size = new Size(100, 30);
+            removeButton.Location = new Point(232, 540);
+            removeButton.Size = new Size(100, 34);
+            StyleSecondaryButton(removeButton);
             removeButton.Click += (_, _) => RemoveProbe();
             Controls.Add(removeButton);
 
             var cancelButton = new Button
             {
                 Text = "Cancelar",
-                Location = new Point(98, 466),
-                Size = new Size(100, 30)
+                Location = new Point(120, 540),
+                Size = new Size(100, 34)
             };
+            StyleSecondaryButton(cancelButton);
             cancelButton.Click += (_, _) => Close();
             Controls.Add(cancelButton);
 
             LoadExistingConfig();
         }
 
-        private void AddLabel(string text, int x, int y)
+        private void AddLabel(string text, int x, int y, int width = 210)
         {
-            Controls.Add(new Label
+            card.Controls.Add(new Label
             {
                 Text = text,
+                Font = new Font("Segoe UI", 9, FontStyle.Bold),
+                BackColor = System.Drawing.Color.White,
                 Location = new Point(x, y),
-                Size = new Size(210, 20)
+                Size = new Size(width, 20)
             });
         }
 
@@ -177,7 +240,7 @@ internal static class Program
         {
             box.Location = new Point(x, y);
             box.Size = new Size(width, 24);
-            Controls.Add(box);
+            card.Controls.Add(box);
         }
 
         private void ConfigureNumber(NumericUpDown box, int x, int y, int width, int minimum, int maximum, int value)
@@ -187,7 +250,50 @@ internal static class Program
             box.Minimum = minimum;
             box.Maximum = maximum;
             box.Value = value;
-            Controls.Add(box);
+            card.Controls.Add(box);
+        }
+
+        private static System.Drawing.Color Color(string hex)
+        {
+            return ColorTranslator.FromHtml(hex);
+        }
+
+        private static void StylePrimaryButton(Button button)
+        {
+            button.FlatStyle = FlatStyle.Flat;
+            button.FlatAppearance.BorderSize = 0;
+            button.BackColor = Color("#123c69");
+            button.ForeColor = System.Drawing.Color.White;
+            button.Font = new Font("Segoe UI", 9, FontStyle.Bold);
+        }
+
+        private static void StyleSecondaryButton(Button button)
+        {
+            button.FlatStyle = FlatStyle.Flat;
+            button.FlatAppearance.BorderColor = Color("#dbe3e4");
+            button.BackColor = System.Drawing.Color.White;
+            button.ForeColor = Color("#142022");
+        }
+
+        private static Icon CreateServerWatchIcon()
+        {
+            using var bitmap = new Bitmap(32, 32);
+            using var graphics = Graphics.FromImage(bitmap);
+            graphics.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.HighQuality;
+            graphics.TextRenderingHint = System.Drawing.Text.TextRenderingHint.AntiAliasGridFit;
+            graphics.Clear(System.Drawing.Color.Transparent);
+
+            using var background = new SolidBrush(Color("#dc2626"));
+            using var foreground = new SolidBrush(System.Drawing.Color.White);
+            using var font = new Font("Segoe UI", 10, FontStyle.Bold);
+
+            graphics.FillRectangle(background, 0, 0, 32, 32);
+            var size = graphics.MeasureString("SW", font);
+            var x = Math.Max(0, (32 - size.Width) / 2);
+            var y = Math.Max(0, (32 - size.Height) / 2 - 1);
+            graphics.DrawString("SW", font, foreground, x, y);
+            using var icon = Icon.FromHandle(bitmap.GetHicon());
+            return (Icon)icon.Clone();
         }
 
         private void LoadExistingConfig()
