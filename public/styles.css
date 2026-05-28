@@ -1016,6 +1016,14 @@ textarea:focus {
   justify-content: flex-end;
 }
 
+.panel-title-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
 .mini-badge {
   border-radius: 999px;
   padding: 4px 7px;
@@ -1045,6 +1053,7 @@ textarea:focus {
 }
 
 .server-row {
+  --dependency-offset: calc(var(--dependency-depth, 0) * 24px);
   border: 1px solid var(--line);
   border-radius: 8px;
   padding: 12px;
@@ -1054,8 +1063,8 @@ textarea:focus {
   align-items: center;
   gap: 12px;
   text-align: left;
-  width: 100%;
-  margin-left: calc(var(--dependency-depth, 0) * 24px);
+  width: calc(100% - var(--dependency-offset));
+  margin-left: var(--dependency-offset);
 }
 
 .server-row:hover,
@@ -2172,6 +2181,31 @@ label {
   color: var(--muted);
   font-size: 0.82rem;
   font-weight: 700;
+}
+
+.virtualizer-children-options {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px;
+  background: var(--surface-muted);
+  display: grid;
+  gap: 10px;
+}
+
+.virtualizer-children-options[hidden] {
+  display: none;
+}
+
+.virtualizer-children-options legend {
+  padding: 0 6px;
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.virtualizer-children-options select {
+  min-height: 132px;
 }
 
 .toast-stack {

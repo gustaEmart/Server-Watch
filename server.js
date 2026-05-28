@@ -193,6 +193,11 @@ function normalizeServer(payload, existing = {}) {
       error.statusCode = 400;
       throw error;
     }
+    if (parent.nodeType !== "hypervisor") {
+      const error = new Error("Host pai deve estar marcado como virtualizador.");
+      error.statusCode = 400;
+      throw error;
+    }
     if (existing.id && isDescendantServer(parentId, existing.id)) {
       const error = new Error("Dependencia invalida: isso criaria um ciclo na topologia.");
       error.statusCode = 400;

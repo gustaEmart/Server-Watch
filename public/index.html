@@ -183,7 +183,10 @@
             <section class="server-panel">
               <div class="panel-title">
                 <h2>Servidores por empresa</h2>
-                <span id="serverCount">0 itens</span>
+                <div class="panel-title-actions">
+                  <span id="serverCount">0 itens</span>
+                  <button class="ghost-button compact" id="toggleTopologyAll" type="button" hidden>Expandir todos</button>
+                </div>
               </div>
               <div class="server-list" id="serverList"></div>
             </section>
@@ -536,6 +539,15 @@
             <input id="serverThreshold" type="number" min="1" max="10" value="2" />
           </label>
         </div>
+
+        <fieldset class="virtualizer-children-options" id="virtualizerChildrenOptions" hidden>
+          <legend>VMs deste virtualizador</legend>
+          <label>
+            Servidores vinculados como VM
+            <select id="serverChildIds" multiple size="6"></select>
+          </label>
+          <small class="field-hint">Ao selecionar um servidor aqui, ele passa a depender deste virtualizador e o tipo muda automaticamente para VM.</small>
+        </fieldset>
 
         <fieldset id="probeOptions">
           <legend>Probe collector</legend>

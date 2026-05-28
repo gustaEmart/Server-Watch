@@ -53,6 +53,7 @@ const els = {
   executiveGrid: document.querySelector("#executiveGrid"),
   serverList: document.querySelector("#serverList"),
   serverCount: document.querySelector("#serverCount"),
+  toggleTopologyAll: document.querySelector("#toggleTopologyAll"),
   detailPanel: document.querySelector("#detailPanel"),
   timeline: document.querySelector("#timeline"),
   eventCount: document.querySelector("#eventCount"),
@@ -127,6 +128,8 @@ const els = {
   serverNodeType: document.querySelector("#serverNodeType"),
   serverInfrastructurePlatform: document.querySelector("#serverInfrastructurePlatform"),
   serverParentId: document.querySelector("#serverParentId"),
+  virtualizerChildrenOptions: document.querySelector("#virtualizerChildrenOptions"),
+  serverChildIds: document.querySelector("#serverChildIds"),
   serverGroup: document.querySelector("#serverGroup"),
   serverLocation: document.querySelector("#serverLocation"),
   serverInterval: document.querySelector("#serverInterval"),
@@ -704,7 +707,9 @@ function renderGroupOptions() {
 function renderParentOptions(currentServerId = "") {
   if (!els.serverParentId) return;
   const current = els.serverParentId.value;
-  const candidates = state.servers.filter((server) => !server.deletedAt && server.id !== currentServerId);
+  const candidates = state.servers.filter(
+    (server) => !server.deletedAt && server.id !== currentServerId && server.nodeType === "hypervisor"
+  );
   els.serverParentId.innerHTML = `
     <option value="">Sem dependencia</option>
     ${candidates
@@ -719,6 +724,67 @@ function renderParentOptions(currentServerId = "") {
       .join("")}
   `;
   els.serverParentId.value = candidates.some((server) => server.id === current) ? current : "";
+}
+
+function hasAncestor(serverId, ancestorId) {
+  let current = state.servers.find((server) => server.id === serverId && !server.deletedAt);
+  const visited = new Set();
+  while (current?.parentId) {
+    if (current.parentId === ancestorId) return true;
+    if (visited.has(current.parentId)) return false;
+    visited.add(current.parentId);
+    current = state.servers.find((server) => server.id === current.parentId && !server.deletedAt);
+  }
+  return false;
+}
+
+function virtualizerChildCandidates(currentServerId = "") {
+  return state.servers.filter(
+    (server) =>
+      !server.deletedAt &&
+      server.id !== currentServerId &&
+      server.nodeType !== "hypervisor" &&
+      (!currentServerId || !hasAncestor(currentServerId, server.id))
+  );
+}
+
+function selectedVirtualizerChildIds() {
+  if (!els.serverChildIds) return [];
+  return [...els.serverChildIds.selectedOptions].map((option) => option.value);
+}
+
+function renderVirtualizerChildOptions(currentServerId = "") {
+  if (!els.serverChildIds) return;
+  const selected = new Set(selectedVirtualizerChildIds());
+  if (!selected.size && currentServerId) {
+    state.servers
+      .filter((server) => server.parentId === currentServerId && !server.deletedAt)
+      .forEach((server) => selected.add(server.id));
+  }
+  const candidates = virtualizerChildCandidates(currentServerId);
+  els.serverChildIds.innerHTML = candidates.length
+    ? candidates
+        .map((server) => {
+          const descriptor = [
+            server.hostname,
+            nodeTypeLabel(server.nodeType),
+            server.parentName ? `depende de ${server.parentName}` : ""
+          ]
+            .filter(Boolean)
+            .join(" · ");
+          return `<option value="${escapeHtml(server.id)}" ${selected.has(server.id) ? "selected" : ""}>${escapeHtml(server.name)}${descriptor ? ` (${escapeHtml(descriptor)})` : ""}</option>`;
+        })
+        .join("")
+    : `<option value="" disabled>Nenhum servidor disponivel para vincular</option>`;
+}
+
+function toggleVirtualizerChildrenOptions() {
+  if (!els.virtualizerChildrenOptions) return;
+  const isVirtualizer = els.serverNodeType.value === "hypervisor";
+  els.virtualizerChildrenOptions.hidden = !isVirtualizer;
+  if (isVirtualizer) {
+    renderVirtualizerChildOptions(els.serverId.value || "");
+  }
 }
 
 function renderProbeOptions() {
@@ -1244,6 +1310,22 @@ function renderServerTopology(servers) {
     .join("");
 }
 
+function expandableTopologyIds(servers = filteredServers()) {
+  const visibleIds = new Set(servers.map((server) => server.id));
+  const ids = new Set();
+  for (const server of servers) {
+    if (server.parentId && visibleIds.has(server.parentId)) {
+      ids.add(server.parentId);
+    }
+  }
+  return [...ids];
+}
+
+function allVisibleTopologyExpanded(servers = filteredServers()) {
+  const ids = expandableTopologyIds(servers);
+  return ids.length > 0 && ids.every((id) => state.topologyExpanded.has(id));
+}
+
 function groupedServers(servers) {
   const groups = [];
   const knownGroupIds = new Set(state.groups.map((group) => group.id));
@@ -1262,6 +1344,12 @@ function groupedServers(servers) {
 function renderServers() {
   const servers = filteredServers();
   els.serverCount.textContent = `${servers.length} ${servers.length === 1 ? "item" : "itens"}`;
+  const expandableIds = expandableTopologyIds(servers);
+  if (els.toggleTopologyAll) {
+    const allExpanded = expandableIds.length > 0 && expandableIds.every((id) => state.topologyExpanded.has(id));
+    els.toggleTopologyAll.hidden = expandableIds.length === 0;
+    els.toggleTopologyAll.textContent = allExpanded ? "Recolher todos" : "Expandir todos";
+  }
 
   if (!servers.length) {
     els.serverList.innerHTML = `<div class="empty-list">Nenhum servidor encontrado.</div>`;
@@ -2051,6 +2139,7 @@ function showIncidentNotification(event) {
 
 function openDialog(server = null) {
   els.serverForm.reset();
+  if (els.serverChildIds) els.serverChildIds.innerHTML = "";
   renderGroupOptions();
   renderProbeOptions();
   els.serverId.value = server?.id || "";
@@ -2073,6 +2162,7 @@ function openDialog(server = null) {
   els.serverTags.value = (server?.tags || []).join(", ");
   els.serverDescription.value = server?.description || "";
   toggleProbeOptions();
+  toggleVirtualizerChildrenOptions();
   els.serverDialog.showModal();
 }
 
@@ -2149,6 +2239,48 @@ async function submitUser(event) {
   showToast("Usuario salvo", `${saved.name} pode acessar o ServerWatch.`);
 }
 
+function serverUpdatePayload(server, overrides = {}) {
+  return {
+    name: server.name,
+    hostname: server.hostname,
+    checkSource: server.checkSource,
+    probeId: server.probeId || "",
+    nodeType: server.nodeType || "server",
+    infrastructurePlatform: server.infrastructurePlatform || "none",
+    parentId: server.parentId || null,
+    environment: server.environment || "production",
+    groupId: server.groupId || null,
+    location: server.location || "",
+    checkInterval: server.checkInterval || 10,
+    failureThreshold: server.failureThreshold || 2,
+    tags: server.tags || [],
+    description: server.description || "",
+    ...overrides
+  };
+}
+
+async function syncVirtualizerChildren(parentId) {
+  if (els.serverNodeType.value !== "hypervisor" || !els.serverChildIds) return 0;
+  const selected = new Set(selectedVirtualizerChildIds());
+  const candidates = virtualizerChildCandidates(parentId);
+  let updated = 0;
+
+  for (const server of candidates) {
+    const shouldAttach = selected.has(server.id);
+    const shouldDetach = !shouldAttach && server.parentId === parentId;
+    if (!shouldAttach && !shouldDetach) continue;
+
+    const payload = serverUpdatePayload(server, {
+      parentId: shouldAttach ? parentId : null,
+      nodeType: shouldAttach ? "vm" : server.nodeType
+    });
+    await api(`/api/servers/${server.id}`, { method: "PUT", body: JSON.stringify(payload) });
+    updated += 1;
+  }
+
+  return updated;
+}
+
 async function submitServer(event) {
   event.preventDefault();
   const id = els.serverId.value;
@@ -2176,9 +2308,13 @@ async function submitServer(event) {
     const saved = id
       ? await api(`/api/servers/${id}`, { method: "PUT", body: JSON.stringify(payload) })
       : await api("/api/servers", { method: "POST", body: JSON.stringify(payload) });
+    const childUpdates = await syncVirtualizerChildren(saved.id);
     state.selectedServerId = saved.id;
     closeDialog();
-    showToast("Servidor salvo", `${saved.name} entrou no monitoramento.`);
+    showToast(
+      "Servidor salvo",
+      childUpdates ? `${saved.name} salvo. ${childUpdates} VM${childUpdates === 1 ? "" : "s"} atualizada${childUpdates === 1 ? "" : "s"}.` : `${saved.name} entrou no monitoramento.`
+    );
     const snap = await api("/api/snapshot");
     applySnapshot(snap);
   } catch (error) {
@@ -2341,6 +2477,23 @@ function bindEvents() {
   document.querySelector("#cancelForm").addEventListener("click", closeDialog);
   els.serverCheckSource.addEventListener("change", toggleProbeOptions);
   els.serverProbeId.addEventListener("change", () => applySelectedProbeDefaults({ force: true }));
+  els.serverNodeType.addEventListener("change", toggleVirtualizerChildrenOptions);
+  els.serverParentId.addEventListener("change", () => {
+    if (els.serverParentId.value) {
+      els.serverNodeType.value = "vm";
+      toggleVirtualizerChildrenOptions();
+    }
+  });
+  els.toggleTopologyAll?.addEventListener("click", () => {
+    const ids = expandableTopologyIds();
+    if (!ids.length) return;
+    const allExpanded = ids.every((id) => state.topologyExpanded.has(id));
+    ids.forEach((id) => {
+      if (allExpanded) state.topologyExpanded.delete(id);
+      else state.topologyExpanded.add(id);
+    });
+    renderServers();
+  });
   els.serverForm.addEventListener("submit", submitServer);
 
   els.toggleProbeToken?.addEventListener("click", () => {
