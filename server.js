@@ -1452,6 +1452,15 @@ async function handleApi(req, res) {
         return sendJson(res, 401, { error: "Token do probe invalido." });
       }
 
+      if (req.method === "GET" && parts[2] === "validate") {
+        return sendJson(res, 200, {
+          ok: true,
+          service: "serverwatch",
+          timestamp: nowIso(),
+          probeId: String(url.searchParams.get("probeId") || "").trim() || null
+        });
+      }
+
       if (req.method === "GET" && parts[2] === "targets") {
         const probeId = String(url.searchParams.get("probeId") || "").trim();
         const registered = upsertProbe({

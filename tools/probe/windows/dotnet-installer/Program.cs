@@ -22,12 +22,24 @@ internal static class Program
 
         if (!IsAdministrator())
         {
-            MessageBox.Show(
-                "Execute o instalador como Administrador.",
-                "ServerWatch Probe Collector",
-                MessageBoxButtons.OK,
-                MessageBoxIcon.Warning
-            );
+            try
+            {
+                Process.Start(new ProcessStartInfo
+                {
+                    FileName = Environment.ProcessPath,
+                    UseShellExecute = true,
+                    Verb = "runas"
+                });
+            }
+            catch
+            {
+                MessageBox.Show(
+                    "Nao foi possivel solicitar permissao de Administrador. Execute o instalador novamente e aceite o UAC.",
+                    "ServerWatch Probe Collector",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Warning
+                );
+            }
             return;
         }
 
@@ -50,7 +62,11 @@ internal static class Program
         private readonly NumericUpDown intervalSeconds = new();
         private readonly NumericUpDown timeoutMs = new();
         private readonly Label status = new();
+        private readonly ProgressBar progress = new();
+        private readonly TextBox logBox = new();
         private readonly Button installButton = new();
+        private readonly Button repairButton = new();
+        private readonly Button removeButton = new();
 
         public InstallerForm()
         {
@@ -59,7 +75,7 @@ internal static class Program
             FormBorderStyle = FormBorderStyle.FixedDialog;
             MaximizeBox = false;
             MinimizeBox = false;
-            ClientSize = new Size(560, 430);
+            ClientSize = new Size(620, 520);
             Font = new Font("Segoe UI", 9);
 
             var title = new Label
@@ -98,21 +114,46 @@ internal static class Program
             AddLabel("Timeout em ms", 174, 272);
             ConfigureNumber(timeoutMs, 174, 294, 120, 500, 60000, 2500);
 
-            status.Location = new Point(24, 340);
-            status.Size = new Size(510, 42);
+            progress.Location = new Point(24, 334);
+            progress.Size = new Size(570, 18);
+            progress.Minimum = 0;
+            progress.Maximum = 100;
+            Controls.Add(progress);
+
+            status.Location = new Point(24, 360);
+            status.Size = new Size(570, 24);
             status.Text = $"O probe sera instalado em {InstallDir}.";
             Controls.Add(status);
 
+            logBox.Location = new Point(24, 388);
+            logBox.Size = new Size(570, 58);
+            logBox.Multiline = true;
+            logBox.ReadOnly = true;
+            logBox.ScrollBars = ScrollBars.Vertical;
+            Controls.Add(logBox);
+
             installButton.Text = "Instalar e iniciar";
-            installButton.Location = new Point(374, 386);
+            installButton.Location = new Point(434, 466);
             installButton.Size = new Size(160, 30);
             installButton.Click += (_, _) => Install();
             Controls.Add(installButton);
 
+            repairButton.Text = "Reparar";
+            repairButton.Location = new Point(322, 466);
+            repairButton.Size = new Size(100, 30);
+            repairButton.Click += (_, _) => Install();
+            Controls.Add(repairButton);
+
+            removeButton.Text = "Remover";
+            removeButton.Location = new Point(210, 466);
+            removeButton.Size = new Size(100, 30);
+            removeButton.Click += (_, _) => RemoveProbe();
+            Controls.Add(removeButton);
+
             var cancelButton = new Button
             {
                 Text = "Cancelar",
-                Location = new Point(262, 386),
+                Location = new Point(98, 466),
                 Size = new Size(100, 30)
             };
             cancelButton.Click += (_, _) => Close();
@@ -152,6 +193,8 @@ internal static class Program
         {
             if (!File.Exists(ConfigPath))
             {
+                probeId.Text = Environment.MachineName;
+                probeName.Text = Environment.MachineName;
                 return;
             }
 
@@ -178,25 +221,32 @@ internal static class Program
 
         private void Install()
         {
-            installButton.Enabled = false;
-            status.Text = "Instalando...";
+            SetButtons(false);
+            SetProgress(0, "Instalando...");
 
             try
             {
                 var values = ReadValues();
                 Validate(values);
+                ValidateServerWatch(values);
+                StopExistingProbe();
                 Directory.CreateDirectory(InstallDir);
 
+                SetProgress(20, "Copiando arquivos do collector...");
                 WriteResource("collector.js", Path.Combine(InstallDir, "collector.js"));
                 WriteResource("setup-server.js", Path.Combine(InstallDir, "setup-server.js"));
                 WriteResource("node.exe", Path.Combine(InstallDir, "node.exe"));
+                SetProgress(45, "Salvando configuracao...");
                 WriteConfig(values);
+                SetProgress(65, "Configurando tarefa agendada...");
                 RegisterTask();
+                SetProgress(80, "Iniciando Probe Collector...");
                 RunTask();
+                RegisterProbe(values);
 
-                status.Text = "Instalacao concluida. A tarefa agendada ja foi iniciada.";
+                SetProgress(100, "Instalacao concluida. O probe ja foi registrado no ServerWatch.");
                 MessageBox.Show(
-                    "ServerWatch Probe Collector instalado e iniciado com sucesso.",
+                    "ServerWatch Probe Collector instalado, iniciado e registrado com sucesso.",
                     "ServerWatch Probe Collector",
                     MessageBoxButtons.OK,
                     MessageBoxIcon.Information
@@ -205,13 +255,28 @@ internal static class Program
             }
             catch (Exception error)
             {
-                status.Text = error.Message;
+                SetProgress(0, error.Message);
                 MessageBox.Show(error.Message, "Erro na instalacao", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
             finally
             {
-                installButton.Enabled = true;
+                SetButtons(true);
             }
+        }
+
+        private void SetButtons(bool enabled)
+        {
+            installButton.Enabled = enabled;
+            repairButton.Enabled = enabled;
+            removeButton.Enabled = enabled;
+        }
+
+        private void SetProgress(int value, string message)
+        {
+            progress.Value = Math.Max(progress.Minimum, Math.Min(progress.Maximum, value));
+            status.Text = message;
+            logBox.AppendText($"[{DateTime.Now:HH:mm:ss}] {message}{Environment.NewLine}");
+            Application.DoEvents();
         }
 
         private ProbeConfig ReadValues()
@@ -242,6 +307,42 @@ internal static class Program
             if (string.IsNullOrWhiteSpace(config.Token))
             {
                 throw new InvalidOperationException("Informe o token.");
+            }
+        }
+
+        private void ValidateServerWatch(ProbeConfig config)
+        {
+            SetProgress(8, "Validando URL e token no ServerWatch...");
+            var url = $"{config.ServerUrl.TrimEnd('/')}/api/probe/validate?probeId={Uri.EscapeDataString(config.ProbeId)}";
+            using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(15) };
+            using var request = new HttpRequestMessage(HttpMethod.Get, url);
+            request.Headers.TryAddWithoutValidation("Authorization", $"Bearer {config.Token}");
+            request.Headers.TryAddWithoutValidation("X-ServerWatch-Probe-Token", config.Token);
+            using var response = client.Send(request);
+            if (!response.IsSuccessStatusCode)
+            {
+                throw new InvalidOperationException($"URL ou token invalido. O ServerWatch retornou HTTP {(int)response.StatusCode}.");
+            }
+        }
+
+        private void RegisterProbe(ProbeConfig config)
+        {
+            SetProgress(90, "Registrando probe no ServerWatch...");
+            var url =
+                $"{config.ServerUrl.TrimEnd('/')}/api/probe/targets" +
+                $"?probeId={Uri.EscapeDataString(config.ProbeId)}" +
+                $"&name={Uri.EscapeDataString(config.Name)}" +
+                "&version=0.1.0-installer" +
+                $"&hostName={Uri.EscapeDataString(Environment.MachineName)}" +
+                "&platform=windows";
+            using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(20) };
+            using var request = new HttpRequestMessage(HttpMethod.Get, url);
+            request.Headers.TryAddWithoutValidation("Authorization", $"Bearer {config.Token}");
+            request.Headers.TryAddWithoutValidation("X-ServerWatch-Probe-Token", config.Token);
+            using var response = client.Send(request);
+            if (!response.IsSuccessStatusCode)
+            {
+                throw new InvalidOperationException($"O probe foi instalado, mas nao conseguiu se registrar. HTTP {(int)response.StatusCode}.");
             }
         }
 
@@ -285,7 +386,67 @@ internal static class Program
             RunProcess("schtasks.exe", $"/Run /TN \"{TaskName}\"");
         }
 
-        private static void RunProcess(string fileName, string arguments)
+        private void StopExistingProbe()
+        {
+            SetProgress(12, "Parando instalacao anterior, se existir...");
+            RunProcess("schtasks.exe", $"/End /TN \"{TaskName}\"", allowFailure: true);
+            var nodePath = Path.Combine(InstallDir, "node.exe");
+            foreach (var process in Process.GetProcessesByName("node"))
+            {
+                try
+                {
+                    if (string.Equals(process.MainModule?.FileName, nodePath, StringComparison.OrdinalIgnoreCase))
+                    {
+                        process.Kill(true);
+                    }
+                }
+                catch
+                {
+                    // Best effort cleanup before overwriting bundled runtime.
+                }
+            }
+        }
+
+        private void RemoveProbe()
+        {
+            if (MessageBox.Show(
+                    "Remover o ServerWatch Probe Collector deste Windows?",
+                    "ServerWatch Probe Collector",
+                    MessageBoxButtons.YesNo,
+                    MessageBoxIcon.Warning
+                ) != DialogResult.Yes)
+            {
+                return;
+            }
+
+            SetButtons(false);
+            try
+            {
+                SetProgress(10, "Parando tarefa agendada...");
+                RunProcess("schtasks.exe", $"/End /TN \"{TaskName}\"", allowFailure: true);
+                SetProgress(40, "Removendo tarefa agendada...");
+                RunProcess("schtasks.exe", $"/Delete /TN \"{TaskName}\" /F", allowFailure: true);
+                SetProgress(70, "Removendo arquivos locais...");
+                if (Directory.Exists(InstallDir))
+                {
+                    Directory.Delete(InstallDir, true);
+                }
+                SetProgress(100, "Probe Collector removido.");
+                MessageBox.Show("Probe Collector removido.", "ServerWatch Probe Collector", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                Close();
+            }
+            catch (Exception error)
+            {
+                SetProgress(0, error.Message);
+                MessageBox.Show(error.Message, "Erro na remocao", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+            finally
+            {
+                SetButtons(true);
+            }
+        }
+
+        private static void RunProcess(string fileName, string arguments, bool allowFailure = false)
         {
             using var process = Process.Start(new ProcessStartInfo
             {
@@ -301,7 +462,7 @@ internal static class Program
             var error = process.StandardError.ReadToEnd();
             process.WaitForExit();
 
-            if (process.ExitCode != 0)
+            if (process.ExitCode != 0 && !allowFailure)
             {
                 throw new InvalidOperationException(string.IsNullOrWhiteSpace(error) ? output : error);
             }

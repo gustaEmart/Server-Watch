@@ -7,6 +7,7 @@ $sourceDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $defaultsPath = Join-Path $sourceDir "installer-defaults.json"
 $installDir = Join-Path $env:ProgramData "ServerWatchProbe"
 $configPath = Join-Path $installDir "config.json"
+$logPath = Join-Path $installDir "install.log"
 $taskName = "ServerWatch Probe Collector"
 
 function Test-Administrator {
@@ -171,6 +172,7 @@ function New-ServerWatchIcon {
 }
 
 function Set-InstallProgress($value, $message) {
+  Write-InstallLog $message
   if ($script:progressBar) {
     $script:progressBar.Value = [Math]::Max($script:progressBar.Minimum, [Math]::Min($script:progressBar.Maximum, [int]$value))
   }
@@ -178,6 +180,18 @@ function Set-InstallProgress($value, $message) {
     $script:statusLabel.Text = $message
   }
   [System.Windows.Forms.Application]::DoEvents()
+}
+
+function Write-InstallLog($message) {
+  try {
+    New-Item -ItemType Directory -Path $installDir -Force | Out-Null
+    $line = "[{0}] {1}" -f (Get-Date).ToString("s"), $message
+    Add-Content -Path $logPath -Value $line -Encoding UTF8
+    if ($script:logBox) {
+      $script:logBox.AppendText($line + [Environment]::NewLine)
+    }
+  } catch {
+  }
 }
 
 function Get-NodeSource {
@@ -219,6 +233,37 @@ function Register-Probe($values) {
   } catch {
     throw "O probe foi instalado, mas nao conseguiu se registrar no ServerWatch. Verifique URL, token e acesso de rede. Detalhe: $($_.Exception.Message)"
   }
+}
+
+function Test-ServerWatchConnection($values) {
+  Set-InstallProgress 5 "Validando URL e token no ServerWatch..."
+  $serverUrl = $values.serverUrl.TrimEnd("/")
+  $probeId = [System.Uri]::EscapeDataString($values.probeId.Trim())
+  $targetUrl = "$serverUrl/api/probe/validate?probeId=$probeId"
+  $headers = @{
+    Authorization = "Bearer $($values.token.Trim())"
+    "X-ServerWatch-Probe-Token" = $values.token.Trim()
+  }
+
+  try {
+    Invoke-RestMethod -Method Get -Uri $targetUrl -Headers $headers -TimeoutSec 15 | Out-Null
+  } catch {
+    throw "Nao foi possivel validar URL/token antes da instalacao. Verifique a URL do ServerWatch, token e acesso de rede. Detalhe: $($_.Exception.Message)"
+  }
+}
+
+function Remove-Probe {
+  Set-InstallProgress 10 "Parando tarefa agendada..."
+  $task = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
+  if ($task) {
+    Stop-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
+    Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction SilentlyContinue
+  }
+  Set-InstallProgress 60 "Removendo arquivos locais..."
+  if (Test-Path $installDir) {
+    Remove-Item -LiteralPath $installDir -Recurse -Force -ErrorAction SilentlyContinue
+  }
+  Set-InstallProgress 100 "Probe Collector removido."
 }
 
 function Validate-Config($values) {
@@ -300,6 +345,7 @@ function Copy-WithRetry($source, $destination, $description) {
 
 function Install-Probe($values) {
   Validate-Config $values
+  Test-ServerWatchConnection $values
 
   Stop-ExistingProbe
 
@@ -429,7 +475,7 @@ $colorLine = Color "#dbe3e4"
 $form = New-Object System.Windows.Forms.Form
 $form.Text = "ServerWatch Probe Collector"
 $form.StartPosition = "CenterScreen"
-$form.ClientSize = New-Object System.Drawing.Size(640, 520)
+$form.ClientSize = New-Object System.Drawing.Size(640, 590)
 $form.FormBorderStyle = "FixedDialog"
 $form.MaximizeBox = $false
 $form.MinimizeBox = $false
@@ -493,7 +539,7 @@ $header.Controls.Add($subtitle)
 
 $card = New-Object System.Windows.Forms.Panel
 $card.Location = New-Object System.Drawing.Point(22, 132)
-$card.Size = New-Object System.Drawing.Size(596, 322)
+$card.Size = New-Object System.Drawing.Size(596, 392)
 $card.BackColor = $colorSurface
 $form.Controls.Add($card)
 
@@ -574,9 +620,20 @@ $status.Text = "O probe sera instalado em C:\ProgramData\ServerWatchProbe."
 $card.Controls.Add($status)
 $script:statusLabel = $status
 
+$logBox = New-Object System.Windows.Forms.TextBox
+$logBox.Location = New-Object System.Drawing.Point(22, 326)
+$logBox.Size = New-Object System.Drawing.Size(552, 52)
+$logBox.Multiline = $true
+$logBox.ScrollBars = [System.Windows.Forms.ScrollBars]::Vertical
+$logBox.ReadOnly = $true
+$logBox.BackColor = Color "#f7f9fa"
+$logBox.ForeColor = $colorMuted
+$card.Controls.Add($logBox)
+$script:logBox = $logBox
+
 $installButton = New-Object System.Windows.Forms.Button
 $installButton.Text = "Instalar e iniciar"
-$installButton.Location = New-Object System.Drawing.Point(458, 470)
+$installButton.Location = New-Object System.Drawing.Point(458, 540)
 $installButton.Size = New-Object System.Drawing.Size(160, 34)
 $installButton.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
 $installButton.FlatAppearance.BorderSize = 0
@@ -585,9 +642,29 @@ $installButton.ForeColor = [System.Drawing.Color]::White
 $installButton.Font = New-Object System.Drawing.Font("Segoe UI", 9, [System.Drawing.FontStyle]::Bold)
 $form.Controls.Add($installButton)
 
+$repairButton = New-Object System.Windows.Forms.Button
+$repairButton.Text = "Reparar"
+$repairButton.Location = New-Object System.Drawing.Point(344, 540)
+$repairButton.Size = New-Object System.Drawing.Size(100, 34)
+$repairButton.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
+$repairButton.FlatAppearance.BorderColor = $colorLine
+$repairButton.BackColor = $colorSurface
+$repairButton.ForeColor = $colorText
+$form.Controls.Add($repairButton)
+
+$removeButton = New-Object System.Windows.Forms.Button
+$removeButton.Text = "Remover"
+$removeButton.Location = New-Object System.Drawing.Point(232, 540)
+$removeButton.Size = New-Object System.Drawing.Size(100, 34)
+$removeButton.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
+$removeButton.FlatAppearance.BorderColor = $colorLine
+$removeButton.BackColor = $colorSurface
+$removeButton.ForeColor = $colorDanger
+$form.Controls.Add($removeButton)
+
 $cancelButton = New-Object System.Windows.Forms.Button
 $cancelButton.Text = "Cancelar"
-$cancelButton.Location = New-Object System.Drawing.Point(344, 470)
+$cancelButton.Location = New-Object System.Drawing.Point(120, 540)
 $cancelButton.Size = New-Object System.Drawing.Size(100, 34)
 $cancelButton.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
 $cancelButton.FlatAppearance.BorderColor = $colorLine
@@ -628,6 +705,60 @@ $installButton.Add_Click({
   } finally {
     $installButton.Enabled = $true
     $cancelButton.Enabled = $true
+  }
+})
+
+$repairButton.Add_Click({
+  $installButton.Enabled = $false
+  $repairButton.Enabled = $false
+  $removeButton.Enabled = $false
+  $cancelButton.Enabled = $false
+  Set-InstallProgress 0 "Reparando..."
+  try {
+    $values = @{
+      serverUrl = $serverUrlBox.Text
+      probeId = $probeIdBox.Text
+      name = $nameBox.Text
+      token = $tokenBox.Text
+      intervalSeconds = [int]$intervalBox.Value
+      timeoutMs = [int]$timeoutBox.Value
+    }
+    Install-Probe $values
+    [System.Windows.Forms.MessageBox]::Show(
+      "ServerWatch Probe Collector reparado e registrado com sucesso.",
+      "ServerWatch Probe Collector",
+      [System.Windows.Forms.MessageBoxButtons]::OK,
+      [System.Windows.Forms.MessageBoxIcon]::Information
+    ) | Out-Null
+    $form.Close()
+  } catch {
+    Set-InstallProgress 0 $_.Exception.Message
+    [System.Windows.Forms.MessageBox]::Show($_.Exception.Message, "Erro no reparo", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Error) | Out-Null
+  } finally {
+    $installButton.Enabled = $true
+    $repairButton.Enabled = $true
+    $removeButton.Enabled = $true
+    $cancelButton.Enabled = $true
+  }
+})
+
+$removeButton.Add_Click({
+  $confirmed = [System.Windows.Forms.MessageBox]::Show(
+    "Remover o ServerWatch Probe Collector deste Windows?",
+    "ServerWatch Probe Collector",
+    [System.Windows.Forms.MessageBoxButtons]::YesNo,
+    [System.Windows.Forms.MessageBoxIcon]::Warning
+  )
+  if ($confirmed -ne [System.Windows.Forms.DialogResult]::Yes) {
+    return
+  }
+  try {
+    Remove-Probe
+    [System.Windows.Forms.MessageBox]::Show("Probe Collector removido.", "ServerWatch Probe Collector", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Information) | Out-Null
+    $form.Close()
+  } catch {
+    Set-InstallProgress 0 $_.Exception.Message
+    [System.Windows.Forms.MessageBox]::Show($_.Exception.Message, "Erro na remocao", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Error) | Out-Null
   }
 })
 
