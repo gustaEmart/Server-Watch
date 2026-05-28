@@ -9,6 +9,7 @@ $installDir = Join-Path $env:ProgramData "ServerWatchProbe"
 $configPath = Join-Path $installDir "config.json"
 $logPath = Join-Path $installDir "install.log"
 $taskName = "ServerWatch Probe Collector"
+$probeCollectorVersion = "0.2.0"
 
 function Test-Administrator {
   $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
@@ -222,7 +223,7 @@ function Register-Probe($values) {
   $primaryMac = [System.Uri]::EscapeDataString($(if ($macAddresses.Count -gt 0) { $macAddresses[0] } else { "" }))
   $encodedMacAddresses = [System.Uri]::EscapeDataString((ConvertTo-Json -Compress -InputObject @($macAddresses)))
   $hostName = [System.Uri]::EscapeDataString((Get-DefaultProbeName))
-  $targetUrl = "$serverUrl/api/probe/targets?probeId=$probeId&name=$probeName&version=0.1.0-installer&hostName=$hostName&primaryAddress=$primaryAddress&addresses=$encodedAddresses&platform=windows&primaryMac=$primaryMac&macAddresses=$encodedMacAddresses"
+  $targetUrl = "$serverUrl/api/probe/targets?probeId=$probeId&name=$probeName&version=$probeCollectorVersion&hostName=$hostName&primaryAddress=$primaryAddress&addresses=$encodedAddresses&platform=windows&primaryMac=$primaryMac&macAddresses=$encodedMacAddresses"
   $headers = @{
     Authorization = "Bearer $($values.token.Trim())"
     "X-ServerWatch-Probe-Token" = $values.token.Trim()
@@ -343,66 +344,135 @@ function Copy-WithRetry($source, $destination, $description) {
   }
 }
 
+function New-ProbeBackup {
+  if (-not (Test-Path $installDir)) {
+    return $null
+  }
+
+  $backupDir = Join-Path $env:ProgramData ("ServerWatchProbe.backup." + (Get-Date).ToString("yyyyMMddHHmmss"))
+  Set-InstallProgress 12 "Criando backup da instalacao atual..."
+  Copy-Item -LiteralPath $installDir -Destination $backupDir -Recurse -Force
+  return $backupDir
+}
+
+function Restore-ProbeBackup($backupDir) {
+  if ([string]::IsNullOrWhiteSpace($backupDir) -or -not (Test-Path $backupDir)) {
+    return
+  }
+
+  try {
+    Set-InstallProgress 5 "Restaurando instalacao anterior..."
+    Stop-ExistingProbe
+    if (Test-Path $installDir) {
+      Remove-Item -LiteralPath $installDir -Recurse -Force -ErrorAction SilentlyContinue
+    }
+    Copy-Item -LiteralPath $backupDir -Destination $installDir -Recurse -Force
+    $nodeTarget = Join-Path $installDir "node.exe"
+    if (-not (Test-Path $nodeTarget)) {
+      $node = Get-Command node -ErrorAction SilentlyContinue
+      if ($node) {
+        $nodeTarget = $node.Source
+      }
+    }
+    if (Test-Path (Join-Path $installDir "collector.js")) {
+      $action = New-ScheduledTaskAction `
+        -Execute $nodeTarget `
+        -Argument "`"$installDir\collector.js`" --config `"$configPath`"" `
+        -WorkingDirectory $installDir
+      $trigger = New-ScheduledTaskTrigger -AtStartup
+      $principal = New-ScheduledTaskPrincipal -UserId "SYSTEM" -RunLevel Highest
+      $settings = New-ScheduledTaskSettingsSet `
+        -RestartCount 999 `
+        -RestartInterval (New-TimeSpan -Minutes 1) `
+        -AllowStartIfOnBatteries `
+        -DontStopIfGoingOnBatteries
+      Register-ScheduledTask `
+        -TaskName $taskName `
+        -Action $action `
+        -Trigger $trigger `
+        -Principal $principal `
+        -Settings $settings `
+        -Force | Out-Null
+      Start-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
+    }
+  } catch {
+    Write-InstallLog "Nao foi possivel restaurar automaticamente: $($_.Exception.Message)"
+  }
+}
+
+function Remove-ProbeBackup($backupDir) {
+  if (-not [string]::IsNullOrWhiteSpace($backupDir) -and (Test-Path $backupDir)) {
+    Remove-Item -LiteralPath $backupDir -Recurse -Force -ErrorAction SilentlyContinue
+  }
+}
+
 function Install-Probe($values) {
   Validate-Config $values
   Test-ServerWatchConnection $values
 
-  Stop-ExistingProbe
+  $backupDir = New-ProbeBackup
+  try {
+    Stop-ExistingProbe
 
-  Set-InstallProgress 10 "Criando pasta de instalacao..."
-  New-Item -ItemType Directory -Path $installDir -Force | Out-Null
+    Set-InstallProgress 10 "Criando pasta de instalacao..."
+    New-Item -ItemType Directory -Path $installDir -Force | Out-Null
 
-  Set-InstallProgress 18 "Copiando arquivos do collector..."
-  Copy-WithRetry (Join-Path $sourceDir "collector.js") (Join-Path $installDir "collector.js") "collector.js"
-  if (Test-Path (Join-Path $sourceDir "setup-server.js")) {
-    Copy-WithRetry (Join-Path $sourceDir "setup-server.js") (Join-Path $installDir "setup-server.js") "setup-server.js"
+    Set-InstallProgress 18 "Copiando arquivos do collector..."
+    Copy-WithRetry (Join-Path $sourceDir "collector.js") (Join-Path $installDir "collector.js") "collector.js"
+    if (Test-Path (Join-Path $sourceDir "setup-server.js")) {
+      Copy-WithRetry (Join-Path $sourceDir "setup-server.js") (Join-Path $installDir "setup-server.js") "setup-server.js"
+    }
+
+    $nodeSource = Get-NodeSource
+    Set-InstallProgress 38 "Copiando runtime Node.js..."
+    $nodeTarget = Join-Path $installDir "node.exe"
+    if ((Split-Path -Leaf $nodeSource) -eq "node.exe") {
+      Copy-WithRetry $nodeSource $nodeTarget "node.exe"
+    } else {
+      $nodeTarget = $nodeSource
+    }
+
+    $config = [ordered]@{
+      serverUrl = $values.serverUrl.TrimEnd("/")
+      probeId = $values.probeId.Trim()
+      name = $(if ([string]::IsNullOrWhiteSpace($values.name)) { $values.probeId.Trim() } else { $values.name.Trim() })
+      token = $values.token.Trim()
+      intervalSeconds = $values.intervalSeconds
+      timeoutMs = $values.timeoutMs
+    }
+    Set-InstallProgress 52 "Salvando configuracao..."
+    $config | ConvertTo-Json | Set-Content -Path $configPath -Encoding UTF8
+
+    Set-InstallProgress 62 "Configurando tarefa agendada..."
+    $action = New-ScheduledTaskAction `
+      -Execute $nodeTarget `
+      -Argument "`"$installDir\collector.js`" --config `"$configPath`"" `
+      -WorkingDirectory $installDir
+    $trigger = New-ScheduledTaskTrigger -AtStartup
+    $principal = New-ScheduledTaskPrincipal -UserId "SYSTEM" -RunLevel Highest
+    $settings = New-ScheduledTaskSettingsSet `
+      -RestartCount 999 `
+      -RestartInterval (New-TimeSpan -Minutes 1) `
+      -AllowStartIfOnBatteries `
+      -DontStopIfGoingOnBatteries
+
+    Register-ScheduledTask `
+      -TaskName $taskName `
+      -Action $action `
+      -Trigger $trigger `
+      -Principal $principal `
+      -Settings $settings `
+      -Force | Out-Null
+
+    Set-InstallProgress 74 "Iniciando Probe Collector..."
+    Start-ScheduledTask -TaskName $taskName
+    Register-Probe $values
+    Remove-ProbeBackup $backupDir
+    Set-InstallProgress 100 "Instalacao concluida. O probe ja foi registrado no ServerWatch."
+  } catch {
+    Restore-ProbeBackup $backupDir
+    throw
   }
-
-  $nodeSource = Get-NodeSource
-  Set-InstallProgress 38 "Copiando runtime Node.js..."
-  $nodeTarget = Join-Path $installDir "node.exe"
-  if ((Split-Path -Leaf $nodeSource) -eq "node.exe") {
-    Copy-WithRetry $nodeSource $nodeTarget "node.exe"
-  } else {
-    $nodeTarget = $nodeSource
-  }
-
-  $config = [ordered]@{
-    serverUrl = $values.serverUrl.TrimEnd("/")
-    probeId = $values.probeId.Trim()
-    name = $(if ([string]::IsNullOrWhiteSpace($values.name)) { $values.probeId.Trim() } else { $values.name.Trim() })
-    token = $values.token.Trim()
-    intervalSeconds = $values.intervalSeconds
-    timeoutMs = $values.timeoutMs
-  }
-  Set-InstallProgress 52 "Salvando configuracao..."
-  $config | ConvertTo-Json | Set-Content -Path $configPath -Encoding UTF8
-
-  Set-InstallProgress 62 "Configurando tarefa agendada..."
-  $action = New-ScheduledTaskAction `
-    -Execute $nodeTarget `
-    -Argument "`"$installDir\collector.js`" --config `"$configPath`"" `
-    -WorkingDirectory $installDir
-  $trigger = New-ScheduledTaskTrigger -AtStartup
-  $principal = New-ScheduledTaskPrincipal -UserId "SYSTEM" -RunLevel Highest
-  $settings = New-ScheduledTaskSettingsSet `
-    -RestartCount 999 `
-    -RestartInterval (New-TimeSpan -Minutes 1) `
-    -AllowStartIfOnBatteries `
-    -DontStopIfGoingOnBatteries
-
-  Register-ScheduledTask `
-    -TaskName $taskName `
-    -Action $action `
-    -Trigger $trigger `
-    -Principal $principal `
-    -Settings $settings `
-    -Force | Out-Null
-
-  Set-InstallProgress 74 "Iniciando Probe Collector..."
-  Start-ScheduledTask -TaskName $taskName
-  Register-Probe $values
-  Set-InstallProgress 100 "Instalacao concluida. O probe ja foi registrado no ServerWatch."
 }
 
 $existing = Read-ExistingConfig

@@ -266,6 +266,7 @@ function eventKindLabel(event) {
     server_recovered: "Servidor voltou",
     probe_stale: "Probe sem contato",
     probe_recovered: "Probe voltou",
+    probe_updated: "Probe atualizado",
     status_changed: "Status alterado"
   }[event.kind || "status_changed"] || "Evento";
 }
@@ -286,6 +287,23 @@ function probeStatusLabel(status) {
     unknown: "Probe sem status",
     not_applicable: "Sem probe"
   }[status || "unknown"];
+}
+
+function probeVersionLabel(probe) {
+  if (!probe?.version) return "Versao desconhecida";
+  if (probe.updateAvailable) return `Atualizar para ${probe.latestVersion || "-"}`;
+  return `Atualizado (${probe.version})`;
+}
+
+function probeVersionBadge(probe) {
+  const status = probe?.versionStatus || "unknown";
+  const label =
+    status === "outdated"
+      ? "Atualizacao disponivel"
+      : status === "current"
+      ? "Atualizado"
+      : "Versao desconhecida";
+  return `<span class="status-badge probe-version ${escapeHtml(status)}">${escapeHtml(label)}</span>`;
 }
 
 function severityLabel(severity) {
@@ -1544,14 +1562,27 @@ function renderProbeDetail(probe) {
   const mac = primaryMac(probe);
   const address = probe.primaryAddress || probe.addresses?.[0] || probe.lastAddress || "-";
   const canRemove = linkedServers.length === 0;
+  const updateNotice = probe.updateAvailable
+    ? `
+      <div class="probe-update-notice">
+        <strong>Atualizacao disponivel</strong>
+        <span>Este collector esta em ${escapeHtml(probe.version || "-")} e a versao atual e ${escapeHtml(probe.latestVersion || "-")}.</span>
+      </div>
+    `
+    : "";
   els.probeDetailPanel.innerHTML = `
     <div class="probe-detail-header">
       <div>
         <h3>${platformIcon(probe.platform)}${escapeHtml(probe.name || probe.id)}</h3>
         <span>${escapeHtml(probe.id)} · ${probeStatusLabel(probe.status)}</span>
       </div>
-      <span class="status-badge ${probe.status === "stale" ? "probe_stale" : probe.status || "unknown"}">${probeStatusLabel(probe.status)}</span>
+      <div class="probe-detail-badges">
+        <span class="status-badge ${probe.status === "stale" ? "probe_stale" : probe.status || "unknown"}">${probeStatusLabel(probe.status)}</span>
+        ${probeVersionBadge(probe)}
+      </div>
     </div>
+
+    ${updateNotice}
 
     <div class="probe-detail-grid">
       <div class="detail-stat"><span>Ultimo contato</span><strong>${formatDate(probe.lastSeenAt)}</strong></div>
@@ -1560,6 +1591,8 @@ function renderProbeDetail(probe) {
       <div class="detail-stat"><span>Hostname</span><strong>${escapeHtml(probe.hostName || "-")}</strong></div>
       <div class="detail-stat"><span>Sistema</span><strong>${platformIcon(probe.platform)}${platformLabel(probe.platform)}</strong></div>
       <div class="detail-stat"><span>Versao</span><strong>${escapeHtml(probe.version || "-")}</strong></div>
+      <div class="detail-stat"><span>Versao esperada</span><strong>${escapeHtml(probe.latestVersion || "-")}</strong></div>
+      <div class="detail-stat"><span>Atualizacao</span><strong>${escapeHtml(probeVersionLabel(probe))}</strong></div>
       <div class="detail-stat"><span>Endereco remoto</span><strong>${escapeHtml(probe.lastAddress || "-")}</strong></div>
       <div class="detail-stat"><span>Alvos vinculados</span><strong>${linkedServers.length}</strong></div>
     </div>
@@ -1598,10 +1631,16 @@ function renderProbeDetail(probe) {
 
     <div class="install-command probe-repair-command">
       <div class="install-command-header">
-        <strong>Reinstalacao / reparo Linux</strong>
-        <button class="ghost-button compact" type="button" data-action="copy-probe-repair" data-probe-id="${escapeHtml(probe.id)}">Copiar</button>
+        <strong>Atualizacao / reparo Linux</strong>
+        <button class="ghost-button compact" type="button" data-action="copy-probe-repair" data-probe-id="${escapeHtml(probe.id)}">Copiar comando</button>
       </div>
       <code>${escapeHtml(reinstallCommand)}</code>
+    </div>
+
+    <div class="probe-windows-update">
+      <strong>Windows</strong>
+      <span>Baixe o instalador Windows e use Reparar/Instalar mantendo URL, ID e token. A versao sera atualizada no proximo contato do collector.</span>
+      <a class="ghost-button compact download-link" href="/downloads/probe/windows-installer" download>Baixar instalador</a>
     </div>
 
     <div class="probe-actions">
@@ -1633,10 +1672,11 @@ function renderProbes() {
             <button class="probe-card ${state.selectedProbeId === probe.id ? "selected" : ""}" type="button" data-probe-id="${escapeHtml(probe.id)}">
               <div>
                 <strong>${platformIcon(probe.platform)}${escapeHtml(probe.name || probe.id)}</strong>
-                <span>${escapeHtml(probe.id)} · ${platformLabel(probe.platform)} · ${escapeHtml(probe.primaryAddress || probe.addresses?.[0] || probe.lastAddress || "sem IP")} · ${escapeHtml(primaryMac(probe) || "sem MAC")} · ${probe.targetCount || 0} ${probe.targetCount === 1 ? "alvo" : "alvos"}</span>
+                <span>${escapeHtml(probe.id)} · ${platformLabel(probe.platform)} · v${escapeHtml(probe.version || "-")} · ${escapeHtml(probe.primaryAddress || probe.addresses?.[0] || probe.lastAddress || "sem IP")} · ${escapeHtml(primaryMac(probe) || "sem MAC")} · ${probe.targetCount || 0} ${probe.targetCount === 1 ? "alvo" : "alvos"}</span>
               </div>
-              <div>
+              <div class="probe-card-meta">
                 <strong><span class="status-badge ${probe.status === "stale" ? "probe_stale" : probe.status || "unknown"}">${probeStatusLabel(probe.status)}</span></strong>
+                ${probe.updateAvailable ? probeVersionBadge(probe) : ""}
                 <span>${formatDate(probe.lastSeenAt)}</span>
                 <span>${escapeHtml(probe.lastAddress || "sem endereco")}</span>
               </div>

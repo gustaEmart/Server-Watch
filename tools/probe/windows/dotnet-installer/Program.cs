@@ -9,6 +9,7 @@ namespace ServerWatchProbeSetup;
 internal static class Program
 {
     private const string TaskName = "ServerWatch Probe Collector";
+    private const string ProbeCollectorVersion = "0.2.0";
     private static readonly string InstallDir = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
         "ServerWatchProbe"
@@ -229,20 +230,30 @@ internal static class Program
                 var values = ReadValues();
                 Validate(values);
                 ValidateServerWatch(values);
-                StopExistingProbe();
-                Directory.CreateDirectory(InstallDir);
+                var backupDir = CreateBackup();
+                try
+                {
+                    StopExistingProbe();
+                    Directory.CreateDirectory(InstallDir);
 
-                SetProgress(20, "Copiando arquivos do collector...");
-                WriteResource("collector.js", Path.Combine(InstallDir, "collector.js"));
-                WriteResource("setup-server.js", Path.Combine(InstallDir, "setup-server.js"));
-                WriteResource("node.exe", Path.Combine(InstallDir, "node.exe"));
-                SetProgress(45, "Salvando configuracao...");
-                WriteConfig(values);
-                SetProgress(65, "Configurando tarefa agendada...");
-                RegisterTask();
-                SetProgress(80, "Iniciando Probe Collector...");
-                RunTask();
-                RegisterProbe(values);
+                    SetProgress(20, "Copiando arquivos do collector...");
+                    WriteResource("collector.js", Path.Combine(InstallDir, "collector.js"));
+                    WriteResource("setup-server.js", Path.Combine(InstallDir, "setup-server.js"));
+                    WriteResource("node.exe", Path.Combine(InstallDir, "node.exe"));
+                    SetProgress(45, "Salvando configuracao...");
+                    WriteConfig(values);
+                    SetProgress(65, "Configurando tarefa agendada...");
+                    RegisterTask();
+                    SetProgress(80, "Iniciando Probe Collector...");
+                    RunTask();
+                    RegisterProbe(values);
+                    RemoveBackup(backupDir);
+                }
+                catch
+                {
+                    RestoreBackup(backupDir);
+                    throw;
+                }
 
                 SetProgress(100, "Instalacao concluida. O probe ja foi registrado no ServerWatch.");
                 MessageBox.Show(
@@ -332,7 +343,7 @@ internal static class Program
                 $"{config.ServerUrl.TrimEnd('/')}/api/probe/targets" +
                 $"?probeId={Uri.EscapeDataString(config.ProbeId)}" +
                 $"&name={Uri.EscapeDataString(config.Name)}" +
-                "&version=0.1.0-installer" +
+                $"&version={Uri.EscapeDataString(ProbeCollectorVersion)}" +
                 $"&hostName={Uri.EscapeDataString(Environment.MachineName)}" +
                 "&platform=windows";
             using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(20) };
@@ -404,6 +415,69 @@ internal static class Program
                 {
                     // Best effort cleanup before overwriting bundled runtime.
                 }
+            }
+        }
+
+        private string? CreateBackup()
+        {
+            if (!Directory.Exists(InstallDir))
+            {
+                return null;
+            }
+
+            SetProgress(14, "Criando backup da instalacao atual...");
+            var backupDir = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
+                $"ServerWatchProbe.backup.{DateTime.Now:yyyyMMddHHmmss}"
+            );
+            CopyDirectory(InstallDir, backupDir);
+            return backupDir;
+        }
+
+        private void RestoreBackup(string? backupDir)
+        {
+            if (string.IsNullOrWhiteSpace(backupDir) || !Directory.Exists(backupDir))
+            {
+                return;
+            }
+
+            try
+            {
+                SetProgress(5, "Restaurando instalacao anterior...");
+                RunProcess("schtasks.exe", $"/End /TN \"{TaskName}\"", allowFailure: true);
+                RunProcess("schtasks.exe", $"/Delete /TN \"{TaskName}\" /F", allowFailure: true);
+                if (Directory.Exists(InstallDir))
+                {
+                    Directory.Delete(InstallDir, true);
+                }
+                CopyDirectory(backupDir, InstallDir);
+                RegisterTask();
+                RunTask();
+            }
+            catch (Exception error)
+            {
+                logBox.AppendText($"[{DateTime.Now:HH:mm:ss}] Nao foi possivel restaurar automaticamente: {error.Message}{Environment.NewLine}");
+            }
+        }
+
+        private static void RemoveBackup(string? backupDir)
+        {
+            if (!string.IsNullOrWhiteSpace(backupDir) && Directory.Exists(backupDir))
+            {
+                Directory.Delete(backupDir, true);
+            }
+        }
+
+        private static void CopyDirectory(string source, string destination)
+        {
+            Directory.CreateDirectory(destination);
+            foreach (var directory in Directory.GetDirectories(source, "*", SearchOption.AllDirectories))
+            {
+                Directory.CreateDirectory(directory.Replace(source, destination));
+            }
+            foreach (var file in Directory.GetFiles(source, "*", SearchOption.AllDirectories))
+            {
+                File.Copy(file, file.Replace(source, destination), overwrite: true);
             }
         }
 

@@ -82,10 +82,61 @@ fi
 
 SERVER_URL="${SERVER_URL%/}"
 TMP_DIR="$(mktemp -d)"
+BACKUP_DIR=""
+ROLLBACK_READY=0
+
 cleanup() {
   rm -rf "$TMP_DIR"
 }
-trap cleanup EXIT
+
+restore_backup() {
+  if [[ "$ROLLBACK_READY" != "1" || -z "$BACKUP_DIR" || ! -d "$BACKUP_DIR" ]]; then
+    return
+  fi
+
+  log "Falha detectada. Restaurando instalacao anterior do probe..."
+  systemctl stop serverwatch-probe >/dev/null 2>&1 || true
+
+  if [[ -d "$BACKUP_DIR/install" ]]; then
+    rm -rf "$INSTALL_DIR"
+    mkdir -p "$(dirname "$INSTALL_DIR")"
+    cp -a "$BACKUP_DIR/install" "$INSTALL_DIR"
+  else
+    rm -rf "$INSTALL_DIR"
+  fi
+
+  if [[ -f "$BACKUP_DIR/serverwatch-probe.service" ]]; then
+    cp "$BACKUP_DIR/serverwatch-probe.service" /etc/systemd/system/serverwatch-probe.service
+    systemctl daemon-reload || true
+    systemctl enable serverwatch-probe >/dev/null 2>&1 || true
+    systemctl restart serverwatch-probe >/dev/null 2>&1 || true
+  else
+    rm -f /etc/systemd/system/serverwatch-probe.service
+    systemctl daemon-reload || true
+  fi
+}
+
+on_exit() {
+  local code="$?"
+  if [[ "$code" -ne 0 ]]; then
+    restore_backup
+  fi
+  cleanup
+  exit "$code"
+}
+trap on_exit EXIT
+
+create_backup() {
+  BACKUP_DIR="$TMP_DIR/backup"
+  mkdir -p "$BACKUP_DIR"
+  if [[ -d "$INSTALL_DIR" ]]; then
+    cp -a "$INSTALL_DIR" "$BACKUP_DIR/install"
+  fi
+  if [[ -f /etc/systemd/system/serverwatch-probe.service ]]; then
+    cp /etc/systemd/system/serverwatch-probe.service "$BACKUP_DIR/serverwatch-probe.service"
+  fi
+  ROLLBACK_READY=1
+}
 
 download_url() {
   local url="$1"
@@ -226,6 +277,8 @@ else
 fi
 
 step 35 "Preparando runtime e diretorio de instalacao..."
+create_backup
+systemctl stop serverwatch-probe >/dev/null 2>&1 || true
 mkdir -p "$INSTALL_DIR"
 NODE_BIN="$(ensure_node_runtime)"
 step 55 "Copiando collector e setup..."
@@ -272,4 +325,5 @@ systemctl enable serverwatch-probe
 step 92 "Iniciando Probe Collector..."
 systemctl restart serverwatch-probe
 systemctl status serverwatch-probe --no-pager
+ROLLBACK_READY=0
 step 100 "Instalacao concluida. Log salvo em ${LOG_FILE}."

@@ -44,6 +44,7 @@ const SESSION_COOKIE = "sw_session";
 const SESSION_TTL_MS = 8 * 60 * 60 * 1000;
 const DEFAULT_ADMIN_EMAIL = process.env.SERVERWATCH_ADMIN_EMAIL || "admin@serverwatch.local";
 const DEFAULT_ADMIN_PASSWORD = process.env.SERVERWATCH_ADMIN_PASSWORD || "admin123";
+const PROBE_COLLECTOR_VERSION = "0.2.0";
 
 const sockets = new Set();
 const sessions = new Map();
@@ -1009,13 +1010,43 @@ function authorizeProbe(req) {
   return (token && token === getProbeToken()) || (probeTokenHeader && probeTokenHeader === getProbeToken());
 }
 
+function compareVersions(left, right) {
+  const normalize = (value) =>
+    String(value || "")
+      .split(/[^\d]+/)
+      .filter(Boolean)
+      .map((item) => Number(item));
+  const leftParts = normalize(left);
+  const rightParts = normalize(right);
+  const length = Math.max(leftParts.length, rightParts.length);
+  if (!leftParts.length && !rightParts.length) return 0;
+  if (!leftParts.length) return -1;
+  if (!rightParts.length) return 1;
+  for (let index = 0; index < length; index += 1) {
+    const leftPart = leftParts[index] || 0;
+    const rightPart = rightParts[index] || 0;
+    if (leftPart > rightPart) return 1;
+    if (leftPart < rightPart) return -1;
+  }
+  return 0;
+}
+
+function probeVersionStatus(probe) {
+  if (!probe.version) return "unknown";
+  return compareVersions(probe.version, PROBE_COLLECTOR_VERSION) < 0 ? "outdated" : "current";
+}
+
 function publicProbe(probe) {
   const servers = listedServers().filter((server) => server.checkSource === "probe" && server.probeId === probe.id);
   const staleServers = servers.filter((server) => probeConnection(server).status === "stale").length;
+  const versionStatus = probeVersionStatus(probe);
   return {
     id: probe.id,
     name: probe.name || probe.id,
     version: probe.version || null,
+    latestVersion: PROBE_COLLECTOR_VERSION,
+    versionStatus,
+    updateAvailable: versionStatus === "outdated",
     hostName: probe.hostName || null,
     primaryAddress: probe.primaryAddress || null,
     addresses: Array.isArray(probe.addresses) ? probe.addresses : [],
@@ -1099,6 +1130,18 @@ function normalizeProbePlatform(value, fallback = "") {
   return platform || null;
 }
 
+function linkedServerForProbe(probeId) {
+  return listedServers().find((server) => server.checkSource === "probe" && server.probeId === probeId) || null;
+}
+
+function recordProbeVersionChange(probeId, previousVersion, nextVersion) {
+  if (!previousVersion || !nextVersion || previousVersion === nextVersion) return;
+  if (compareVersions(nextVersion, previousVersion) <= 0) return;
+  const server = linkedServerForProbe(probeId);
+  if (!server) return;
+  addProbeEvent(server, "probe_updated", `Probe atualizado de ${previousVersion} para ${nextVersion}.`);
+}
+
 function upsertProbe({ probeId, name, version, hostName, primaryAddress, addresses, platform, primaryMac, macAddresses, remoteAddress }) {
   const id = String(probeId || "").trim();
   if (!id) return null;
@@ -1122,6 +1165,7 @@ function upsertProbe({ probeId, name, version, hostName, primaryAddress, address
     deletedAt: null
   };
   if (existing) {
+    const previousVersion = existing.version || null;
     const changed =
       existing.name !== payload.name ||
       existing.version !== payload.version ||
@@ -1134,6 +1178,7 @@ function upsertProbe({ probeId, name, version, hostName, primaryAddress, address
       existing.lastAddress !== payload.lastAddress ||
       existing.deletedAt !== payload.deletedAt;
     Object.assign(existing, payload);
+    recordProbeVersionChange(existing.id, previousVersion, existing.version || null);
     return { probe: existing, changed };
   }
   const probe = { createdAt: nowIso(), ...payload };
@@ -1456,6 +1501,7 @@ async function handleApi(req, res) {
         return sendJson(res, 200, {
           ok: true,
           service: "serverwatch",
+          latestVersion: PROBE_COLLECTOR_VERSION,
           timestamp: nowIso(),
           probeId: String(url.searchParams.get("probeId") || "").trim() || null
         });
