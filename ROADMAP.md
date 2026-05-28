@@ -61,19 +61,6 @@ Campos sugeridos:
 
 ## Prioridade 3 - Probe Collector
 
-### Fila local do probe
-
-Objetivo:
-
-- Preservar resultados quando a internet do cliente cair.
-
-Funcionalidades sugeridas:
-
-- Salvar resultados localmente quando o ServerWatch central estiver indisponivel.
-- Reenviar resultados quando a conexao voltar.
-- Limite de tamanho da fila local.
-- Registro de tempo em que o probe ficou sem conseguir enviar dados.
-
 ### Metricas adicionais pelo probe
 
 Objetivo:

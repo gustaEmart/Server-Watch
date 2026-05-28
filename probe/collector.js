@@ -1,13 +1,28 @@
 import { spawn } from "node:child_process";
-import { readFile } from "node:fs/promises";
+import { appendFile, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import os from "node:os";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 const DEFAULT_CONFIG = new URL("./config.json", import.meta.url);
-const VERSION = "0.2.0";
+const VERSION = "0.3.0";
+const DEFAULT_QUEUE_MAX_BATCHES = 1000;
 
 function argValue(name) {
   const index = process.argv.indexOf(name);
   return index >= 0 ? process.argv[index + 1] : null;
+}
+
+function configPathToFilePath(value) {
+  if (value instanceof URL) return fileURLToPath(value);
+  const raw = String(value || "");
+  if (raw.startsWith("file:")) return fileURLToPath(new URL(raw));
+  return resolve(raw);
+}
+
+function positiveInteger(value, fallback) {
+  const number = Number(value);
+  return Number.isFinite(number) && number > 0 ? Math.floor(number) : fallback;
 }
 
 async function loadConfig() {
@@ -23,7 +38,11 @@ async function loadConfig() {
     timeoutMs: 2500,
     name: config.probeId,
     ...config,
-    serverUrl: String(config.serverUrl).replace(/\/+$/, "")
+    serverUrl: String(config.serverUrl).replace(/\/+$/, ""),
+    queuePath:
+      config.queuePath || process.env.SERVERWATCH_PROBE_QUEUE ||
+      resolve(dirname(configPathToFilePath(configPath)), "queue.jsonl"),
+    queueMaxBatches: Math.max(10, positiveInteger(config.queueMaxBatches, DEFAULT_QUEUE_MAX_BATCHES))
   };
 }
 
@@ -158,6 +177,69 @@ async function requestJson(config, path, options = {}) {
   return body;
 }
 
+async function readQueue(config) {
+  try {
+    const raw = await readFile(config.queuePath, "utf8");
+    return raw
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .map((line) => JSON.parse(line))
+      .filter((entry) => Array.isArray(entry.results) && entry.results.length);
+  } catch (error) {
+    if (error.code === "ENOENT") return [];
+    console.error(`[${new Date().toISOString()}] Queue read failed: ${error.message}`);
+    return [];
+  }
+}
+
+async function writeQueue(config, entries) {
+  await mkdir(dirname(config.queuePath), { recursive: true });
+  const tmpPath = `${config.queuePath}.${process.pid}.tmp`;
+  const body = entries.length ? `${entries.map((entry) => JSON.stringify(entry)).join("\n")}\n` : "";
+  await writeFile(tmpPath, body, "utf8");
+  await rename(tmpPath, config.queuePath);
+}
+
+async function queueResults(config, results, reason) {
+  if (!results.length) return;
+  await mkdir(dirname(config.queuePath), { recursive: true });
+  const entry = {
+    createdAt: new Date().toISOString(),
+    reason: String(reason || "Falha ao enviar resultados."),
+    results
+  };
+  await appendFile(config.queuePath, `${JSON.stringify(entry)}\n`, "utf8");
+
+  const entries = await readQueue(config);
+  if (entries.length > config.queueMaxBatches) {
+    const trimmed = entries.slice(entries.length - config.queueMaxBatches);
+    await writeQueue(config, trimmed);
+    console.warn(`Queue limit reached. Dropped ${entries.length - trimmed.length} old batch(es).`);
+  }
+  console.warn(`Queued ${results.length} result(s) locally at ${config.queuePath}`);
+}
+
+async function flushQueue(config) {
+  const entries = await readQueue(config);
+  if (!entries.length) return 0;
+
+  let sentResults = 0;
+  for (let index = 0; index < entries.length; index += 1) {
+    const entry = entries[index];
+    try {
+      await sendResults(config, entry.results);
+      sentResults += entry.results.length;
+    } catch (error) {
+      await writeQueue(config, entries.slice(index));
+      throw error;
+    }
+  }
+
+  await writeQueue(config, []);
+  return sentResults;
+}
+
 async function getTargets(config) {
   const metadata = probeMetadata(config);
   const params = new URLSearchParams({
@@ -188,12 +270,29 @@ async function sendResults(config, results) {
 
 async function runLoop(config) {
   const nextChecks = new Map();
+  let cachedTargets = [];
+  let offlineSince = null;
   console.log(`ServerWatch Probe ${VERSION} started as ${config.probeId}`);
   for (;;) {
     try {
       const payload = await getTargets(config);
+      cachedTargets = Array.isArray(payload.targets) ? payload.targets : [];
+      if (offlineSince) {
+        const offlineMs = Date.now() - offlineSince.getTime();
+        console.log(`ServerWatch connection restored after ${Math.round(offlineMs / 1000)}s`);
+        offlineSince = null;
+      }
+
+      try {
+        const flushed = await flushQueue(config);
+        if (flushed) console.log(`Flushed ${flushed} queued result(s)`);
+      } catch (error) {
+        if (!offlineSince) offlineSince = new Date();
+        console.error(`[${new Date().toISOString()}] Queue flush failed: ${error.message}`);
+      }
+
       const now = Date.now();
-      const dueTargets = (payload.targets || []).filter((target) => {
+      const dueTargets = cachedTargets.filter((target) => {
         const dueAt = nextChecks.get(target.id) || 0;
         return target.forceCheck || dueAt <= now;
       });
@@ -207,10 +306,36 @@ async function runLoop(config) {
         });
         nextChecks.set(target.id, Date.now() + Math.max(3, target.checkInterval || config.intervalSeconds) * 1000);
       }
-      await sendResults(config, results);
-      if (results.length) console.log(`Sent ${results.length} result(s)`);
+      try {
+        await sendResults(config, results);
+        if (results.length) console.log(`Sent ${results.length} result(s)`);
+      } catch (error) {
+        if (!offlineSince) offlineSince = new Date();
+        await queueResults(config, results, error.message);
+        console.error(`[${new Date().toISOString()}] Send failed: ${error.message}`);
+      }
     } catch (error) {
+      if (!offlineSince) offlineSince = new Date();
       console.error(`[${new Date().toISOString()}] ${error.message}`);
+
+      if (cachedTargets.length) {
+        const now = Date.now();
+        const dueTargets = cachedTargets.filter((target) => {
+          const dueAt = nextChecks.get(target.id) || 0;
+          return target.forceCheck || dueAt <= now;
+        });
+        const results = [];
+        for (const target of dueTargets) {
+          const result = await pingHost(target.hostname, config.timeoutMs);
+          results.push({
+            serverId: target.id,
+            hostname: target.hostname,
+            ...result
+          });
+          nextChecks.set(target.id, Date.now() + Math.max(3, target.checkInterval || config.intervalSeconds) * 1000);
+        }
+        await queueResults(config, results, error.message);
+      }
     }
     await new Promise((resolve) => setTimeout(resolve, Math.max(3, config.intervalSeconds) * 1000));
   }
