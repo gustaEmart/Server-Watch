@@ -2204,8 +2204,69 @@ label {
   text-transform: uppercase;
 }
 
-.virtualizer-children-options select {
-  min-height: 132px;
+.virtualizer-children-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.virtualizer-children-header strong,
+.virtualizer-children-header span {
+  display: block;
+}
+
+.virtualizer-children-header span {
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.virtualizer-child-list {
+  max-height: 210px;
+  overflow: auto;
+  display: grid;
+  gap: 7px;
+  padding: 4px;
+}
+
+.virtualizer-child-option {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px;
+  background: var(--surface);
+  cursor: pointer;
+}
+
+.virtualizer-child-option:hover {
+  border-color: var(--accent);
+  background: var(--selected-bg);
+}
+
+.virtualizer-child-option input {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--accent);
+}
+
+.virtualizer-child-option strong,
+.virtualizer-child-option small {
+  display: block;
+}
+
+.virtualizer-child-option small {
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-weight: 700;
+  margin-top: 2px;
+}
+
+.empty-list.compact {
+  padding: 14px;
 }
 
 .toast-stack {

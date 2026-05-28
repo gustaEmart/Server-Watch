@@ -750,7 +750,7 @@ function virtualizerChildCandidates(currentServerId = "") {
 
 function selectedVirtualizerChildIds() {
   if (!els.serverChildIds) return [];
-  return [...els.serverChildIds.selectedOptions].map((option) => option.value);
+  return [...els.serverChildIds.querySelectorAll("[data-virtualizer-child]:checked")].map((input) => input.value);
 }
 
 function renderVirtualizerChildOptions(currentServerId = "") {
@@ -772,10 +772,18 @@ function renderVirtualizerChildOptions(currentServerId = "") {
           ]
             .filter(Boolean)
             .join(" · ");
-          return `<option value="${escapeHtml(server.id)}" ${selected.has(server.id) ? "selected" : ""}>${escapeHtml(server.name)}${descriptor ? ` (${escapeHtml(descriptor)})` : ""}</option>`;
+          return `
+            <label class="virtualizer-child-option">
+              <input type="checkbox" data-virtualizer-child value="${escapeHtml(server.id)}" ${selected.has(server.id) ? "checked" : ""} />
+              <span>
+                <strong>${escapeHtml(server.name)}</strong>
+                <small>${escapeHtml(descriptor || "Sem detalhes adicionais")}</small>
+              </span>
+            </label>
+          `;
         })
         .join("")
-    : `<option value="" disabled>Nenhum servidor disponivel para vincular</option>`;
+    : `<div class="empty-list compact">Nenhum servidor disponivel para vincular.</div>`;
 }
 
 function toggleVirtualizerChildrenOptions() {

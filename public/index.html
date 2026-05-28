@@ -542,11 +542,12 @@
 
         <fieldset class="virtualizer-children-options" id="virtualizerChildrenOptions" hidden>
           <legend>VMs deste virtualizador</legend>
-          <label>
-            Servidores vinculados como VM
-            <select id="serverChildIds" multiple size="6"></select>
-          </label>
-          <small class="field-hint">Ao selecionar um servidor aqui, ele passa a depender deste virtualizador e o tipo muda automaticamente para VM.</small>
+          <div class="virtualizer-children-header">
+            <strong>Servidores vinculados como VM</strong>
+            <span>Marque uma ou mais maquinas</span>
+          </div>
+          <div class="virtualizer-child-list" id="serverChildIds"></div>
+          <small class="field-hint">Ao marcar um servidor aqui, ele passa a depender deste virtualizador e o tipo muda automaticamente para VM.</small>
         </fieldset>
 
         <fieldset id="probeOptions">
