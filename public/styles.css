@@ -1220,6 +1220,26 @@ textarea:focus {
   color: var(--tag-text);
 }
 
+.status-badge.probe-version {
+  min-width: 0;
+  text-transform: none;
+}
+
+.status-badge.probe-version.outdated {
+  background: rgba(245, 158, 11, 0.18);
+  color: var(--warning);
+}
+
+.status-badge.probe-version.current {
+  background: var(--online-soft);
+  color: var(--online-text);
+}
+
+.status-badge.probe-version.unknown {
+  background: var(--tag-bg);
+  color: var(--tag-text);
+}
+
 .probe-inline-badge {
   display: inline-grid;
   place-items: center;
@@ -1426,6 +1446,10 @@ textarea:focus {
 .timeline-marker.probe_stale,
 .timeline-marker.manual_check_requested {
   background: var(--probe-stale);
+}
+
+.timeline-marker.probe_updated {
+  background: var(--warning);
 }
 
 .timeline-marker.server_created,
@@ -1770,6 +1794,52 @@ textarea:focus {
   margin-top: 3px;
 }
 
+.probe-detail-badges,
+.probe-card-meta {
+  display: grid;
+  gap: 6px;
+  justify-items: end;
+}
+
+.probe-update-notice,
+.probe-windows-update {
+  border: 1px solid rgba(245, 158, 11, 0.36);
+  border-radius: 8px;
+  padding: 11px;
+  background: rgba(245, 158, 11, 0.1);
+  color: var(--text);
+}
+
+.probe-update-notice strong,
+.probe-update-notice span,
+.probe-windows-update strong,
+.probe-windows-update span {
+  display: block;
+}
+
+.probe-update-notice span,
+.probe-windows-update span {
+  color: var(--muted);
+  font-size: 0.86rem;
+  margin-top: 3px;
+}
+
+.probe-windows-update {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px 10px;
+  align-items: center;
+}
+
+.probe-windows-update span {
+  grid-column: 1;
+}
+
+.probe-windows-update a {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+}
+
 .probe-detail-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -2017,6 +2087,21 @@ label {
 
   .server-row {
     grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .probe-detail-badges,
+  .probe-card-meta {
+    justify-items: start;
+  }
+
+  .probe-windows-update {
+    grid-template-columns: 1fr;
+  }
+
+  .probe-windows-update span,
+  .probe-windows-update a {
+    grid-column: auto;
+    grid-row: auto;
   }
 
   .group-card {

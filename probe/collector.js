@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import os from "node:os";
 
 const DEFAULT_CONFIG = new URL("./config.json", import.meta.url);
-const VERSION = "0.1.0";
+const VERSION = "0.2.0";
 
 function argValue(name) {
   const index = process.argv.indexOf(name);

@@ -61,36 +61,6 @@ Campos sugeridos:
 
 ## Prioridade 3 - Probe Collector
 
-### Instalador mais inteligente
-
-Objetivo:
-
-- Reduzir falhas de instalacao e facilitar suporte remoto.
-
-Melhorias sugeridas:
-
-- Testar conexao com o ServerWatch antes de instalar.
-- Validar token antes da instalacao.
-- Exibir log de instalacao na propria interface.
-- Botao de reparar instalacao.
-- Botao de remover servico.
-- Mostrar progresso por etapa.
-- Detectar Node.js ausente ou versao incompatibil sem erro tecnico cru.
-
-### Atualizacao automatica do probe
-
-Objetivo:
-
-- Manter collectors atualizados sem reinstalacao manual em cada servidor.
-
-Funcionalidades sugeridas:
-
-- Collector informar versao atual.
-- ServerWatch indicar probes desatualizados.
-- Comando de atualizacao por Linux e Windows.
-- Modo de atualizacao segura, com rollback simples.
-- Registro no historico quando o probe for atualizado.
-
 ### Fila local do probe
 
 Objetivo:
