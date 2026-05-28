@@ -1359,6 +1359,15 @@ textarea:focus {
   min-width: 0;
 }
 
+.detail-stat small {
+  display: block;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 700;
+  margin-top: 4px;
+  overflow-wrap: anywhere;
+}
+
 .tag-list {
   display: flex;
   gap: 6px;
@@ -1866,6 +1875,11 @@ textarea:focus {
 .probe-targets {
   display: grid;
   gap: 8px;
+}
+
+.probe-metrics {
+  display: grid;
+  gap: 10px;
 }
 
 .probe-target-row {

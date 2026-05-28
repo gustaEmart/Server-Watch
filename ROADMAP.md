@@ -61,20 +61,15 @@ Campos sugeridos:
 
 ## Prioridade 3 - Probe Collector
 
-### Metricas adicionais pelo probe
+### Metricas avancadas pelo probe
 
 Objetivo:
 
-- Evoluir alem do ping.
+- Evoluir alem do ping e das metricas basicas de host ja coletadas pelo collector.
 
 Coletas futuras:
 
-- CPU.
-- Memoria.
-- Disco.
 - Interfaces de rede.
-- Uptime.
-- Inventario basico.
 - SNMP dentro da LAN do cliente.
 - Status de servicos especificos.
 
