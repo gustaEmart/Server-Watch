@@ -1248,6 +1248,7 @@ function renderDetail() {
         }
       `
       : "";
+  const serverHostMetrics = renderServerHostMetrics(server);
 
   els.detailPanel.innerHTML = `
     <div class="detail-header">
@@ -1274,6 +1275,8 @@ function renderDetail() {
       ${offlineSince}
       ${probeStats}
     </div>
+
+    ${serverHostMetrics}
 
     ${adminActions}
 
@@ -1572,6 +1575,41 @@ function probeLastIssue(probe, linkedServers) {
   if (probe.status === "stale") return "Probe sem contato. Verifique rede, servico local ou credenciais.";
   const issue = linkedServers.find((server) => server.lastError)?.lastError;
   return issue || "Nenhuma falha recente reportada.";
+}
+
+function renderServerHostMetrics(server) {
+  if (server.checkSource !== "probe") return "";
+  const metrics = server.probeHostMetrics;
+  if (!metrics) {
+    return `
+      <div class="server-metrics-summary muted">
+        <div class="panel-title compact-title">
+          <h3>Metricas do host</h3>
+          <span>Collector</span>
+        </div>
+        <span>Atualize o Probe Collector deste servidor para exibir CPU, memoria, disco e uptime.</span>
+      </div>
+    `;
+  }
+
+  const cpu = metrics.cpu || {};
+  const memory = metrics.memory || {};
+  const disk = metrics.disk || {};
+  const system = metrics.system || {};
+  return `
+    <div class="server-metrics-summary">
+      <div class="panel-title compact-title">
+        <h3>Metricas do host</h3>
+        <span>${formatDate(metrics.collectedAt || server.probeHostMetricsUpdatedAt)}</span>
+      </div>
+      <div class="server-metric-grid">
+        <div class="detail-stat"><span>CPU</span><strong>${formatPercent(cpu.usagePercent)}</strong><small>${escapeHtml(cpu.model || "-")}</small></div>
+        <div class="detail-stat"><span>Memoria</span><strong>${formatPercent(memory.usedPercent)}</strong><small>${formatBytes(memory.usedBytes)} / ${formatBytes(memory.totalBytes)}</small></div>
+        <div class="detail-stat"><span>Disco</span><strong>${formatPercent(disk.usedPercent)}</strong><small>${escapeHtml(disk.mount || "-")} · ${formatBytes(disk.usedBytes)} / ${formatBytes(disk.totalBytes)}</small></div>
+        <div class="detail-stat"><span>Uptime</span><strong>${formatUptime(system.uptimeSeconds)}</strong><small>${escapeHtml(server.probeHostName || system.type || "-")}</small></div>
+      </div>
+    </div>
+  `;
 }
 
 function renderProbeHostMetrics(probe) {

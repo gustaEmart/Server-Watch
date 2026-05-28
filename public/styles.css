@@ -1335,6 +1335,33 @@ textarea:focus {
   margin: 12px 0;
 }
 
+.server-metrics-summary {
+  display: grid;
+  gap: 10px;
+  margin: 14px 0;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+
+.server-metrics-summary.muted {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px;
+  background: var(--surface-muted);
+  color: var(--muted);
+}
+
+.server-metrics-summary.muted > span {
+  font-size: 0.86rem;
+  font-weight: 700;
+}
+
+.server-metric-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 9px;
+}
+
 .detail-stat {
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -2072,6 +2099,7 @@ label {
   .executive-grid,
   .form-grid,
   .detail-grid,
+  .server-metric-grid,
   .probe-detail-grid,
   .probe-grid,
   .theme-options,

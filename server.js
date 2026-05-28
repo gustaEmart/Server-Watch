@@ -622,6 +622,9 @@ function trimEvents(events) {
 function publicServer(server) {
   const group = server.groupId ? listedGroups().find((item) => item.id === server.groupId) : null;
   const probe = probeConnection(server);
+  const linkedProbe = server.checkSource === "probe"
+    ? (state.probes || []).find((item) => item.id === server.probeId && !item.deletedAt)
+    : null;
   return {
     id: server.id,
     name: server.name,
@@ -649,6 +652,9 @@ function publicServer(server) {
     probeLastSeenAt: probe.lastSeenAt,
     probeStaleAfterSeconds: probe.staleAfterSeconds,
     probeCheckRequestedAt: server.probeCheckRequestedAt || null,
+    probeHostMetrics: linkedProbe?.hostMetrics || null,
+    probeHostMetricsUpdatedAt: linkedProbe?.hostMetricsUpdatedAt || null,
+    probeHostName: linkedProbe?.hostName || null,
     platform: server.platform || null,
     primaryMac: server.primaryMac || null,
     macAddresses: Array.isArray(server.macAddresses) ? server.macAddresses : [],
