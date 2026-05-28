@@ -1512,7 +1512,8 @@ function probeInstallCommandFor(probe) {
   const token = probeToken();
   const probeId = probe?.id || "cliente-acme-sp";
   const probeName = probe?.name || probe?.hostName || probeId;
-  return `curl -fsSL -H "X-ServerWatch-Probe-Token: ${token}" ${location.origin}/downloads/probe/linux-installer | sudo bash -s -- --server-url ${location.origin} --probe-id ${shellQuote(probeId)} --token ${shellQuote(token)} --name ${shellQuote(probeName)}`;
+  const mode = probe?.id ? "--repair " : "";
+  return `curl -fsSL -H "X-ServerWatch-Probe-Token: ${token}" ${location.origin}/downloads/probe/linux-installer | sudo bash -s -- ${mode}--server-url ${location.origin} --probe-id ${shellQuote(probeId)} --token ${shellQuote(token)} --name ${shellQuote(probeName)}`;
 }
 
 function probeLinkedServers(probeId) {
