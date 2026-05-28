@@ -44,7 +44,7 @@ const SESSION_COOKIE = "sw_session";
 const SESSION_TTL_MS = 8 * 60 * 60 * 1000;
 const DEFAULT_ADMIN_EMAIL = process.env.SERVERWATCH_ADMIN_EMAIL || "admin@serverwatch.local";
 const DEFAULT_ADMIN_PASSWORD = process.env.SERVERWATCH_ADMIN_PASSWORD || "admin123";
-const PROBE_COLLECTOR_VERSION = "0.2.0";
+const PROBE_COLLECTOR_VERSION = "0.3.0";
 
 const sockets = new Set();
 const sessions = new Map();
