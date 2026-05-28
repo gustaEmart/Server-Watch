@@ -237,7 +237,14 @@
                 </div>
                 <div class="install-command">
                   <div class="install-command-header">
-                    <strong>Comando Linux</strong>
+                    <div>
+                      <strong id="probeInstallCommandTitle">Comando Linux</strong>
+                      <span id="probeInstallCommandHint">Use em distribuicoes Linux com sudo.</span>
+                    </div>
+                    <div class="install-target-toggle" role="group" aria-label="Tipo de instalacao Linux">
+                      <button class="install-target-button active" data-probe-install-target="linux" type="button">Linux</button>
+                      <button class="install-target-button" data-probe-install-target="proxmox" type="button">Proxmox</button>
+                    </div>
                     <button class="ghost-button compact" id="copyProbeInstallCommand" type="button">Copiar comando</button>
                   </div>
                   <code id="probeInstallCommand"></code>

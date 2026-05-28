@@ -12,6 +12,7 @@ const state = {
   selectedGroupId: null,
   selectedProbeId: null,
   topologyExpanded: new Set(),
+  probeInstallTarget: "linux",
   filters: {
     status: "all",
     environment: "all",
@@ -103,6 +104,8 @@ const els = {
   toggleProbeToken: document.querySelector("#toggleProbeToken"),
   copyProbeToken: document.querySelector("#copyProbeToken"),
   probeInstallCommand: document.querySelector("#probeInstallCommand"),
+  probeInstallCommandTitle: document.querySelector("#probeInstallCommandTitle"),
+  probeInstallCommandHint: document.querySelector("#probeInstallCommandHint"),
   copyProbeInstallCommand: document.querySelector("#copyProbeInstallCommand"),
   groupDialog: document.querySelector("#groupDialog"),
   groupForm: document.querySelector("#groupForm"),
@@ -1676,23 +1679,44 @@ function probeToken() {
   return String(state.settings.probeToken || "");
 }
 
-function probeInstallCommand() {
-  return probeInstallCommandFor({
+function probeInstallTargetDefaults(target) {
+  if (target === "proxmox") {
+    return {
+      id: "pve1",
+      name: "PVE-01",
+      title: "Comando Proxmox",
+      hint: "Use no shell root do Proxmox, sem sudo."
+    };
+  }
+
+  return {
     id: "cliente-acme-sp",
-    name: "Cliente ACME"
-  });
+    name: "Cliente ACME",
+    title: "Comando Linux",
+    hint: "Use em distribuicoes Linux com sudo."
+  };
+}
+
+function probeInstallCommand() {
+  const defaults = probeInstallTargetDefaults(state.probeInstallTarget);
+  return probeInstallCommandFor({
+    id: defaults.id,
+    name: defaults.name
+  }, { target: state.probeInstallTarget });
 }
 
 function shellQuote(value) {
   return `"${String(value || "").replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`;
 }
 
-function probeInstallCommandFor(probe) {
+function probeInstallCommandFor(probe, options = {}) {
   const token = probeToken();
   const probeId = probe?.id || "cliente-acme-sp";
   const probeName = probe?.name || probe?.hostName || probeId;
   const mode = probe?.id ? "--repair " : "";
-  return `curl -fsSL -H "X-ServerWatch-Probe-Token: ${token}" ${location.origin}/downloads/probe/linux-installer | sudo bash -s -- ${mode}--server-url ${location.origin} --probe-id ${shellQuote(probeId)} --token ${shellQuote(token)} --name ${shellQuote(probeName)}`;
+  const target = options.target || state.probeInstallTarget;
+  const runner = target === "proxmox" ? "bash" : "sudo bash";
+  return `curl -fsSL -H "X-ServerWatch-Probe-Token: ${token}" ${location.origin}/downloads/probe/linux-installer | ${runner} -s -- ${mode}--server-url ${location.origin} --probe-id ${shellQuote(probeId)} --token ${shellQuote(token)} --name ${shellQuote(probeName)}`;
 }
 
 function probeLinkedServers(probeId) {
@@ -1921,7 +1945,13 @@ function renderProbeDetail(probe) {
 function renderProbes() {
   if (!els.probeTokenValue || !isAdmin()) return;
   const token = probeToken();
+  const installDefaults = probeInstallTargetDefaults(state.probeInstallTarget);
   els.probeTokenValue.value = token;
+  if (els.probeInstallCommandTitle) els.probeInstallCommandTitle.textContent = installDefaults.title;
+  if (els.probeInstallCommandHint) els.probeInstallCommandHint.textContent = installDefaults.hint;
+  document.querySelectorAll("[data-probe-install-target]").forEach((button) => {
+    button.classList.toggle("active", button.dataset.probeInstallTarget === state.probeInstallTarget);
+  });
   els.probeInstallCommand.textContent = token ? probeInstallCommand() : "Token ainda nao disponivel.";
   els.probeCount.textContent = `${state.probes.length} ${state.probes.length === 1 ? "probe conectado" : "probes conectados"}`;
   if (state.selectedProbeId && !state.probes.some((probe) => probe.id === state.selectedProbeId)) {
@@ -2325,6 +2355,13 @@ function bindEvents() {
 
   els.copyProbeInstallCommand?.addEventListener("click", () => {
     copyText(probeInstallCommand(), "Comando de instalacao do probe copiado.");
+  });
+
+  document.querySelectorAll("[data-probe-install-target]").forEach((button) => {
+    button.addEventListener("click", () => {
+      state.probeInstallTarget = button.dataset.probeInstallTarget === "proxmox" ? "proxmox" : "linux";
+      renderProbes();
+    });
   });
 
   els.probesList?.addEventListener("click", (event) => {

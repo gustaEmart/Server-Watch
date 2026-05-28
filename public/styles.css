@@ -1869,6 +1869,42 @@ textarea:focus {
   gap: 10px;
 }
 
+.install-command-header > div:first-child {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.install-command-header span {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.install-target-toggle {
+  display: inline-flex;
+  padding: 3px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  flex: 0 0 auto;
+}
+
+.install-target-button {
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  padding: 7px 10px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.install-target-button.active {
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+}
+
 .install-command code {
   display: block;
   border: 1px solid var(--line);
@@ -2220,14 +2256,16 @@ label {
   .topbar,
   .alert-card,
   .detail-header,
-  .danger-zone {
+  .danger-zone,
+  .install-command-header {
     align-items: stretch;
     flex-direction: column;
   }
 
   .topbar-actions,
   .dialog-actions,
-  .download-actions {
+  .download-actions,
+  .install-command-header {
     width: 100%;
   }
 
@@ -2288,6 +2326,14 @@ label {
   .probe-windows-update a {
     grid-column: auto;
     grid-row: auto;
+  }
+
+  .install-target-toggle {
+    width: 100%;
+  }
+
+  .install-target-button {
+    flex: 1;
   }
 
   .group-card {
