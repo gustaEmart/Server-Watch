@@ -11,6 +11,7 @@ const state = {
   selectedServerId: null,
   selectedGroupId: null,
   selectedProbeId: null,
+  topologyExpanded: new Set(),
   filters: {
     status: "all",
     environment: "all",
@@ -1157,10 +1158,12 @@ function renderExecutiveDashboard() {
   `;
 }
 
-function renderServerRow(server) {
+function renderServerRow(server, options = {}) {
+  const { childCount = 0, depth = 0 } = options;
   const visibleStatus = displayStatus(server);
   const selected = state.selectedServerId === server.id ? "selected" : "";
   const inactive = server.isActive ? "" : "inactive";
+  const expanded = state.topologyExpanded.has(server.id);
   const latency = server.lastLatencyMs === null || server.lastLatencyMs === undefined ? "-" : `${server.lastLatencyMs} ms`;
   const offlineFor =
     server.dependencyStatus === "affected"
@@ -1185,12 +1188,18 @@ function renderServerRow(server) {
     ? `${escapeHtml(server.hostname)} · ${infra ? `${escapeHtml(infra)} · ` : ""}${checkSourceLabel(server.checkSource)} · ${environmentLabel(server.environment)}${mac ? ` · ${escapeHtml(mac)}` : ""} ${offlineFor}`
     : `${escapeHtml(server.hostname)} · Monitoramento pausado`;
   return `
-    <button class="server-row ${selected} ${inactive}" type="button" data-server-id="${server.id}">
+    <button class="server-row ${selected} ${inactive} ${depth ? "dependency-child-row" : ""}" type="button" data-server-id="${server.id}" style="--dependency-depth:${depth}">
+      ${
+        childCount
+          ? `<span class="topology-toggle ${expanded ? "expanded" : ""}" data-topology-toggle="${escapeHtml(server.id)}" aria-label="${expanded ? "Ocultar dependentes" : "Exibir dependentes"}" aria-expanded="${expanded ? "true" : "false"}"><i aria-hidden="true"></i></span>`
+          : `<span class="topology-spacer" aria-hidden="true"></span>`
+      }
       <span class="status-pulse ${visibleStatus}"></span>
       ${platformIcon(server.platform)}
       <span class="server-main">
         <strong>${escapeHtml(server.name)}</strong>
         <span>${subtitle}</span>
+        ${childCount ? `<small>${childCount} ${childCount === 1 ? "dependente" : "dependentes"}</small>` : ""}
       </span>
       <span class="server-meta">
         ${probeBadge}
@@ -1199,6 +1208,37 @@ function renderServerRow(server) {
       </span>
     </button>
   `;
+}
+
+function renderServerTopology(servers) {
+  const visibleIds = new Set(servers.map((server) => server.id));
+  const childrenByParent = new Map();
+  for (const server of servers) {
+    if (!server.parentId || !visibleIds.has(server.parentId)) continue;
+    const children = childrenByParent.get(server.parentId) || [];
+    children.push(server);
+    childrenByParent.set(server.parentId, children);
+  }
+
+  const renderNode = (server, depth = 0, visited = new Set()) => {
+    const children = childrenByParent.get(server.id) || [];
+    const expanded = state.topologyExpanded.has(server.id);
+    const row = renderServerRow(server, { childCount: children.length, depth });
+    if (!children.length || !expanded || visited.has(server.id)) return row;
+    const nextVisited = new Set(visited);
+    nextVisited.add(server.id);
+    return `
+      ${row}
+      <div class="dependency-children">
+        ${children.map((child) => renderNode(child, depth + 1, nextVisited)).join("")}
+      </div>
+    `;
+  };
+
+  return servers
+    .filter((server) => !server.parentId || !visibleIds.has(server.parentId))
+    .map((server) => renderNode(server))
+    .join("");
 }
 
 function groupedServers(servers) {
@@ -1242,7 +1282,7 @@ function renderServers() {
             </div>
           </header>
           <div class="server-group-items">
-            ${group.servers.map(renderServerRow).join("")}
+            ${renderServerTopology(group.servers)}
           </div>
         </section>
       `;
@@ -2388,6 +2428,17 @@ function bindEvents() {
   });
 
   els.serverList.addEventListener("click", (event) => {
+    const topologyToggle = event.target.closest("[data-topology-toggle]");
+    if (topologyToggle) {
+      event.preventDefault();
+      event.stopPropagation();
+      const serverId = topologyToggle.dataset.topologyToggle;
+      if (state.topologyExpanded.has(serverId)) state.topologyExpanded.delete(serverId);
+      else state.topologyExpanded.add(serverId);
+      renderServers();
+      return;
+    }
+
     const row = event.target.closest("[data-server-id]");
     if (!row) return;
     state.selectedServerId = row.dataset.serverId;

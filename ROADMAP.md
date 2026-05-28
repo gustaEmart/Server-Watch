@@ -167,6 +167,7 @@ Funcionalidades implementadas:
 - Plataforma de infraestrutura: Proxmox, VMware, Hyper-V, bare metal, cloud ou outra.
 - Host pai/virtualizador manual no cadastro do servidor.
 - Indicador no dashboard quando um item esta afetado pelo host pai.
+- Visualizacao expansivel no dashboard para abrir um virtualizador/host pai e ver as VMs dependentes.
 
 ### Descoberta automatica e topologia avancada
 

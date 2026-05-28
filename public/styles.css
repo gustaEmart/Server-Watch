@@ -1050,11 +1050,12 @@ textarea:focus {
   padding: 12px;
   background: var(--surface);
   display: grid;
-  grid-template-columns: auto auto minmax(0, 1fr) auto;
+  grid-template-columns: auto auto auto minmax(0, 1fr) auto;
   align-items: center;
   gap: 12px;
   text-align: left;
   width: 100%;
+  margin-left: calc(var(--dependency-depth, 0) * 24px);
 }
 
 .server-row:hover,
@@ -1066,6 +1067,69 @@ textarea:focus {
 .server-row.selected {
   background: var(--selected-bg);
   box-shadow: inset 3px 0 0 var(--accent), 0 8px 22px rgba(18, 60, 105, 0.1);
+}
+
+.server-row.dependency-child-row {
+  position: relative;
+  background: var(--surface-muted);
+}
+
+.server-row.dependency-child-row::before {
+  content: "";
+  position: absolute;
+  left: -15px;
+  top: -9px;
+  width: 14px;
+  height: 50%;
+  border-left: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  border-bottom-left-radius: 7px;
+}
+
+.topology-toggle,
+.topology-spacer {
+  width: 26px;
+  height: 26px;
+  display: inline-grid;
+  place-items: center;
+  border-radius: 7px;
+  flex: 0 0 auto;
+}
+
+.topology-toggle {
+  border: 1px solid var(--line);
+  background: var(--surface-muted);
+  color: var(--text);
+  cursor: pointer;
+  transition: background 0.16s ease, border-color 0.16s ease, color 0.16s ease;
+}
+
+.topology-toggle i {
+  width: 0;
+  height: 0;
+  border-top: 5px solid transparent;
+  border-bottom: 5px solid transparent;
+  border-left: 6px solid currentColor;
+  transform: translateX(1px);
+  transition: transform 0.16s ease;
+}
+
+.topology-toggle:hover {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.topology-toggle.expanded {
+  color: var(--accent);
+}
+
+.topology-toggle.expanded i {
+  transform: rotate(90deg) translateX(1px);
+}
+
+.dependency-children {
+  display: grid;
+  gap: 8px;
 }
 
 .status-pulse {
@@ -1164,7 +1228,8 @@ textarea:focus {
 }
 
 .server-main strong,
-.server-main span {
+.server-main span,
+.server-main small {
   display: block;
 }
 
@@ -1172,6 +1237,13 @@ textarea:focus {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.server-main small {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 800;
+  margin-top: 3px;
 }
 
 .detail-title,
