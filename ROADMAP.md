@@ -154,16 +154,29 @@ Opcoes:
 
 ## Prioridade 6 - Hierarquia de infraestrutura
 
-### Clusters, hosts fisicos e VMs
+### Topologia manual de hosts, virtualizadores e VMs
 
 Objetivo:
 
-- Representar dependencias entre servidores, hosts fisicos, clusters e maquinas virtuais.
+- Registrar relacoes de dependencia entre servidores, VMs e seus hosts/virtualizadores.
+- Evitar leitura errada quando uma VM aparece indisponivel porque o host pai esta offline ou com probe sem contato.
 
-Modelo sugerido:
+Funcionalidades implementadas:
+
+- Tipo do item: servidor, host fisico, virtualizador, VM ou servico.
+- Plataforma de infraestrutura: Proxmox, VMware, Hyper-V, bare metal, cloud ou outra.
+- Host pai/virtualizador manual no cadastro do servidor.
+- Indicador no dashboard quando um item esta afetado pelo host pai.
+
+### Descoberta automatica e topologia avancada
+
+Objetivo:
+
+- Evoluir a topologia manual para descoberta automatica e visualizacao mais completa.
+
+Modelo futuro:
 
 - `node_type`: `physical`, `hypervisor`, `cluster`, `vm`, `service`.
-- `parent_id`: servidor, host ou cluster do qual o item depende.
 - `platform`: `proxmox`, `vmware`, `hyper-v`, `bare-metal`, `cloud`.
 - `dependency_status`: calculado com base no status do item e dos pais.
 

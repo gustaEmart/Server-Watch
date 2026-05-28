@@ -144,6 +144,7 @@
                     <button class="segment active" data-status="all" type="button">Todos</button>
                     <button class="segment" data-status="online" type="button">Online</button>
                     <button class="segment" data-status="offline" type="button">Offline</button>
+                    <button class="segment" data-status="dependency_down" type="button">Afetado pelo host</button>
                     <button class="segment" data-status="probe_stale" type="button">Probe sem contato</button>
                     <button class="segment" data-status="unknown" type="button">Sem status</button>
                     <button class="segment" data-status="paused" type="button">Pausado</button>
@@ -477,6 +478,36 @@
             <select id="serverCheckSource">
               <option value="serverwatch">ServerWatch central</option>
               <option value="probe">Probe local do cliente</option>
+            </select>
+          </label>
+          <label>
+            Tipo
+            <select id="serverNodeType">
+              <option value="server">Servidor</option>
+              <option value="physical">Host fisico</option>
+              <option value="hypervisor">Virtualizador</option>
+              <option value="vm">VM</option>
+              <option value="service">Servico</option>
+            </select>
+          </label>
+          <label>
+            Plataforma infra
+            <select id="serverInfrastructurePlatform">
+              <option value="none">Nao definida</option>
+              <option value="proxmox">Proxmox</option>
+              <option value="vmware">VMware</option>
+              <option value="hyper-v">Hyper-V</option>
+              <option value="bare-metal">Bare metal</option>
+              <option value="cloud">Cloud</option>
+              <option value="linux">Linux</option>
+              <option value="windows">Windows</option>
+              <option value="other">Outra</option>
+            </select>
+          </label>
+          <label>
+            Host pai / virtualizador
+            <select id="serverParentId">
+              <option value="">Sem dependencia</option>
             </select>
           </label>
           <label>

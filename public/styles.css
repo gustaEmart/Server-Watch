@@ -616,6 +616,10 @@ button {
   background: var(--offline);
 }
 
+.donut-legend .dependency_down {
+  background: var(--warning);
+}
+
 .donut-legend .probe_stale {
   background: var(--probe-stale);
 }
@@ -1087,6 +1091,11 @@ textarea:focus {
   box-shadow: 0 0 0 5px rgba(217, 119, 6, 0.14);
 }
 
+.status-pulse.dependency_down {
+  background: var(--warning);
+  box-shadow: 0 0 0 5px rgba(245, 158, 11, 0.14);
+}
+
 .status-pulse.paused {
   background: #9ca3af;
   box-shadow: 0 0 0 6px rgba(107, 114, 128, 0.14);
@@ -1215,6 +1224,11 @@ textarea:focus {
   color: var(--probe-stale-text);
 }
 
+.status-badge.dependency_down {
+  background: rgba(245, 158, 11, 0.18);
+  color: var(--warning);
+}
+
 .status-badge.paused {
   background: var(--tag-bg);
   color: var(--tag-text);
@@ -1303,6 +1317,33 @@ textarea:focus {
 .paused-notice strong,
 .paused-notice span {
   display: block;
+}
+
+.dependency-notice {
+  display: grid;
+  gap: 3px;
+  border: 1px solid rgba(245, 158, 11, 0.36);
+  border-left: 4px solid var(--warning);
+  border-radius: 8px;
+  padding: 12px;
+  margin: 12px 0;
+  background: rgba(245, 158, 11, 0.1);
+}
+
+.dependency-notice.orphan {
+  border-color: var(--danger-line);
+  border-left-color: var(--offline);
+  background: var(--danger-bg);
+}
+
+.dependency-notice strong,
+.dependency-notice span {
+  display: block;
+}
+
+.dependency-notice span {
+  color: var(--muted);
+  font-size: 0.86rem;
 }
 
 .danger-zone {

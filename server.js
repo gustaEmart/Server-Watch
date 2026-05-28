@@ -40,6 +40,8 @@ const DOWNLOADS = {
 const CHECK_LOOP_MS = 1000;
 const MAX_HISTORY_PER_SERVER = 500;
 const CHECK_SOURCES = new Set(["serverwatch", "probe"]);
+const NODE_TYPES = new Set(["server", "physical", "hypervisor", "vm", "service"]);
+const INFRASTRUCTURE_PLATFORMS = new Set(["none", "proxmox", "vmware", "hyper-v", "bare-metal", "cloud", "linux", "windows", "other"]);
 const SESSION_COOKIE = "sw_session";
 const SESSION_TTL_MS = 8 * 60 * 60 * 1000;
 const DEFAULT_ADMIN_EMAIL = process.env.SERVERWATCH_ADMIN_EMAIL || "admin@serverwatch.local";
@@ -110,6 +112,28 @@ function normalizeCheckSource(value, fallback = "serverwatch") {
   return CHECK_SOURCES.has(source) ? source : "serverwatch";
 }
 
+function normalizeNodeType(value, fallback = "server") {
+  const type = String(value || fallback || "server").trim().toLowerCase();
+  return NODE_TYPES.has(type) ? type : "server";
+}
+
+function normalizeInfrastructurePlatform(value, fallback = "none") {
+  const platform = String(value || fallback || "none").trim().toLowerCase();
+  return INFRASTRUCTURE_PLATFORMS.has(platform) ? platform : "none";
+}
+
+function isDescendantServer(candidateId, ancestorId) {
+  let current = state.servers.find((server) => server.id === candidateId && !server.deletedAt);
+  const visited = new Set();
+  while (current?.parentId) {
+    if (current.parentId === ancestorId) return true;
+    if (visited.has(current.parentId)) return false;
+    visited.add(current.parentId);
+    current = state.servers.find((server) => server.id === current.parentId && !server.deletedAt);
+  }
+  return false;
+}
+
 function normalizeServer(payload, existing = {}) {
   const hostname = String(payload.hostname || existing.hostname || "").trim();
   if (!hostname) {
@@ -130,6 +154,13 @@ function normalizeServer(payload, existing = {}) {
   const groupId = rawGroupId && rawGroupId !== "none" ? String(rawGroupId) : null;
   const checkSource = normalizeCheckSource(payload.checkSource ?? payload.check_source, existing.checkSource);
   const probeId = String(payload.probeId ?? payload.probe_id ?? existing.probeId ?? "").trim();
+  const nodeType = normalizeNodeType(payload.nodeType ?? payload.node_type, existing.nodeType);
+  const infrastructurePlatform = normalizeInfrastructurePlatform(
+    payload.infrastructurePlatform ?? payload.infrastructure_platform,
+    existing.infrastructurePlatform
+  );
+  const rawParentId = payload.parentId ?? payload.parent_id ?? existing.parentId ?? null;
+  const parentId = rawParentId && rawParentId !== "none" ? String(rawParentId) : null;
 
   if (groupId && !listedGroups().some((group) => group.id === groupId)) {
     const error = new Error("Empresa/grupo informado nao existe.");
@@ -150,6 +181,25 @@ function normalizeServer(payload, existing = {}) {
     }
   }
 
+  if (parentId) {
+    if (parentId === existing.id) {
+      const error = new Error("Um servidor nao pode depender dele mesmo.");
+      error.statusCode = 400;
+      throw error;
+    }
+    const parent = listedServers().find((server) => server.id === parentId);
+    if (!parent) {
+      const error = new Error("Host pai/virtualizador nao encontrado.");
+      error.statusCode = 400;
+      throw error;
+    }
+    if (existing.id && isDescendantServer(parentId, existing.id)) {
+      const error = new Error("Dependencia invalida: isso criaria um ciclo na topologia.");
+      error.statusCode = 400;
+      throw error;
+    }
+  }
+
   return {
     ...existing,
     name: String(payload.name || existing.name || hostname).trim(),
@@ -158,6 +208,9 @@ function normalizeServer(payload, existing = {}) {
     checkMethod: "ping",
     checkSource,
     probeId: checkSource === "probe" ? probeId : null,
+    nodeType,
+    infrastructurePlatform,
+    parentId,
     checkInterval: Math.max(3, Math.min(3600, Number.isFinite(interval) ? interval : state.settings.defaultInterval)),
     failureThreshold: Math.max(1, Math.min(10, Number.isFinite(threshold) ? threshold : state.settings.defaultFailureThreshold)),
     environment: String(payload.environment || existing.environment || "production"),
@@ -384,6 +437,9 @@ function createSeedState() {
         checkMethod: "ping",
         checkSource: "serverwatch",
         probeId: null,
+        nodeType: "server",
+        infrastructurePlatform: "none",
+        parentId: null,
         checkInterval: 5,
         failureThreshold: 1,
         environment: "production",
@@ -450,6 +506,9 @@ async function loadState() {
     checkMethod: "ping",
     checkSource: normalizeCheckSource(server.checkSource),
     probeId: server.checkSource === "probe" ? server.probeId || null : null,
+    nodeType: normalizeNodeType(server.nodeType),
+    infrastructurePlatform: normalizeInfrastructurePlatform(server.infrastructurePlatform),
+    parentId: server.parentId || null,
     groupId: server.groupId || null,
     nextCheckAt: now + Math.floor(Math.random() * 1500),
     consecutiveFailures: server.consecutiveFailures || 0
@@ -606,6 +665,44 @@ function probeConnection(server) {
   };
 }
 
+function dependencyInfo(server) {
+  if (!server?.parentId) {
+    return {
+      parentId: null,
+      parentName: null,
+      parentStatus: null,
+      dependencyStatus: "independent",
+      dependencyReason: null
+    };
+  }
+
+  const parent = state.servers.find((item) => item.id === server.parentId && !item.deletedAt);
+  if (!parent) {
+    return {
+      parentId: server.parentId,
+      parentName: null,
+      parentStatus: "missing",
+      dependencyStatus: "orphan",
+      dependencyReason: "Host pai removido ou nao encontrado."
+    };
+  }
+
+  const parentProbe = probeConnection(parent);
+  const parentStatus = !parent.isActive
+    ? "paused"
+    : parentProbe.status === "stale"
+    ? "probe_stale"
+    : parent.currentStatus || "unknown";
+  const affected = parentStatus === "offline" || parentStatus === "probe_stale";
+  return {
+    parentId: parent.id,
+    parentName: parent.name,
+    parentStatus,
+    dependencyStatus: affected ? "affected" : "ok",
+    dependencyReason: affected ? `${parent.name} esta ${parentStatus === "probe_stale" ? "com probe sem contato" : "offline"}.` : null
+  };
+}
+
 function trimEvents(events) {
   const byServer = new Map();
   const trimmed = [];
@@ -622,6 +719,7 @@ function trimEvents(events) {
 function publicServer(server) {
   const group = server.groupId ? listedGroups().find((item) => item.id === server.groupId) : null;
   const probe = probeConnection(server);
+  const dependency = dependencyInfo(server);
   const linkedProbe = server.checkSource === "probe"
     ? (state.probes || []).find((item) => item.id === server.probeId && !item.deletedAt)
     : null;
@@ -633,6 +731,13 @@ function publicServer(server) {
     checkMethod: server.checkMethod,
     checkSource: server.checkSource || "serverwatch",
     probeId: server.probeId || null,
+    nodeType: server.nodeType || "server",
+    infrastructurePlatform: server.infrastructurePlatform || "none",
+    parentId: dependency.parentId,
+    parentName: dependency.parentName,
+    parentStatus: dependency.parentStatus,
+    dependencyStatus: dependency.dependencyStatus,
+    dependencyReason: dependency.dependencyReason,
     checkInterval: server.checkInterval,
     failureThreshold: server.failureThreshold,
     environment: server.environment,
@@ -1331,6 +1436,9 @@ function ensureProbeServer(probe) {
     location: "",
     tags: ["probe"],
     isActive: true,
+    nodeType: "server",
+    infrastructurePlatform: "none",
+    parentId: null,
     currentStatus: "unknown",
     previousStatus: "unknown",
     statusChangedAt: createdAt,

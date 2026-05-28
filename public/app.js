@@ -120,6 +120,9 @@ const els = {
   serverHostname: document.querySelector("#serverHostname"),
   serverEnvironment: document.querySelector("#serverEnvironment"),
   serverCheckSource: document.querySelector("#serverCheckSource"),
+  serverNodeType: document.querySelector("#serverNodeType"),
+  serverInfrastructurePlatform: document.querySelector("#serverInfrastructurePlatform"),
+  serverParentId: document.querySelector("#serverParentId"),
   serverGroup: document.querySelector("#serverGroup"),
   serverLocation: document.querySelector("#serverLocation"),
   serverInterval: document.querySelector("#serverInterval"),
@@ -249,6 +252,7 @@ function statusLabel(status) {
     online: "Online",
     offline: "Offline",
     probe_stale: "Probe sem contato",
+    dependency_down: "Afetado pelo host",
     unknown: "Sem status",
     paused: "Pausado"
   }[status || "unknown"];
@@ -277,6 +281,7 @@ function eventCategoryLabel(category) {
 
 function displayStatus(server) {
   if (!server.isActive) return "paused";
+  if (server.dependencyStatus === "affected") return "dependency_down";
   return server.currentStatus || "unknown";
 }
 
@@ -327,6 +332,30 @@ function checkSourceLabel(source) {
     serverwatch: "ServerWatch central",
     probe: "Probe local"
   }[source || "serverwatch"];
+}
+
+function nodeTypeLabel(type) {
+  return {
+    server: "Servidor",
+    physical: "Host fisico",
+    hypervisor: "Virtualizador",
+    vm: "VM",
+    service: "Servico"
+  }[type || "server"] || "Servidor";
+}
+
+function infrastructurePlatformLabel(platform) {
+  return {
+    none: "Nao definida",
+    proxmox: "Proxmox",
+    vmware: "VMware",
+    "hyper-v": "Hyper-V",
+    "bare-metal": "Bare metal",
+    cloud: "Cloud",
+    linux: "Linux",
+    windows: "Windows",
+    other: "Outra"
+  }[platform || "none"] || "Nao definida";
 }
 
 function platformLabel(platform) {
@@ -668,6 +697,26 @@ function renderGroupOptions() {
   renderCompanyNav();
 }
 
+function renderParentOptions(currentServerId = "") {
+  if (!els.serverParentId) return;
+  const current = els.serverParentId.value;
+  const candidates = state.servers.filter((server) => !server.deletedAt && server.id !== currentServerId);
+  els.serverParentId.innerHTML = `
+    <option value="">Sem dependencia</option>
+    ${candidates
+      .map((server) => {
+        const descriptor = [
+          nodeTypeLabel(server.nodeType),
+          infrastructurePlatformLabel(server.infrastructurePlatform)
+        ].filter((item) => item && item !== "Nao definida").join(" · ");
+        const label = `${server.name}${descriptor ? ` (${descriptor})` : ""}`;
+        return `<option value="${escapeHtml(server.id)}">${escapeHtml(label)}</option>`;
+      })
+      .join("")}
+  `;
+  els.serverParentId.value = candidates.some((server) => server.id === current) ? current : "";
+}
+
 function renderProbeOptions() {
   if (!els.serverProbeId) return;
   const current = els.serverProbeId.value;
@@ -784,6 +833,9 @@ function filteredServers() {
       server.hostname,
       server.environment,
       platformLabel(server.platform),
+      nodeTypeLabel(server.nodeType),
+      infrastructurePlatformLabel(server.infrastructurePlatform),
+      server.parentName,
       primaryMac(server),
       groupLabel(server.groupId),
       server.location,
@@ -813,7 +865,7 @@ function statusCounts(servers) {
       }
       return acc;
     },
-    { online: 0, offline: 0, probe_stale: 0, unknown: 0, paused: 0 }
+    { online: 0, offline: 0, dependency_down: 0, probe_stale: 0, unknown: 0, paused: 0 }
   );
 }
 
@@ -821,9 +873,10 @@ function renderMetrics() {
   const servers = scopedServers();
   const counts = statusCounts(servers);
   const activeTotal = servers.filter((server) => server.isActive).length;
-  const statusTotal = counts.online + counts.offline + counts.unknown + counts.paused || 1;
+  const statusTotal = counts.online + counts.offline + counts.dependency_down + counts.unknown + counts.paused || 1;
   const onlinePct = (counts.online / statusTotal) * 100;
   const offlinePct = (counts.offline / statusTotal) * 100;
+  const dependencyPct = (counts.dependency_down / statusTotal) * 100;
   const unknownPct = (counts.unknown / statusTotal) * 100;
   const pausedPct = (counts.paused / statusTotal) * 100;
 
@@ -838,14 +891,16 @@ function renderMetrics() {
     ? `conic-gradient(
         var(--online) 0 ${onlinePct}%,
         var(--offline) ${onlinePct}% ${onlinePct + offlinePct}%,
-        var(--unknown) ${onlinePct + offlinePct}% ${onlinePct + offlinePct + unknownPct}%,
-        #9ca3af ${onlinePct + offlinePct + unknownPct}% ${onlinePct + offlinePct + unknownPct + pausedPct}%
+        var(--warning) ${onlinePct + offlinePct}% ${onlinePct + offlinePct + dependencyPct}%,
+        var(--unknown) ${onlinePct + offlinePct + dependencyPct}% ${onlinePct + offlinePct + dependencyPct + unknownPct}%,
+        #9ca3af ${onlinePct + offlinePct + dependencyPct + unknownPct}% ${onlinePct + offlinePct + dependencyPct + unknownPct + pausedPct}%
       )`
     : "conic-gradient(#dbe3e4 0 100%)";
   els.statusDonut.dataset.total = String(servers.length);
   els.statusLegend.innerHTML = [
     ["online", "Online", counts.online],
     ["offline", "Offline", counts.offline],
+    ["dependency_down", "Afetado pelo host", counts.dependency_down],
     ["probe_stale", "Probe sem contato", counts.probe_stale],
     ["unknown", "Sem status", counts.unknown],
     ["paused", "Pausado", counts.paused]
@@ -1108,7 +1163,11 @@ function renderServerRow(server) {
   const inactive = server.isActive ? "" : "inactive";
   const latency = server.lastLatencyMs === null || server.lastLatencyMs === undefined ? "-" : `${server.lastLatencyMs} ms`;
   const offlineFor =
-    server.isActive && server.checkSource === "probe" && server.probeStatus === "stale"
+    server.dependencyStatus === "affected"
+      ? `<span>Afetado por ${escapeHtml(server.parentName || "host pai")}</span>`
+      : server.dependencyStatus === "orphan"
+      ? `<span>Dependencia sem host pai</span>`
+      : server.isActive && server.checkSource === "probe" && server.probeStatus === "stale"
       ? `<span>Probe sem contato ha ${formatDurationSince(server.probeLastSeenAt || server.lastProbeSeenAt)}</span>`
       : server.isActive && server.currentStatus === "offline"
       ? `<span>Offline ha ${formatDurationSince(server.statusChangedAt)}</span>`
@@ -1118,8 +1177,12 @@ function renderServerRow(server) {
       ? `<span class="probe-inline-badge ${server.probeStatus || "unknown"}">${probeStatusLabel(server.probeStatus)}</span>`
       : "";
   const mac = primaryMac(server);
+  const infra = [
+    nodeTypeLabel(server.nodeType),
+    server.parentName ? `depende de ${server.parentName}` : infrastructurePlatformLabel(server.infrastructurePlatform)
+  ].filter((item) => item && item !== "Nao definida").join(" · ");
   const subtitle = server.isActive
-    ? `${escapeHtml(server.hostname)} · ${checkSourceLabel(server.checkSource)} · ${environmentLabel(server.environment)}${mac ? ` · ${escapeHtml(mac)}` : ""} ${offlineFor}`
+    ? `${escapeHtml(server.hostname)} · ${infra ? `${escapeHtml(infra)} · ` : ""}${checkSourceLabel(server.checkSource)} · ${environmentLabel(server.environment)}${mac ? ` · ${escapeHtml(mac)}` : ""} ${offlineFor}`
     : `${escapeHtml(server.hostname)} · Monitoramento pausado`;
   return `
     <button class="server-row ${selected} ${inactive}" type="button" data-server-id="${server.id}">
@@ -1217,6 +1280,14 @@ function renderDetail() {
         <span>Este servidor esta cadastrado, mas nao esta recebendo pings nem gerando alertas.</span>
       </div>
     `;
+  const dependencyNotice = server.dependencyStatus === "affected" || server.dependencyStatus === "orphan"
+    ? `
+      <div class="dependency-notice ${server.dependencyStatus}">
+        <strong>${server.dependencyStatus === "orphan" ? "Dependencia sem host pai" : "Afetado por dependencia"}</strong>
+        <span>${escapeHtml(server.dependencyReason || `Este item depende de ${server.parentName || "um host pai"}.`)}</span>
+      </div>
+    `
+    : "";
   const checkButton = isAdmin() && server.isActive
     ? `<button class="ghost-button compact" type="button" data-action="check" data-id="${server.id}">${
         server.checkSource === "probe" ? "Solicitar checagem" : "Checar agora"
@@ -1259,6 +1330,12 @@ function renderDetail() {
       `
       : "";
   const serverHostMetrics = renderServerHostMetrics(server);
+  const dependencyStats = `
+    <div class="detail-stat"><span>Tipo</span><strong>${nodeTypeLabel(server.nodeType)}</strong></div>
+    <div class="detail-stat"><span>Plataforma infra</span><strong>${infrastructurePlatformLabel(server.infrastructurePlatform)}</strong></div>
+    <div class="detail-stat"><span>Host pai</span><strong>${escapeHtml(server.parentName || "-")}</strong></div>
+    <div class="detail-stat"><span>Estado dependencia</span><strong>${server.dependencyStatus === "affected" ? "Afetado" : server.dependencyStatus === "orphan" ? "Orfao" : server.dependencyStatus === "ok" ? "OK" : "Independente"}</strong></div>
+  `;
 
   els.detailPanel.innerHTML = `
     <div class="detail-header">
@@ -1270,6 +1347,7 @@ function renderDetail() {
     </div>
 
     ${pausedNotice}
+    ${dependencyNotice}
 
     <p class="detail-meta">${escapeHtml(server.description || "Sem descricao cadastrada.")}</p>
     <div class="tag-list">${tags || `<span class="tag">sem tags</span>`}</div>
@@ -1283,6 +1361,7 @@ function renderDetail() {
       <div class="detail-stat"><span>MAC</span><strong>${escapeHtml(mac || "-")}</strong></div>
       <div class="detail-stat"><span>Intervalo</span><strong>${server.checkInterval}s</strong></div>
       ${offlineSince}
+      ${dependencyStats}
       ${probeStats}
     </div>
 
@@ -1910,6 +1989,8 @@ function openDialog(server = null) {
   els.serverHostname.value = server?.hostname || "";
   els.serverEnvironment.value = server?.environment || "production";
   els.serverCheckSource.value = server?.checkSource || "serverwatch";
+  els.serverNodeType.value = server?.nodeType || "server";
+  els.serverInfrastructurePlatform.value = server?.infrastructurePlatform || "none";
   els.serverGroup.value = server?.groupId || "";
   els.serverLocation.value = server?.location || "";
   els.serverInterval.value = server?.checkInterval || 10;
@@ -1917,6 +1998,8 @@ function openDialog(server = null) {
   if (server?.probeId && state.probes.some((probe) => probe.id === server.probeId)) {
     els.serverProbeId.value = server.probeId;
   }
+  renderParentOptions(server?.id || "");
+  els.serverParentId.value = server?.parentId || "";
   els.serverTags.value = (server?.tags || []).join(", ");
   els.serverDescription.value = server?.description || "";
   toggleProbeOptions();
@@ -2008,6 +2091,9 @@ async function submitServer(event) {
     hostname: els.serverHostname.value,
     checkSource: els.serverCheckSource.value,
     probeId: els.serverProbeId.value,
+    nodeType: els.serverNodeType.value,
+    infrastructurePlatform: els.serverInfrastructurePlatform.value,
+    parentId: els.serverParentId.value || null,
     environment: els.serverEnvironment.value,
     groupId: els.serverGroup.value || null,
     location: els.serverLocation.value,
