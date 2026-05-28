@@ -1909,6 +1909,36 @@ textarea:focus {
   gap: 10px;
 }
 
+.probe-network-list {
+  display: grid;
+  gap: 8px;
+}
+
+.network-interface-row {
+  display: grid;
+  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+  gap: 10px;
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px;
+  background: var(--surface);
+}
+
+.network-interface-row strong,
+.network-interface-row span,
+.network-interface-row small {
+  display: block;
+  overflow-wrap: anywhere;
+}
+
+.network-interface-row small {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 700;
+  margin-top: 3px;
+}
+
 .probe-target-row {
   width: 100%;
   display: grid;
@@ -2108,6 +2138,7 @@ label {
   .token-control,
   .probe-target-row,
   .probe-card,
+  .network-interface-row,
   .filter-grid {
     grid-template-columns: 1fr;
   }

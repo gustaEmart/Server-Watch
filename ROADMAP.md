@@ -69,7 +69,6 @@ Objetivo:
 
 Coletas futuras:
 
-- Interfaces de rede.
 - SNMP dentro da LAN do cliente.
 - Status de servicos especificos.
 

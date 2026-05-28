@@ -44,7 +44,7 @@ const SESSION_COOKIE = "sw_session";
 const SESSION_TTL_MS = 8 * 60 * 60 * 1000;
 const DEFAULT_ADMIN_EMAIL = process.env.SERVERWATCH_ADMIN_EMAIL || "admin@serverwatch.local";
 const DEFAULT_ADMIN_PASSWORD = process.env.SERVERWATCH_ADMIN_PASSWORD || "admin123";
-const PROBE_COLLECTOR_VERSION = "0.4.0";
+const PROBE_COLLECTOR_VERSION = "0.5.0";
 
 const sockets = new Set();
 const sessions = new Map();
@@ -1164,6 +1164,29 @@ function normalizeHostMetrics(value, fallback = null) {
         usedPercent: normalizeNumber(metrics.disk.usedPercent)
       }
     : null;
+  const networkInterfaces = Array.isArray(metrics.networkInterfaces)
+    ? metrics.networkInterfaces
+        .map((item) => ({
+          name: String(item?.name || "").trim(),
+          description: String(item?.description || "").trim() || null,
+          status: String(item?.status || "").trim() || null,
+          speedMbps: normalizeNumber(item?.speedMbps),
+          mac: normalizeMacAddresses([item?.mac || ""])[0] || null,
+          addresses: Array.isArray(item?.addresses)
+            ? item.addresses
+                .map((address) => ({
+                  family: String(address?.family || "").trim() || null,
+                  address: String(address?.address || "").trim(),
+                  netmask: String(address?.netmask || "").trim() || null,
+                  cidr: String(address?.cidr || "").trim() || null
+                }))
+                .filter((address) => address.address)
+                .slice(0, 12)
+            : []
+        }))
+        .filter((item) => item.name || item.addresses.length || item.mac)
+        .slice(0, 24)
+    : [];
 
   return {
     collectedAt: String(metrics.collectedAt || nowIso()),
@@ -1182,6 +1205,7 @@ function normalizeHostMetrics(value, fallback = null) {
       usedPercent: normalizeNumber(metrics.memory?.usedPercent)
     },
     disk,
+    networkInterfaces,
     system: {
       uptimeSeconds: normalizeNumber(metrics.system?.uptimeSeconds),
       arch: String(metrics.system?.arch || "").trim() || null,

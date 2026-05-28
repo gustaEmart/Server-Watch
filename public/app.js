@@ -436,6 +436,16 @@ function formatUptime(seconds) {
   return `${minutes}m`;
 }
 
+function formatNetworkSpeed(value) {
+  const mbps = Number(value);
+  if (!Number.isFinite(mbps) || mbps <= 0) return "-";
+  return mbps >= 1000 ? `${(mbps / 1000).toFixed(mbps % 1000 === 0 ? 0 : 1)} Gbps` : `${Math.round(mbps)} Mbps`;
+}
+
+function interfacePrimaryAddress(item) {
+  return item?.addresses?.find((address) => address.family === "IPv4")?.address || item?.addresses?.[0]?.address || "";
+}
+
 function escapeHtml(value) {
   return String(value ?? "")
     .replaceAll("&", "&amp;")
@@ -1596,6 +1606,7 @@ function renderServerHostMetrics(server) {
   const memory = metrics.memory || {};
   const disk = metrics.disk || {};
   const system = metrics.system || {};
+  const primaryInterface = (metrics.networkInterfaces || []).find((item) => interfacePrimaryAddress(item)) || metrics.networkInterfaces?.[0] || null;
   return `
     <div class="server-metrics-summary">
       <div class="panel-title compact-title">
@@ -1607,7 +1618,38 @@ function renderServerHostMetrics(server) {
         <div class="detail-stat"><span>Memoria</span><strong>${formatPercent(memory.usedPercent)}</strong><small>${formatBytes(memory.usedBytes)} / ${formatBytes(memory.totalBytes)}</small></div>
         <div class="detail-stat"><span>Disco</span><strong>${formatPercent(disk.usedPercent)}</strong><small>${escapeHtml(disk.mount || "-")} · ${formatBytes(disk.usedBytes)} / ${formatBytes(disk.totalBytes)}</small></div>
         <div class="detail-stat"><span>Uptime</span><strong>${formatUptime(system.uptimeSeconds)}</strong><small>${escapeHtml(server.probeHostName || system.type || "-")}</small></div>
+        <div class="detail-stat"><span>Rede</span><strong>${escapeHtml(interfacePrimaryAddress(primaryInterface) || "-")}</strong><small>${escapeHtml(primaryInterface?.name || "-")} · ${formatNetworkSpeed(primaryInterface?.speedMbps)}</small></div>
       </div>
+    </div>
+  `;
+}
+
+function renderNetworkInterfaces(metrics) {
+  const interfaces = Array.isArray(metrics?.networkInterfaces) ? metrics.networkInterfaces : [];
+  if (!interfaces.length) return "";
+  return `
+    <div class="probe-network-list">
+      <div class="panel-title compact-title">
+        <h3>Interfaces de rede</h3>
+        <span>${interfaces.length} interfaces</span>
+      </div>
+      ${interfaces
+        .map((item) => {
+          const addresses = (item.addresses || []).map((address) => address.address).filter(Boolean).join(", ") || "-";
+          return `
+            <article class="network-interface-row">
+              <div>
+                <strong>${escapeHtml(item.name || "-")}</strong>
+                <small>${escapeHtml(item.description || item.mac || "sem descricao")}</small>
+              </div>
+              <div>
+                <span>${escapeHtml(addresses)}</span>
+                <small>${escapeHtml(item.status || "-")} · ${formatNetworkSpeed(item.speedMbps)}</small>
+              </div>
+            </article>
+          `;
+        })
+        .join("")}
     </div>
   `;
 }
@@ -1643,6 +1685,7 @@ function renderProbeHostMetrics(probe) {
         <div class="detail-stat"><span>Arquitetura</span><strong>${escapeHtml(system.arch || "-")}</strong><small>${escapeHtml(cpu.model || "-")}</small></div>
         <div class="detail-stat"><span>Carga media</span><strong>${escapeHtml(loadAverage)}</strong><small>1 / 5 / 15 minutos</small></div>
       </div>
+      ${renderNetworkInterfaces(metrics)}
     </div>
   `;
 }
