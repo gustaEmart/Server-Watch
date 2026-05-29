@@ -1058,25 +1058,36 @@ async function checkProbeStaleness(nowMs = Date.now()) {
         addProbeEvent(server, "probe_stale", baseMessage);
       }
 
-      if (isLocalNetworkTarget(server.hostname)) {
-        const result = await pingHost(server.hostname);
-        const message = result.online
-          ? `${baseMessage} Servidor respondeu ao ping da central.`
-          : `${baseMessage} Ping da central falhou: ${result.error || "sem resposta"}`;
-
+      const result = await pingHost(server.hostname);
+      const localTarget = isLocalNetworkTarget(server.hostname);
+      if (result.online) {
+        const message = `${baseMessage} Servidor respondeu ao ping da central.`;
         server.lastCheckedAt = checkedAt;
         server.lastLatencyMs = result.latencyMs;
         server.lastError = message;
         server.probeCheckRequestedAt = null;
-
-        if (result.online) {
-          server.consecutiveFailures = 0;
-          server.currentStatus = "online";
+        server.consecutiveFailures = 0;
+        server.currentStatus = "online";
+        if (server.currentStatus !== previousStatus) {
+          server.previousStatus = previousStatus;
+          server.statusChangedAt = checkedAt;
+          addEvent(server, previousStatus, server.currentStatus, result.latencyMs, message);
         } else {
-          server.consecutiveFailures = (server.consecutiveFailures || 0) + 1;
-          if (server.consecutiveFailures >= server.failureThreshold) {
-            server.currentStatus = "offline";
-          }
+          broadcast({ type: "server_checked", server: publicServer(server), summary: summary() });
+        }
+        changed = true;
+        continue;
+      }
+
+      if (localTarget) {
+        const message = `${baseMessage} Ping da central falhou: ${result.error || "sem resposta"}`;
+        server.lastCheckedAt = checkedAt;
+        server.lastLatencyMs = null;
+        server.lastError = message;
+        server.probeCheckRequestedAt = null;
+        server.consecutiveFailures = (server.consecutiveFailures || 0) + 1;
+        if (server.consecutiveFailures >= server.failureThreshold) {
+          server.currentStatus = "offline";
         }
 
         if (server.currentStatus !== previousStatus) {
@@ -1090,9 +1101,11 @@ async function checkProbeStaleness(nowMs = Date.now()) {
         continue;
       }
 
-      const message = `${baseMessage} A central aguardara outro probe da mesma rede confirmar o status.`;
+      const message = `${baseMessage} Ping da central tambem nao confirmou o status: ${result.error || "sem resposta"}. Aguardando retorno do probe ou confirmacao por outro probe da mesma rede.`;
       if (server.lastError !== message || requested) {
         server.lastError = message;
+        server.lastCheckedAt = checkedAt;
+        server.lastLatencyMs = null;
         server.probeCheckRequestedAt = null;
         broadcast({ type: "server_checked", server: publicServer(server), summary: summary() });
         changed = true;

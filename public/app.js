@@ -300,6 +300,7 @@ function eventCategoryLabel(category) {
 function displayStatus(server) {
   if (!server.isActive) return "paused";
   if (server.dependencyStatus === "affected") return "dependency_down";
+  if (server.checkSource === "probe" && server.probeStatus === "stale") return "probe_stale";
   return server.currentStatus || "unknown";
 }
 
@@ -1460,7 +1461,9 @@ function renderDetail() {
   const offlineSince =
     !server.isActive
       ? `<div class="detail-stat"><span>Monitoramento</span><strong>Pausado</strong></div>`
-      : server.currentStatus === "offline"
+      : visibleStatus === "probe_stale"
+      ? `<div class="detail-stat"><span>Probe sem contato ha</span><strong>${formatDurationSince(server.probeLastSeenAt || server.lastProbeSeenAt)}</strong></div>`
+      : visibleStatus === "offline"
       ? `<div class="detail-stat"><span>Indisponivel ha</span><strong>${formatDurationSince(server.statusChangedAt)}</strong></div>`
       : `<div class="detail-stat"><span>Status desde</span><strong>${formatDate(server.statusChangedAt)}</strong></div>`;
   const pausedNotice = server.isActive
