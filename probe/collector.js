@@ -5,8 +5,27 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const DEFAULT_CONFIG = new URL("./config.json", import.meta.url);
-const VERSION = "0.5.0";
+const VERSION = "0.6.0";
 const DEFAULT_QUEUE_MAX_BATCHES = 1000;
+const CRITICAL_SERVICE_NAMES = [
+  "apache2",
+  "docker",
+  "glpi-agent",
+  "httpd",
+  "mariadb",
+  "mssql-server",
+  "mysql",
+  "nginx",
+  "postgresql",
+  "sshd",
+  "zabbix-agent",
+  "Docker",
+  "MSSQLSERVER",
+  "MySQL",
+  "Spooler",
+  "W3SVC",
+  "WinRM"
+];
 
 function argValue(name) {
   const index = process.argv.indexOf(name);
@@ -177,6 +196,301 @@ async function diskUsage() {
   }
 }
 
+async function diskPartitions() {
+  try {
+    if (os.platform() === "win32") {
+      const output = await runCommand("powershell.exe", [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-Command",
+        "Get-CimInstance Win32_LogicalDisk -Filter \"DriveType=3\" | Select-Object DeviceID,VolumeName,FileSystem,Size,FreeSpace | ConvertTo-Json -Compress"
+      ], 4000);
+      const parsed = JSON.parse(output.trim() || "[]");
+      const rows = Array.isArray(parsed) ? parsed : [parsed];
+      return rows
+        .map((row) => {
+          const totalBytes = Number(row.Size || 0);
+          const freeBytes = Number(row.FreeSpace || 0);
+          if (!totalBytes) return null;
+          const usedBytes = Math.max(0, totalBytes - freeBytes);
+          return {
+            mount: String(row.DeviceID || "").trim(),
+            label: String(row.VolumeName || "").trim() || null,
+            filesystem: String(row.FileSystem || "").trim() || null,
+            totalBytes,
+            freeBytes,
+            usedBytes,
+            usedPercent: Math.round((usedBytes / totalBytes) * 100)
+          };
+        })
+        .filter(Boolean)
+        .slice(0, 24);
+    }
+
+    const output = await runCommand("df", ["-kPT", "-x", "tmpfs", "-x", "devtmpfs", "-x", "squashfs"], 4000);
+    return output
+      .trim()
+      .split(/\r?\n/)
+      .slice(1)
+      .map((line) => {
+        const parts = line.split(/\s+/);
+        if (parts.length < 7) return null;
+        const totalBytes = Number(parts[2]) * 1024;
+        const usedBytes = Number(parts[3]) * 1024;
+        const freeBytes = Number(parts[4]) * 1024;
+        if (!totalBytes) return null;
+        return {
+          filesystem: parts[1] || null,
+          mount: parts.slice(6).join(" ") || parts[6] || null,
+          totalBytes,
+          usedBytes,
+          freeBytes,
+          usedPercent: Math.round((usedBytes / totalBytes) * 100)
+        };
+      })
+      .filter(Boolean)
+      .slice(0, 24);
+  } catch {
+    return [];
+  }
+}
+
+function splitCommandLines(output) {
+  return String(output || "").trim().split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+}
+
+async function listeningPorts() {
+  try {
+    if (os.platform() === "win32") {
+      const output = await runCommand("powershell.exe", [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-Command",
+        "Get-NetTCPConnection -State Listen | Select-Object LocalAddress,LocalPort,OwningProcess | Sort-Object LocalPort -Unique | ConvertTo-Json -Compress"
+      ], 4000);
+      const parsed = JSON.parse(output.trim() || "[]");
+      const rows = Array.isArray(parsed) ? parsed : [parsed];
+      return rows
+        .map((row) => ({
+          protocol: "tcp",
+          address: String(row.LocalAddress || "").trim() || null,
+          port: Number(row.LocalPort),
+          processId: Number(row.OwningProcess) || null
+        }))
+        .filter((row) => Number.isFinite(row.port) && row.port > 0)
+        .slice(0, 64);
+    }
+
+    let output = "";
+    try {
+      output = await runCommand("ss", ["-ltnH"], 3500);
+    } catch {
+      output = await runCommand("netstat", ["-ltn"], 3500);
+    }
+    return splitCommandLines(output)
+      .map((line) => {
+        const parts = line.split(/\s+/);
+        const endpoint = parts.find((part) => /:\d+$/.test(part));
+        if (!endpoint) return null;
+        const match = endpoint.match(/^(.*):(\d+)$/);
+        if (!match) return null;
+        return {
+          protocol: "tcp",
+          address: match[1].replace(/^\[|\]$/g, "") || null,
+          port: Number(match[2])
+        };
+      })
+      .filter((row) => row && Number.isFinite(row.port) && row.port > 0)
+      .filter((row, index, rows) => rows.findIndex((item) => item.port === row.port && item.address === row.address) === index)
+      .sort((a, b) => a.port - b.port)
+      .slice(0, 64);
+  } catch {
+    return [];
+  }
+}
+
+async function criticalServices() {
+  try {
+    if (os.platform() === "win32") {
+      const names = CRITICAL_SERVICE_NAMES.map((name) => `'${name.replace(/'/g, "''")}'`).join(",");
+      const output = await runCommand("powershell.exe", [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-Command",
+        `$names=@(${names}); Get-Service | Where-Object {$names -contains $_.Name -or $names -contains $_.DisplayName} | Select-Object Name,DisplayName,Status,StartType | ConvertTo-Json -Compress`
+      ], 4500);
+      const parsed = JSON.parse(output.trim() || "[]");
+      const rows = Array.isArray(parsed) ? parsed : [parsed];
+      return rows
+        .map((row) => ({
+          name: String(row.Name || "").trim(),
+          displayName: String(row.DisplayName || "").trim() || null,
+          status: String(row.Status || "").trim() || null,
+          startType: String(row.StartType || "").trim() || null
+        }))
+        .filter((row) => row.name)
+        .slice(0, 32);
+    }
+
+    const output = await runCommand("systemctl", ["list-units", "--type=service", "--all", "--no-legend", "--no-pager"], 4500);
+    const watched = new Set(CRITICAL_SERVICE_NAMES.map((name) => name.toLowerCase()));
+    return splitCommandLines(output)
+      .map((line) => {
+        const parts = line.replace(/^●\s*/, "").split(/\s+/);
+        const unit = parts[0] || "";
+        const baseName = unit.replace(/\.service$/, "").toLowerCase();
+        if (!watched.has(baseName)) return null;
+        return {
+          name: unit,
+          displayName: unit.replace(/\.service$/, ""),
+          load: parts[1] || null,
+          active: parts[2] || null,
+          status: parts[3] || null
+        };
+      })
+      .filter(Boolean)
+      .slice(0, 32);
+  } catch {
+    return [];
+  }
+}
+
+async function topProcesses() {
+  try {
+    if (os.platform() === "win32") {
+      const output = await runCommand("powershell.exe", [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-Command",
+        "Get-Process | Sort-Object CPU -Descending | Select-Object -First 10 ProcessName,Id,CPU,WorkingSet64 | ConvertTo-Json -Compress"
+      ], 4500);
+      const parsed = JSON.parse(output.trim() || "[]");
+      const rows = Array.isArray(parsed) ? parsed : [parsed];
+      return rows
+        .map((row) => ({
+          name: String(row.ProcessName || "").trim(),
+          processId: Number(row.Id) || null,
+          cpuSeconds: Number(row.CPU) || null,
+          memoryBytes: Number(row.WorkingSet64) || null
+        }))
+        .filter((row) => row.name)
+        .slice(0, 10);
+    }
+
+    const output = await runCommand("ps", ["-eo", "pid,comm,pcpu,pmem,rss", "--sort=-pcpu"], 3500);
+    return splitCommandLines(output)
+      .slice(1, 11)
+      .map((line) => {
+        const parts = line.split(/\s+/);
+        return {
+          processId: Number(parts[0]) || null,
+          name: parts[1] || "",
+          cpuPercent: Number(parts[2]) || null,
+          memoryPercent: Number(parts[3]) || null,
+          memoryBytes: Number(parts[4]) ? Number(parts[4]) * 1024 : null
+        };
+      })
+      .filter((row) => row.name);
+  } catch {
+    return [];
+  }
+}
+
+async function criticalEvents() {
+  try {
+    if (os.platform() === "win32") {
+      const output = await runCommand("powershell.exe", [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-Command",
+        "Get-WinEvent -FilterHashtable @{LogName=@('System','Application');Level=@(1,2)} -MaxEvents 10 | Select-Object TimeCreated,ProviderName,Id,LevelDisplayName,Message | ConvertTo-Json -Compress"
+      ], 6000);
+      const parsed = JSON.parse(output.trim() || "[]");
+      const rows = Array.isArray(parsed) ? parsed : [parsed];
+      return rows
+        .map((row) => ({
+          createdAt: row.TimeCreated || null,
+          source: String(row.ProviderName || "").trim() || null,
+          eventId: Number(row.Id) || null,
+          level: String(row.LevelDisplayName || "").trim() || null,
+          message: String(row.Message || "").replace(/\s+/g, " ").trim().slice(0, 500)
+        }))
+        .filter((row) => row.message || row.source)
+        .slice(0, 10);
+    }
+
+    const output = await runCommand("journalctl", ["-p", "err..alert", "-n", "10", "--no-pager", "-o", "short-iso"], 5000);
+    return splitCommandLines(output)
+      .map((line) => {
+        const match = line.match(/^(\S+\s+\S+)\s+\S+\s+([^:]+):\s*(.*)$/);
+        return {
+          createdAt: match?.[1] || null,
+          source: match?.[2] || null,
+          level: "error",
+          message: (match?.[3] || line).slice(0, 500)
+        };
+      })
+      .slice(0, 10);
+  } catch {
+    return [];
+  }
+}
+
+async function virtualizationInventory() {
+  try {
+    if (os.platform() === "win32") {
+      const output = await runCommand("powershell.exe", [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-Command",
+        "if(Get-Command Get-VM -ErrorAction SilentlyContinue){Get-VM | Select-Object Name,State,Status,Uptime,MemoryAssigned,ProcessorCount | ConvertTo-Json -Compress}"
+      ], 5000);
+      if (!output.trim()) return [];
+      const parsed = JSON.parse(output.trim() || "[]");
+      const rows = Array.isArray(parsed) ? parsed : [parsed];
+      return rows
+        .map((row) => ({
+          type: "vm",
+          name: String(row.Name || "").trim(),
+          state: String(row.State || row.Status || "").trim() || null,
+          memoryBytes: Number(row.MemoryAssigned) || null,
+          cpuCount: Number(row.ProcessorCount) || null
+        }))
+        .filter((row) => row.name)
+        .slice(0, 64);
+    }
+
+    const rows = [];
+    try {
+      const output = await runCommand("qm", ["list"], 3500);
+      rows.push(...splitCommandLines(output).slice(1).map((line) => {
+        const parts = line.split(/\s+/);
+        return { type: "vm", id: parts[0], name: parts[1], state: parts[2] || null, memoryMb: Number(parts[3]) || null };
+      }));
+    } catch {
+      // qm exists only on Proxmox hosts.
+    }
+    try {
+      const output = await runCommand("pct", ["list"], 3500);
+      rows.push(...splitCommandLines(output).slice(1).map((line) => {
+        const parts = line.split(/\s+/);
+        return { type: "container", id: parts[0], state: parts[1] || null, name: parts[2] || null };
+      }));
+    } catch {
+      // pct exists only on Proxmox hosts.
+    }
+    return rows.filter((row) => row.name || row.id).slice(0, 64);
+  } catch {
+    return [];
+  }
+}
+
 function parseLinkSpeedMbps(value) {
   const text = String(value || "").trim();
   if (!text) return null;
@@ -289,7 +603,13 @@ async function hostMetrics() {
       usedPercent: totalMemoryBytes > 0 ? Math.round((usedMemoryBytes / totalMemoryBytes) * 100) : null
     },
     disk: await diskUsage(),
+    diskPartitions: await diskPartitions(),
     networkInterfaces: await networkInterfaceMetrics(),
+    listeningPorts: await listeningPorts(),
+    services: await criticalServices(),
+    topProcesses: await topProcesses(),
+    criticalEvents: await criticalEvents(),
+    virtualization: await virtualizationInventory(),
     system: {
       uptimeSeconds: Math.floor(os.uptime()),
       arch: os.arch(),

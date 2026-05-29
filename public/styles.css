@@ -1756,6 +1756,52 @@ textarea:focus {
   margin-top: 6px;
 }
 
+.profile-extra-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+
+.profile-data-row {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px;
+  background: var(--surface-muted);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(180px, 0.8fr);
+  gap: 12px;
+  align-items: center;
+}
+
+.profile-data-row strong,
+.profile-data-row small,
+.profile-data-row span {
+  display: block;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.profile-data-row small {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 700;
+  margin-top: 3px;
+}
+
+.profile-data-row > div:last-child {
+  text-align: right;
+}
+
+.profile-data-row > div:last-child span {
+  font-weight: 900;
+}
+
+.profile-data-row.event-row {
+  grid-template-columns: minmax(180px, 0.55fr) minmax(0, 1fr);
+}
+
 .tag-list {
   display: flex;
   gap: 6px;
@@ -2688,6 +2734,8 @@ label {
   .server-profile-grid,
   .profile-stat-grid,
   .metric-profile-grid,
+  .profile-data-row,
+  .profile-data-row.event-row,
   .executive-grid,
   .form-grid,
   .detail-grid,
@@ -2733,6 +2781,10 @@ label {
 
   .server-directory-list {
     max-height: none;
+  }
+
+  .profile-data-row > div:last-child {
+    text-align: left;
   }
 
   .server-row {

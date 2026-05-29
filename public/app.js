@@ -1779,6 +1779,7 @@ function renderServerProfile() {
           <div class="detail-stat"><span>Interface principal</span><strong>${escapeHtml(interfacePrimaryAddress(primaryInterface) || "-")}</strong><small>${escapeHtml(primaryInterface?.name || "-")} · ${formatNetworkSpeed(primaryInterface?.speedMbps)}</small></div>
         </div>
         ${metrics ? renderNetworkInterfaces(metrics) : `<div class="empty-list compact-empty">Aguardando metricas do Probe Collector atualizado.</div>`}
+        ${renderExtendedServerMetrics(metrics)}
       </article>
 
       <article class="profile-section profile-section-wide">
@@ -2205,6 +2206,110 @@ function renderNetworkInterfaces(metrics) {
         .join("")}
     </div>
   `;
+}
+
+function renderMetricRows(title, subtitle, rows) {
+  if (!rows?.length) return "";
+  return `
+    <div class="profile-extra-list">
+      <div class="panel-title compact-title">
+        <h3>${escapeHtml(title)}</h3>
+        <span>${escapeHtml(subtitle)}</span>
+      </div>
+      ${rows.join("")}
+    </div>
+  `;
+}
+
+function renderExtendedServerMetrics(metrics) {
+  if (!metrics) return "";
+  const diskRows = (metrics.diskPartitions || []).map((item) => `
+    <article class="profile-data-row">
+      <div>
+        <strong>${escapeHtml(item.mount || item.filesystem || "-")}</strong>
+        <small>${escapeHtml([item.label, item.filesystem].filter(Boolean).join(" · ") || "volume local")}</small>
+      </div>
+      <div>
+        <span>${formatPercent(item.usedPercent)}</span>
+        <small>${formatBytes(item.usedBytes)} / ${formatBytes(item.totalBytes)} · livre ${formatBytes(item.freeBytes)}</small>
+      </div>
+    </article>
+  `);
+
+  const portRows = (metrics.listeningPorts || []).map((item) => `
+    <article class="profile-data-row compact-row">
+      <div>
+        <strong>${escapeHtml(String(item.port || "-"))}</strong>
+        <small>${escapeHtml(item.protocol || "tcp")}${item.processId ? ` · PID ${escapeHtml(item.processId)}` : ""}</small>
+      </div>
+      <div>
+        <span>${escapeHtml(item.address || "todas interfaces")}</span>
+      </div>
+    </article>
+  `);
+
+  const serviceRows = (metrics.services || []).map((item) => {
+    const status = item.status || item.active || "-";
+    return `
+      <article class="profile-data-row compact-row">
+        <div>
+          <strong>${escapeHtml(item.displayName || item.name || "-")}</strong>
+          <small>${escapeHtml(item.name || "")}</small>
+        </div>
+        <div>
+          <span>${escapeHtml(status)}</span>
+          <small>${escapeHtml(item.startType || item.load || "")}</small>
+        </div>
+      </article>
+    `;
+  });
+
+  const processRows = (metrics.topProcesses || []).map((item) => `
+    <article class="profile-data-row compact-row">
+      <div>
+        <strong>${escapeHtml(item.name || "-")}</strong>
+        <small>${item.processId ? `PID ${escapeHtml(item.processId)}` : "processo"}</small>
+      </div>
+      <div>
+        <span>${item.cpuPercent !== null && item.cpuPercent !== undefined ? `${escapeHtml(item.cpuPercent)}% CPU` : item.cpuSeconds ? `${escapeHtml(Math.round(item.cpuSeconds))}s CPU` : "CPU -"}</span>
+        <small>${formatBytes(item.memoryBytes)}${item.memoryPercent !== null && item.memoryPercent !== undefined ? ` · ${escapeHtml(item.memoryPercent)}% memoria` : ""}</small>
+      </div>
+    </article>
+  `);
+
+  const eventRows = (metrics.criticalEvents || []).map((item) => `
+    <article class="profile-data-row event-row">
+      <div>
+        <strong>${escapeHtml(item.source || item.level || "Evento critico")}</strong>
+        <small>${escapeHtml([item.level, item.eventId ? `ID ${item.eventId}` : null, item.createdAt].filter(Boolean).join(" · "))}</small>
+      </div>
+      <div>
+        <span>${escapeHtml(item.message || "-")}</span>
+      </div>
+    </article>
+  `);
+
+  const virtualizationRows = (metrics.virtualization || []).map((item) => `
+    <article class="profile-data-row compact-row">
+      <div>
+        <strong>${escapeHtml(item.name || item.id || "-")}</strong>
+        <small>${escapeHtml([item.type, item.id].filter(Boolean).join(" · ") || "virtualizacao")}</small>
+      </div>
+      <div>
+        <span>${escapeHtml(item.state || "-")}</span>
+        <small>${item.memoryBytes ? formatBytes(item.memoryBytes) : item.memoryMb ? `${escapeHtml(item.memoryMb)} MB` : ""}${item.cpuCount ? ` · ${escapeHtml(item.cpuCount)} CPU` : ""}</small>
+      </div>
+    </article>
+  `);
+
+  return [
+    renderMetricRows("Particoes de disco", `${diskRows.length} volumes`, diskRows),
+    renderMetricRows("Portas locais", `${portRows.length} portas em escuta`, portRows),
+    renderMetricRows("Servicos criticos", `${serviceRows.length} servicos encontrados`, serviceRows),
+    renderMetricRows("Processos principais", `${processRows.length} processos`, processRows),
+    renderMetricRows("Eventos criticos", `${eventRows.length} eventos`, eventRows),
+    renderMetricRows("Virtualizacao", `${virtualizationRows.length} convidados`, virtualizationRows)
+  ].join("");
 }
 
 function renderProbeHostMetrics(probe) {

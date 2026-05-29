@@ -46,7 +46,7 @@ const SESSION_COOKIE = "sw_session";
 const SESSION_TTL_MS = 8 * 60 * 60 * 1000;
 const DEFAULT_ADMIN_EMAIL = process.env.SERVERWATCH_ADMIN_EMAIL || "admin@serverwatch.local";
 const DEFAULT_ADMIN_PASSWORD = process.env.SERVERWATCH_ADMIN_PASSWORD || "admin123";
-const PROBE_COLLECTOR_VERSION = "0.5.0";
+const PROBE_COLLECTOR_VERSION = "0.6.0";
 
 const sockets = new Set();
 const sessions = new Map();
@@ -1289,6 +1289,11 @@ function normalizeNumber(value) {
   return Number.isFinite(number) ? number : null;
 }
 
+function metricText(value, maxLength = 200) {
+  const text = String(value || "").trim();
+  return text ? text.slice(0, maxLength) : null;
+}
+
 function normalizeHostMetrics(value, fallback = null) {
   let metrics = value;
   if (!metrics) return fallback || null;
@@ -1333,6 +1338,83 @@ function normalizeHostMetrics(value, fallback = null) {
         .filter((item) => item.name || item.addresses.length || item.mac)
         .slice(0, 24)
     : [];
+  const diskPartitions = Array.isArray(metrics.diskPartitions)
+    ? metrics.diskPartitions
+        .map((item) => ({
+          mount: metricText(item?.mount, 120),
+          label: metricText(item?.label, 120),
+          filesystem: metricText(item?.filesystem, 80),
+          totalBytes: normalizeNumber(item?.totalBytes),
+          usedBytes: normalizeNumber(item?.usedBytes),
+          freeBytes: normalizeNumber(item?.freeBytes),
+          usedPercent: normalizeNumber(item?.usedPercent)
+        }))
+        .filter((item) => item.mount || item.filesystem)
+        .slice(0, 24)
+    : [];
+  const listeningPorts = Array.isArray(metrics.listeningPorts)
+    ? metrics.listeningPorts
+        .map((item) => ({
+          protocol: metricText(item?.protocol, 16) || "tcp",
+          address: metricText(item?.address, 120),
+          port: normalizeNumber(item?.port),
+          processId: normalizeNumber(item?.processId)
+        }))
+        .filter((item) => item.port !== null && item.port > 0 && item.port <= 65535)
+        .slice(0, 64)
+    : [];
+  const services = Array.isArray(metrics.services)
+    ? metrics.services
+        .map((item) => ({
+          name: metricText(item?.name, 120),
+          displayName: metricText(item?.displayName, 160),
+          status: metricText(item?.status, 80),
+          active: metricText(item?.active, 80),
+          load: metricText(item?.load, 80),
+          startType: metricText(item?.startType, 80)
+        }))
+        .filter((item) => item.name || item.displayName)
+        .slice(0, 32)
+    : [];
+  const topProcesses = Array.isArray(metrics.topProcesses)
+    ? metrics.topProcesses
+        .map((item) => ({
+          name: metricText(item?.name, 120),
+          processId: normalizeNumber(item?.processId),
+          cpuPercent: normalizeNumber(item?.cpuPercent),
+          cpuSeconds: normalizeNumber(item?.cpuSeconds),
+          memoryPercent: normalizeNumber(item?.memoryPercent),
+          memoryBytes: normalizeNumber(item?.memoryBytes)
+        }))
+        .filter((item) => item.name)
+        .slice(0, 10)
+    : [];
+  const criticalEvents = Array.isArray(metrics.criticalEvents)
+    ? metrics.criticalEvents
+        .map((item) => ({
+          createdAt: metricText(item?.createdAt, 80),
+          source: metricText(item?.source, 160),
+          eventId: normalizeNumber(item?.eventId),
+          level: metricText(item?.level, 80),
+          message: metricText(item?.message, 500)
+        }))
+        .filter((item) => item.message || item.source)
+        .slice(0, 10)
+    : [];
+  const virtualization = Array.isArray(metrics.virtualization)
+    ? metrics.virtualization
+        .map((item) => ({
+          type: metricText(item?.type, 40),
+          id: metricText(item?.id, 80),
+          name: metricText(item?.name, 160),
+          state: metricText(item?.state, 80),
+          memoryBytes: normalizeNumber(item?.memoryBytes),
+          memoryMb: normalizeNumber(item?.memoryMb),
+          cpuCount: normalizeNumber(item?.cpuCount)
+        }))
+        .filter((item) => item.name || item.id)
+        .slice(0, 64)
+    : [];
 
   return {
     collectedAt: String(metrics.collectedAt || nowIso()),
@@ -1352,6 +1434,12 @@ function normalizeHostMetrics(value, fallback = null) {
     },
     disk,
     networkInterfaces,
+    diskPartitions,
+    listeningPorts,
+    services,
+    topProcesses,
+    criticalEvents,
+    virtualization,
     system: {
       uptimeSeconds: normalizeNumber(metrics.system?.uptimeSeconds),
       arch: String(metrics.system?.arch || "").trim() || null,
