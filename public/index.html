@@ -49,6 +49,7 @@
 
         <nav class="nav-tabs" aria-label="Navegacao principal">
           <a class="nav-tab active" href="/dashboard" data-view="dashboard">Dashboard</a>
+          <a class="nav-tab" href="/servidores" data-view="servers">Servidores</a>
           <a class="nav-tab" href="/alertas" data-view="alerts">Alertas</a>
           <a class="nav-tab" href="/historico" data-view="history">Historico</a>
           <a class="nav-tab" href="/configuracoes" data-view="settings">Configuracoes</a>
@@ -198,6 +199,27 @@
                 <span>Selecione um item para ver latencia, historico recente e acoes.</span>
               </div>
             </aside>
+          </div>
+        </section>
+
+        <section class="view" id="serversView">
+          <div class="server-profile-layout">
+            <aside class="server-directory-panel">
+              <div class="panel-title compact-title">
+                <div>
+                  <h2>Inventario</h2>
+                  <span id="serverDirectoryCount">0 servidores</span>
+                </div>
+              </div>
+              <div class="server-directory-list" id="serverDirectoryList"></div>
+            </aside>
+
+            <section class="server-profile-panel" id="serverProfilePanel">
+              <div class="empty-state">
+                <strong>Nenhum servidor selecionado</strong>
+                <span>Selecione um servidor para abrir a ficha operacional completa.</span>
+              </div>
+            </section>
           </div>
         </section>
 

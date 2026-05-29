@@ -60,6 +60,9 @@ const els = {
   serverCount: document.querySelector("#serverCount"),
   toggleTopologyAll: document.querySelector("#toggleTopologyAll"),
   detailPanel: document.querySelector("#detailPanel"),
+  serverDirectoryList: document.querySelector("#serverDirectoryList"),
+  serverDirectoryCount: document.querySelector("#serverDirectoryCount"),
+  serverProfilePanel: document.querySelector("#serverProfilePanel"),
   timeline: document.querySelector("#timeline"),
   eventCount: document.querySelector("#eventCount"),
   historyServerFilter: document.querySelector("#historyServerFilter"),
@@ -153,6 +156,7 @@ const els = {
 
 const VIEW_ROUTES = {
   dashboard: "/dashboard",
+  servers: "/servidores",
   admin: "/admin",
   groups: "/empresas",
   probes: "/probes",
@@ -611,6 +615,7 @@ function syncViewFromLocation(options = {}) {
 function updateTopbarContext() {
   const titles = {
     dashboard: ["Monitoramento em tempo real", "Disponibilidade dos servidores"],
+    servers: ["Inventario operacional", "Informacoes dos servidores"],
     admin: ["Gestao do sistema", "Painel administrativo"],
     groups: ["Organizacao operacional", "Empresas e grupos"],
     probes: ["Instalacao e coleta", "Probe Collector"],
@@ -1524,6 +1529,11 @@ function renderDetail() {
       </div>
     `
     : "";
+  const fullProfileAction = `
+    <div class="detail-actions">
+      <button class="ghost-button compact" type="button" data-view-server="${server.id}">Abrir ficha completa</button>
+    </div>
+  `;
   const probeStats =
     server.checkSource === "probe"
       ? `
@@ -1577,6 +1587,7 @@ function renderDetail() {
 
     ${serverHostMetrics}
 
+    ${fullProfileAction}
     ${adminActions}
 
     <div class="panel-title">
@@ -1592,6 +1603,194 @@ function renderDetail() {
     </div>
 
     ${dangerZone}
+  `;
+}
+
+function sortedServersForDirectory() {
+  return [...state.servers].sort((a, b) => {
+    const groupCompare = groupLabel(a.groupId).localeCompare(groupLabel(b.groupId), "pt-BR");
+    if (groupCompare) return groupCompare;
+    return String(a.name || "").localeCompare(String(b.name || ""), "pt-BR");
+  });
+}
+
+function renderServerDirectory() {
+  if (!els.serverDirectoryList) return;
+  const servers = sortedServersForDirectory();
+  if (els.serverDirectoryCount) {
+    els.serverDirectoryCount.textContent = `${servers.length} ${servers.length === 1 ? "servidor" : "servidores"}`;
+  }
+  els.serverDirectoryList.innerHTML = servers.length
+    ? servers
+        .map((server) => {
+          const visibleStatus = displayStatus(server);
+          const selected = server.id === state.selectedServerId ? "selected" : "";
+          return `
+            <button class="server-directory-item ${selected}" type="button" data-profile-server-id="${server.id}">
+              <span class="status-pulse ${visibleStatus}"></span>
+              ${platformIcon(server.platform)}
+              <span>
+                <strong>${escapeHtml(server.name)}</strong>
+                <small>${escapeHtml(server.hostname)} · ${escapeHtml(groupLabel(server.groupId))}</small>
+              </span>
+              <em>${statusLabel(visibleStatus)}</em>
+            </button>
+          `;
+        })
+        .join("")
+    : `<div class="empty-list">Nenhum servidor cadastrado.</div>`;
+}
+
+function renderServerProfile() {
+  if (!els.serverProfilePanel) return;
+  const server = state.servers.find((item) => item.id === state.selectedServerId);
+  if (!server) {
+    els.serverProfilePanel.innerHTML = `
+      <div class="empty-state">
+        <strong>Nenhum servidor selecionado</strong>
+        <span>Selecione um servidor para abrir a ficha operacional completa.</span>
+      </div>
+    `;
+    return;
+  }
+
+  const visibleStatus = displayStatus(server);
+  const metrics = server.probeHostMetrics || null;
+  const cpu = metrics?.cpu || {};
+  const memory = metrics?.memory || {};
+  const disk = metrics?.disk || {};
+  const system = metrics?.system || {};
+  const primaryInterface = (metrics?.networkInterfaces || []).find((item) => interfacePrimaryAddress(item)) || metrics?.networkInterfaces?.[0] || null;
+  const recent = state.events.filter((event) => event.serverId === server.id).slice(0, 10);
+  const dependents = state.servers.filter((item) => item.parentId === server.id);
+  const macAddresses = Array.isArray(server.macAddresses) && server.macAddresses.length ? server.macAddresses : primaryMac(server) ? [primaryMac(server)] : [];
+  const statusTimeLabel = !server.isActive
+    ? "Monitoramento pausado"
+    : visibleStatus === "offline"
+    ? `Offline ha ${formatDurationSince(server.statusChangedAt)}`
+    : visibleStatus === "probe_stale"
+    ? `Probe sem contato ha ${formatDurationSince(server.probeLastSeenAt || server.lastProbeSeenAt)}`
+    : `Status desde ${formatDate(server.statusChangedAt)}`;
+  const tags = (server.tags || []).map((tag) => `<span class="tag">${escapeHtml(tag)}</span>`).join("");
+  const adminActions = isAdmin()
+    ? `
+      <div class="profile-actions">
+        ${
+          server.isActive
+            ? `<button class="ghost-button compact" type="button" data-action="check" data-id="${server.id}">${server.checkSource === "probe" ? "Solicitar checagem" : "Checar agora"}</button>`
+            : ""
+        }
+        <button class="ghost-button compact" type="button" data-action="edit" data-id="${server.id}">Editar</button>
+        <button class="ghost-button compact" type="button" data-action="toggle" data-id="${server.id}">${server.isActive ? "Desativar" : "Reativar"}</button>
+      </div>
+    `
+    : "";
+
+  els.serverProfilePanel.innerHTML = `
+    <section class="server-profile-hero">
+      <div>
+        <div class="profile-title-row">
+          <h2>${platformIcon(server.platform)}${escapeHtml(server.name)}</h2>
+          <span class="status-badge ${visibleStatus}">${statusLabel(visibleStatus)}</span>
+        </div>
+        <p>${escapeHtml(server.description || "Sem descricao cadastrada.")}</p>
+        <div class="detail-meta">${escapeHtml(server.hostname)} · ${platformLabel(server.platform)} · ${environmentLabel(server.environment)} · ${escapeHtml(groupLabel(server.groupId))}</div>
+        <div class="tag-list">${tags || `<span class="tag">sem tags</span>`}</div>
+      </div>
+      ${adminActions}
+    </section>
+
+    <section class="server-profile-grid">
+      <article class="profile-section">
+        <div class="panel-title compact-title">
+          <h3>Resumo operacional</h3>
+          <span>${statusTimeLabel}</span>
+        </div>
+        <div class="profile-stat-grid">
+          <div class="detail-stat"><span>IP ou hostname</span><strong>${escapeHtml(server.hostname)}</strong></div>
+          <div class="detail-stat"><span>Origem da checagem</span><strong>${checkSourceLabel(server.checkSource)}</strong></div>
+          <div class="detail-stat"><span>Ultima checagem</span><strong>${formatDate(server.lastCheckedAt)}</strong></div>
+          <div class="detail-stat"><span>Latencia</span><strong>${server.lastLatencyMs ?? "-"} ms</strong></div>
+          <div class="detail-stat"><span>Intervalo</span><strong>${server.checkInterval}s</strong></div>
+          <div class="detail-stat"><span>Falhas para offline</span><strong>${server.failureThreshold || "-"}</strong></div>
+        </div>
+        ${server.lastError ? `<div class="profile-note"><strong>Ultima observacao</strong><span>${escapeHtml(server.lastError)}</span></div>` : ""}
+      </article>
+
+      <article class="profile-section">
+        <div class="panel-title compact-title">
+          <h3>Inventario</h3>
+          <span>${platformLabel(server.platform)}</span>
+        </div>
+        <div class="profile-stat-grid">
+          <div class="detail-stat"><span>Sistema</span><strong>${platformIcon(server.platform)}${platformLabel(server.platform)}</strong><small>${escapeHtml(system.type || system.release || "-")}</small></div>
+          <div class="detail-stat"><span>Nome do host</span><strong>${escapeHtml(server.probeHostName || "-")}</strong></div>
+          <div class="detail-stat"><span>CPU</span><strong>${escapeHtml(cpu.model || "-")}</strong><small>${cpu.cores ? `${escapeHtml(cpu.cores)} cores` : "sem dados"}</small></div>
+          <div class="detail-stat"><span>Uptime</span><strong>${formatUptime(system.uptimeSeconds)}</strong></div>
+          <div class="detail-stat"><span>MAC principal</span><strong>${escapeHtml(primaryMac(server) || "-")}</strong></div>
+          <div class="detail-stat"><span>MACs coletados</span><strong>${macAddresses.length || "-"}</strong><small>${escapeHtml(macAddresses.join(", ") || "-")}</small></div>
+        </div>
+      </article>
+
+      <article class="profile-section">
+        <div class="panel-title compact-title">
+          <h3>Probe e verificacao</h3>
+          <span>${probeStatusLabel(server.probeStatus)}</span>
+        </div>
+        <div class="profile-stat-grid">
+          <div class="detail-stat"><span>Probe</span><strong>${escapeHtml(server.probeId || "-")}</strong></div>
+          <div class="detail-stat"><span>Status do probe</span><strong><span class="status-badge ${server.probeStatus === "stale" ? "probe_stale" : server.probeStatus || "unknown"}">${probeStatusLabel(server.probeStatus)}</span></strong></div>
+          <div class="detail-stat"><span>Ultimo envio</span><strong>${formatDate(server.lastProbeSeenAt)}</strong></div>
+          <div class="detail-stat"><span>Limite sem contato</span><strong>${server.probeStaleAfterSeconds ? `${server.probeStaleAfterSeconds}s` : "-"}</strong></div>
+          <div class="detail-stat"><span>Verificacao alternativa</span><strong>${probeFallbackLabel(server.probeFallbackStatus)}</strong><small>${server.probeFallbackCheckedAt ? formatDate(server.probeFallbackCheckedAt) : ""}</small></div>
+          <div class="detail-stat"><span>Checagem solicitada</span><strong>${formatDate(server.probeCheckRequestedAt)}</strong></div>
+        </div>
+      </article>
+
+      <article class="profile-section">
+        <div class="panel-title compact-title">
+          <h3>Infraestrutura</h3>
+          <span>${nodeTypeLabel(server.nodeType)}</span>
+        </div>
+        <div class="profile-stat-grid">
+          <div class="detail-stat"><span>Tipo</span><strong>${nodeTypeLabel(server.nodeType)}</strong></div>
+          <div class="detail-stat"><span>Plataforma</span><strong>${infrastructurePlatformLabel(server.infrastructurePlatform)}</strong></div>
+          <div class="detail-stat"><span>Host pai</span><strong>${escapeHtml(server.parentName || "-")}</strong></div>
+          <div class="detail-stat"><span>Estado dependencia</span><strong>${server.dependencyStatus === "affected" ? "Afetado" : server.dependencyStatus === "orphan" ? "Orfao" : server.dependencyStatus === "ok" ? "OK" : "Independente"}</strong></div>
+        </div>
+        ${
+          dependents.length
+            ? `<div class="dependency-list">${dependents
+                .map((item) => `<button type="button" data-profile-server-id="${item.id}">${platformIcon(item.platform)}<span>${escapeHtml(item.name)}</span><strong class="status-badge ${displayStatus(item)}">${statusLabel(displayStatus(item))}</strong></button>`)
+                .join("")}</div>`
+            : `<div class="empty-list compact-empty">Sem dependentes vinculados.</div>`
+        }
+      </article>
+
+      <article class="profile-section profile-section-wide">
+        <div class="panel-title compact-title">
+          <h3>Metricas do host</h3>
+          <span>${formatDate(metrics?.collectedAt || server.probeHostMetricsUpdatedAt)}</span>
+        </div>
+        <div class="profile-stat-grid metric-profile-grid">
+          <div class="detail-stat"><span>CPU em uso</span><strong>${formatPercent(cpu.usagePercent)}</strong><small>${escapeHtml(cpu.model || "-")}</small></div>
+          <div class="detail-stat"><span>Memoria</span><strong>${formatPercent(memory.usedPercent)}</strong><small>${formatBytes(memory.usedBytes)} / ${formatBytes(memory.totalBytes)}</small></div>
+          <div class="detail-stat"><span>Disco</span><strong>${formatPercent(disk.usedPercent)}</strong><small>${escapeHtml(disk.mount || "-")} · ${formatBytes(disk.usedBytes)} / ${formatBytes(disk.totalBytes)}</small></div>
+          <div class="detail-stat"><span>Interface principal</span><strong>${escapeHtml(interfacePrimaryAddress(primaryInterface) || "-")}</strong><small>${escapeHtml(primaryInterface?.name || "-")} · ${formatNetworkSpeed(primaryInterface?.speedMbps)}</small></div>
+        </div>
+        ${metrics ? renderNetworkInterfaces(metrics) : `<div class="empty-list compact-empty">Aguardando metricas do Probe Collector atualizado.</div>`}
+      </article>
+
+      <article class="profile-section profile-section-wide">
+        <div class="panel-title compact-title">
+          <h3>Historico do servidor</h3>
+          <span>${recent.length} eventos recentes</span>
+        </div>
+        <div class="timeline profile-timeline">
+          ${recent.length ? recent.map(renderTimelineItem).join("") : `<div class="empty-list">Sem eventos registrados para este servidor.</div>`}
+        </div>
+      </article>
+    </section>
   `;
 }
 
@@ -2204,6 +2403,8 @@ function render() {
   renderCompanyNav();
   renderServers();
   renderDetail();
+  renderServerDirectory();
+  renderServerProfile();
   renderTimeline();
   renderAlerts();
   renderGroups();
@@ -2452,6 +2653,53 @@ async function submitServer(event) {
 async function loadInitialData() {
   const payload = await api("/api/snapshot");
   applySnapshot(payload);
+}
+
+async function handleServerAction(button) {
+  if (!isAdmin()) return;
+  const server = state.servers.find((item) => item.id === button.dataset.id);
+  if (!server) return;
+
+  if (button.dataset.action === "edit") {
+    openDialog(server);
+    return;
+  }
+
+  if (button.dataset.action === "toggle") {
+    const updated = await api(`/api/servers/${server.id}/toggle`, { method: "POST" });
+    upsertServer(updated);
+    render();
+    showToast("Status do cadastro alterado", `${updated.name} foi ${updated.isActive ? "reativado" : "desativado"}.`);
+    return;
+  }
+
+  if (button.dataset.action === "delete") {
+    const confirmed = window.confirm(
+      `Tem certeza que deseja excluir "${server.name}"?\n\nO servidor sera removido da listagem e nao sera mais monitorado. O historico tecnico fica preservado internamente.`
+    );
+    if (!confirmed) return;
+    await api(`/api/servers/${server.id}`, { method: "DELETE" });
+    const snap = await api("/api/snapshot");
+    applySnapshot(snap);
+    showToast("Servidor excluido", `${server.name} saiu do monitoramento.`);
+    return;
+  }
+
+  if (button.dataset.action === "check") {
+    try {
+      const result = await api(`/api/servers/${server.id}/check`, { method: "POST" });
+      if (result.server) upsertServer(result.server);
+      render();
+      showToast(
+        result.status === "probe_queued" ? "Checagem enviada ao probe" : "Checagem concluida",
+        result.status === "probe_queued"
+          ? `${server.name} sera verificado no proximo contato do Probe Collector.`
+          : `${server.name} foi verificado agora.`
+      );
+    } catch (error) {
+      showToast("Falha na checagem", error.message);
+    }
+  }
 }
 
 function fallbackCopyText(value) {
@@ -2804,55 +3052,43 @@ function bindEvents() {
     state.selectedServerId = row.dataset.serverId;
     renderServers();
     renderDetail();
+    renderServerDirectory();
+    renderServerProfile();
   });
 
   els.detailPanel.addEventListener("click", async (event) => {
-    if (!isAdmin()) return;
+    const profileButton = event.target.closest("[data-view-server]");
+    if (profileButton) {
+      state.selectedServerId = profileButton.dataset.viewServer;
+      setActiveView("servers");
+      render();
+      return;
+    }
+
     const button = event.target.closest("[data-action]");
     if (!button) return;
-    const server = state.servers.find((item) => item.id === button.dataset.id);
-    if (!server) return;
+    await handleServerAction(button);
+  });
 
-    if (button.dataset.action === "edit") {
-      openDialog(server);
-      return;
-    }
+  els.serverDirectoryList?.addEventListener("click", (event) => {
+    const button = event.target.closest("[data-profile-server-id]");
+    if (!button) return;
+    state.selectedServerId = button.dataset.profileServerId;
+    renderServerDirectory();
+    renderServerProfile();
+  });
 
-    if (button.dataset.action === "toggle") {
-      const updated = await api(`/api/servers/${server.id}/toggle`, { method: "POST" });
-      upsertServer(updated);
+  els.serverProfilePanel?.addEventListener("click", async (event) => {
+    const profileServer = event.target.closest("[data-profile-server-id]");
+    if (profileServer) {
+      state.selectedServerId = profileServer.dataset.profileServerId;
       render();
-      showToast("Status do cadastro alterado", `${updated.name} foi ${updated.isActive ? "reativado" : "desativado"}.`);
       return;
     }
 
-    if (button.dataset.action === "delete") {
-      const confirmed = window.confirm(
-        `Tem certeza que deseja excluir "${server.name}"?\n\nO servidor sera removido da listagem e nao sera mais monitorado. O historico tecnico fica preservado internamente.`
-      );
-      if (!confirmed) return;
-      await api(`/api/servers/${server.id}`, { method: "DELETE" });
-      const snap = await api("/api/snapshot");
-      applySnapshot(snap);
-      showToast("Servidor excluido", `${server.name} saiu do monitoramento.`);
-      return;
-    }
-
-    if (button.dataset.action === "check") {
-      try {
-        const result = await api(`/api/servers/${server.id}/check`, { method: "POST" });
-        if (result.server) upsertServer(result.server);
-        render();
-        showToast(
-          result.status === "probe_queued" ? "Checagem enviada ao probe" : "Checagem concluida",
-          result.status === "probe_queued"
-            ? `${server.name} sera verificado no proximo contato do Probe Collector.`
-            : `${server.name} foi verificado agora.`
-        );
-      } catch (error) {
-        showToast("Falha na checagem", error.message);
-      }
-    }
+    const button = event.target.closest("[data-action]");
+    if (!button) return;
+    await handleServerAction(button);
   });
 
   els.alertsList.addEventListener("click", async (event) => {

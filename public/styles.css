@@ -1562,6 +1562,200 @@ textarea:focus {
   overflow-wrap: anywhere;
 }
 
+.server-profile-layout {
+  display: grid;
+  grid-template-columns: minmax(250px, 320px) minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.server-directory-panel,
+.server-profile-panel,
+.profile-section,
+.server-profile-hero {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.server-directory-panel {
+  padding: 14px;
+  position: sticky;
+  top: 18px;
+}
+
+.server-directory-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+  max-height: calc(100vh - 180px);
+  overflow: auto;
+  padding-right: 3px;
+}
+
+.server-directory-item {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px;
+  background: var(--surface-muted);
+  color: var(--text);
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 1fr) auto;
+  gap: 9px;
+  align-items: center;
+  text-align: left;
+  cursor: pointer;
+}
+
+.server-directory-item:hover,
+.server-directory-item.selected {
+  border-color: var(--accent);
+  background: var(--selected-bg);
+}
+
+.server-directory-item span:nth-of-type(2),
+.server-directory-item strong,
+.server-directory-item small {
+  min-width: 0;
+}
+
+.server-directory-item strong,
+.server-directory-item small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.server-directory-item small,
+.server-directory-item em {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-style: normal;
+  font-weight: 700;
+}
+
+.server-profile-panel {
+  padding: 16px;
+  min-width: 0;
+}
+
+.server-profile-hero {
+  padding: 18px;
+  display: flex;
+  justify-content: space-between;
+  gap: 18px;
+  align-items: flex-start;
+  margin-bottom: 16px;
+}
+
+.profile-title-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.profile-title-row h2 {
+  margin: 0;
+  font-size: 1.55rem;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.server-profile-hero p {
+  margin: 8px 0 0;
+  color: var(--muted);
+}
+
+.profile-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.server-profile-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.profile-section {
+  padding: 14px;
+  min-width: 0;
+}
+
+.profile-section-wide {
+  grid-column: 1 / -1;
+}
+
+.profile-stat-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 9px;
+}
+
+.metric-profile-grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.profile-note {
+  margin-top: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 11px;
+  background: var(--surface-muted);
+}
+
+.profile-note strong,
+.profile-note span {
+  display: block;
+}
+
+.profile-note span {
+  color: var(--muted);
+  font-size: 0.86rem;
+  margin-top: 3px;
+  overflow-wrap: anywhere;
+}
+
+.dependency-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.dependency-list button {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 9px;
+  background: var(--surface-muted);
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  text-align: left;
+}
+
+.dependency-list button:hover {
+  border-color: var(--accent);
+  background: var(--selected-bg);
+}
+
+.dependency-list span {
+  flex: 1;
+  min-width: 0;
+  font-weight: 800;
+}
+
+.profile-timeline {
+  margin-top: 6px;
+}
+
 .tag-list {
   display: flex;
   gap: 6px;
@@ -2443,9 +2637,21 @@ label {
     grid-template-columns: 1fr 1fr;
   }
 
+  .server-profile-layout {
+    grid-template-columns: 1fr;
+  }
+
   .detail-panel,
   .probe-detail-panel {
     grid-column: 1 / -1;
+  }
+
+  .server-directory-panel {
+    position: static;
+  }
+
+  .metric-profile-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 
@@ -2478,6 +2684,10 @@ label {
 
   .metrics-grid,
   .server-layout,
+  .server-profile-layout,
+  .server-profile-grid,
+  .profile-stat-grid,
+  .metric-profile-grid,
   .executive-grid,
   .form-grid,
   .detail-grid,
@@ -2510,6 +2720,19 @@ label {
     position: static;
     width: 100%;
     margin-top: 8px;
+  }
+
+  .server-profile-hero {
+    flex-direction: column;
+  }
+
+  .profile-actions {
+    width: 100%;
+    justify-content: stretch;
+  }
+
+  .server-directory-list {
+    max-height: none;
   }
 
   .server-row {
