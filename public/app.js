@@ -300,7 +300,7 @@ function eventCategoryLabel(category) {
 function displayStatus(server) {
   if (!server.isActive) return "paused";
   if (server.dependencyStatus === "affected") return "dependency_down";
-  if (server.checkSource === "probe" && server.probeStatus === "stale") return "probe_stale";
+  if (server.checkSource === "probe" && server.probeStatus === "stale" && server.currentStatus !== "offline") return "probe_stale";
   return server.currentStatus || "unknown";
 }
 
@@ -1306,7 +1306,7 @@ function renderServerRow(server, options = {}) {
       ? `<span>Offline ha ${formatDurationSince(server.statusChangedAt)}</span>`
       : "";
   const probeBadge =
-    server.checkSource === "probe"
+    server.checkSource === "probe" && visibleStatus !== "probe_stale"
       ? `<span class="probe-inline-badge ${server.probeStatus || "unknown"}">${probeStatusLabel(server.probeStatus)}</span>`
       : "";
   const mac = primaryMac(server);
