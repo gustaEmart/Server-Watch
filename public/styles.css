@@ -1591,6 +1591,13 @@ textarea:focus {
   margin-bottom: 12px;
 }
 
+.alert-filters {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) minmax(170px, 220px) minmax(170px, 220px);
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
 .timeline-item,
 .alert-card,
 .group-card,
@@ -2433,6 +2440,7 @@ label {
   .theme-options,
   .toggle-grid,
   .history-filters,
+  .alert-filters,
   .token-control,
   .probe-target-row,
   .probe-card,

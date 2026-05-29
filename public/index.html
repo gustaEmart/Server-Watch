@@ -446,8 +446,38 @@
         <section class="view" id="alertsView">
           <div class="wide-panel">
             <div class="panel-title">
-              <h2>Alertas</h2>
-              <button class="ghost-button compact" id="markAlertsRead" type="button">Marcar como lidos</button>
+              <div>
+                <h2>Alertas</h2>
+                <span id="alertCount">0 alertas</span>
+              </div>
+              <div class="panel-title-actions">
+                <button class="ghost-button compact" id="markAlertsRead" type="button">Marcar como lidos</button>
+                <button class="danger-button compact admin-only" id="clearAlertsHistory" type="button">Limpar historico</button>
+              </div>
+            </div>
+            <div class="alert-filters">
+              <label>
+                Empresa
+                <select id="alertGroupFilter">
+                  <option value="all">Todas empresas</option>
+                </select>
+              </label>
+              <label>
+                Estado
+                <select id="alertStatusFilter">
+                  <option value="all">Todos alertas</option>
+                  <option value="open">Abertos</option>
+                  <option value="read">Reconhecidos</option>
+                </select>
+              </label>
+              <label>
+                Tipo
+                <select id="alertTypeFilter">
+                  <option value="all">Todos tipos</option>
+                  <option value="down">Offline</option>
+                  <option value="up">Recuperado</option>
+                </select>
+              </label>
             </div>
             <div class="alerts-list" id="alertsList"></div>
           </div>

@@ -2044,6 +2044,14 @@ async function handleApi(req, res) {
       return sendJson(res, 200, state.alerts.slice(0, 100));
     }
 
+    if (req.method === "DELETE" && parts[1] === "alerts" && parts.length === 2) {
+      if (!requireAdmin(req, res)) return;
+      state.alerts = [];
+      scheduleSave();
+      broadcastSnapshot();
+      return sendJson(res, 200, { ok: true });
+    }
+
     if (req.method === "POST" && parts[1] === "alerts" && parts[3] === "ack") {
       const alert = state.alerts.find((item) => item.id === parts[2]);
       if (!alert) return notFound(res);

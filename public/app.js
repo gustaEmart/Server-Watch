@@ -23,6 +23,11 @@ const state = {
     serverId: "all",
     category: "all"
   },
+  alertFilters: {
+    groupId: "all",
+    status: "all",
+    type: "all"
+  },
   socket: null,
   reconnectTimer: null,
   notificationsEnabled: false
@@ -59,6 +64,10 @@ const els = {
   eventCount: document.querySelector("#eventCount"),
   historyServerFilter: document.querySelector("#historyServerFilter"),
   historyCategoryFilter: document.querySelector("#historyCategoryFilter"),
+  alertCount: document.querySelector("#alertCount"),
+  alertGroupFilter: document.querySelector("#alertGroupFilter"),
+  alertStatusFilter: document.querySelector("#alertStatusFilter"),
+  alertTypeFilter: document.querySelector("#alertTypeFilter"),
   alertsList: document.querySelector("#alertsList"),
   toastStack: document.querySelector("#toastStack"),
   searchInput: document.querySelector("#searchInput"),
@@ -711,7 +720,20 @@ function renderGroupOptions() {
       els.serverGroup.value = current;
     }
   }
+  renderAlertGroupOptions(groupOptions);
   renderCompanyNav();
+}
+
+function renderAlertGroupOptions(groupOptions = "") {
+  if (!els.alertGroupFilter) return;
+  const current = els.alertGroupFilter.value || state.alertFilters.groupId;
+  els.alertGroupFilter.innerHTML = `
+    <option value="all">Todas empresas</option>
+    <option value="none">Sem empresa</option>
+    ${groupOptions || state.groups.map((group) => `<option value="${group.id}">${escapeHtml(group.name)}</option>`).join("")}
+  `;
+  els.alertGroupFilter.value = [...els.alertGroupFilter.options].some((option) => option.value === current) ? current : "all";
+  state.alertFilters.groupId = els.alertGroupFilter.value;
 }
 
 function renderParentOptions(currentServerId = "") {
@@ -1013,9 +1035,9 @@ function availabilityForServers(servers) {
   return Math.round((online / active.length) * 1000) / 10;
 }
 
-function executiveItem({ title, meta, badge, status = "", serverId = "", companyId = "" }) {
+function executiveItem({ title, meta, badge, status = "", serverId = "", companyId = "", alertGroupId = "" }) {
   return `
-    <button class="executive-item" type="button" ${serverId ? `data-server-id="${escapeHtml(serverId)}"` : ""} ${companyId ? `data-company-id="${escapeHtml(companyId)}"` : ""}>
+    <button class="executive-item" type="button" ${serverId ? `data-server-id="${escapeHtml(serverId)}"` : ""} ${companyId ? `data-company-id="${escapeHtml(companyId)}"` : ""} ${alertGroupId ? `data-alert-group-id="${escapeHtml(alertGroupId)}"` : ""}>
       <span class="executive-item-main">
         <strong>${escapeHtml(title)}</strong>
         <small>${escapeHtml(meta || "")}</small>
@@ -1088,7 +1110,7 @@ function renderExecutiveDashboard() {
                     meta: `${group.offline} offline · ${group.availability}% online`,
                     badge: `${group.openAlerts} alerta${group.openAlerts === 1 ? "" : "s"}`,
                     status: "offline",
-                    companyId: group.id
+                    alertGroupId: group.id
                   })
                 )
                 .join("")
@@ -1592,8 +1614,13 @@ function renderTimeline() {
 }
 
 function renderAlerts() {
-  els.alertsList.innerHTML = state.alerts.length
-    ? state.alerts
+  const alerts = filteredAlerts();
+  if (els.alertCount) {
+    const openCount = alerts.filter((alert) => !alert.read && alert.type === "down").length;
+    els.alertCount.textContent = `${alerts.length} ${alerts.length === 1 ? "alerta" : "alertas"} · ${openCount} ${openCount === 1 ? "aberto" : "abertos"}`;
+  }
+  els.alertsList.innerHTML = alerts.length
+    ? alerts
         .map(
           (alert) => `
             <article class="alert-card ${alert.severity || "info"} ${alert.read ? "read" : "unread"}">
@@ -1617,7 +1644,7 @@ function renderAlerts() {
           `
         )
         .join("")
-    : `<div class="empty-list">Nenhum alerta registrado.</div>`;
+    : `<div class="empty-list">Nenhum alerta encontrado para os filtros atuais.</div>`;
 }
 
 async function refreshAlerts() {
@@ -1628,6 +1655,22 @@ async function refreshAlerts() {
   } catch (error) {
     els.alertsList.innerHTML = `<div class="empty-list">Nao foi possivel carregar os alertas: ${escapeHtml(error.message)}</div>`;
   }
+}
+
+function alertGroupId(alert) {
+  return serverById(alert.serverId)?.groupId || "none";
+}
+
+function filteredAlerts() {
+  return state.alerts.filter((alert) => {
+    const groupOk = state.alertFilters.groupId === "all" || alertGroupId(alert) === state.alertFilters.groupId;
+    const statusOk =
+      state.alertFilters.status === "all" ||
+      (state.alertFilters.status === "open" && !alert.read) ||
+      (state.alertFilters.status === "read" && alert.read);
+    const typeOk = state.alertFilters.type === "all" || alert.type === state.alertFilters.type;
+    return groupOk && statusOk && typeOk;
+  });
 }
 
 function renderGroups() {
@@ -2469,6 +2512,21 @@ function bindEvents() {
     renderTimeline();
   });
 
+  els.alertGroupFilter?.addEventListener("change", () => {
+    state.alertFilters.groupId = els.alertGroupFilter.value;
+    renderAlerts();
+  });
+
+  els.alertStatusFilter?.addEventListener("change", () => {
+    state.alertFilters.status = els.alertStatusFilter.value;
+    renderAlerts();
+  });
+
+  els.alertTypeFilter?.addEventListener("change", () => {
+    state.alertFilters.type = els.alertTypeFilter.value;
+    renderAlerts();
+  });
+
   els.clearFilters?.addEventListener("click", () => {
     state.filters.status = "all";
     state.filters.environment = "all";
@@ -2493,6 +2551,19 @@ function bindEvents() {
   });
 
   els.executiveDashboard?.addEventListener("click", (event) => {
+    const alertGroupButton = event.target.closest("[data-alert-group-id]");
+    if (alertGroupButton?.dataset.alertGroupId) {
+      state.alertFilters.groupId = alertGroupButton.dataset.alertGroupId;
+      state.alertFilters.status = "open";
+      state.alertFilters.type = "all";
+      if (els.alertGroupFilter) els.alertGroupFilter.value = state.alertFilters.groupId;
+      if (els.alertStatusFilter) els.alertStatusFilter.value = state.alertFilters.status;
+      if (els.alertTypeFilter) els.alertTypeFilter.value = state.alertFilters.type;
+      setActiveView("alerts");
+      renderAlerts();
+      return;
+    }
+
     const serverButton = event.target.closest("[data-server-id]");
     if (serverButton?.dataset.serverId) {
       state.selectedServerId = serverButton.dataset.serverId;
@@ -2771,6 +2842,20 @@ function bindEvents() {
     state.alerts = state.alerts.map((alert) => ({ ...alert, read: true }));
     renderAlerts();
     renderMetrics();
+    renderExecutiveDashboard();
+    showToast("Alertas atualizados", "Todos os alertas foram marcados como lidos.");
+  });
+
+  document.querySelector("#clearAlertsHistory")?.addEventListener("click", async () => {
+    if (!window.confirm("Limpar todo o historico de alertas?\n\nOs eventos tecnicos continuam preservados no Historico.")) return;
+    try {
+      await api("/api/alerts", { method: "DELETE" });
+      state.alerts = [];
+      render();
+      showToast("Historico limpo", "Todos os alertas foram removidos.");
+    } catch (error) {
+      showToast("Falha ao limpar alertas", error.message);
+    }
   });
 
   window.addEventListener("popstate", () => {
