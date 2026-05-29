@@ -776,8 +776,20 @@ function virtualizerChildCandidates(currentServerId = "") {
       !server.deletedAt &&
       server.id !== currentServerId &&
       server.nodeType !== "hypervisor" &&
+      (!server.parentId || server.parentId === currentServerId) &&
       (!currentServerId || !hasAncestor(currentServerId, server.id))
   );
+}
+
+function serverByFormParent() {
+  return state.servers.find((server) => server.id === els.serverParentId?.value && !server.deletedAt) || null;
+}
+
+function applyParentCompanyDefault() {
+  const parent = serverByFormParent();
+  if (parent?.groupId && els.serverGroup) {
+    els.serverGroup.value = parent.groupId;
+  }
 }
 
 function selectedVirtualizerChildIds() {
@@ -2334,6 +2346,7 @@ async function syncVirtualizerChildren(parentId) {
   if (els.serverNodeType.value !== "hypervisor" || !els.serverChildIds) return 0;
   const selected = new Set(selectedVirtualizerChildIds());
   const candidates = virtualizerChildCandidates(parentId);
+  const parent = state.servers.find((server) => server.id === parentId && !server.deletedAt);
   let updated = 0;
 
   for (const server of candidates) {
@@ -2343,7 +2356,8 @@ async function syncVirtualizerChildren(parentId) {
 
     const payload = serverUpdatePayload(server, {
       parentId: shouldAttach ? parentId : null,
-      nodeType: shouldAttach ? "vm" : server.nodeType
+      nodeType: shouldAttach ? "vm" : server.nodeType,
+      groupId: shouldAttach && parent?.groupId ? parent.groupId : server.groupId || null
     });
     await api(`/api/servers/${server.id}`, { method: "PUT", body: JSON.stringify(payload) });
     updated += 1;
@@ -2375,6 +2389,8 @@ async function submitServer(event) {
     tags: els.serverTags.value,
     description: els.serverDescription.value
   };
+  const parent = serverByFormParent();
+  if (parent?.groupId) payload.groupId = parent.groupId;
   try {
     const saved = id
       ? await api(`/api/servers/${id}`, { method: "PUT", body: JSON.stringify(payload) })
@@ -2589,6 +2605,7 @@ function bindEvents() {
   els.serverParentId.addEventListener("change", () => {
     if (els.serverParentId.value) {
       els.serverNodeType.value = "vm";
+      applyParentCompanyDefault();
       toggleVirtualizerChildrenOptions();
     }
   });

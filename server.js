@@ -151,7 +151,7 @@ function normalizeServer(payload, existing = {}) {
   const interval = Number(payload.checkInterval ?? payload.check_interval ?? existing.checkInterval ?? state.settings.defaultInterval);
   const threshold = Number(payload.failureThreshold ?? payload.failure_threshold ?? existing.failureThreshold ?? state.settings.defaultFailureThreshold);
   const rawGroupId = payload.groupId ?? payload.group_id ?? existing.groupId ?? null;
-  const groupId = rawGroupId && rawGroupId !== "none" ? String(rawGroupId) : null;
+  let groupId = rawGroupId && rawGroupId !== "none" ? String(rawGroupId) : null;
   const checkSource = normalizeCheckSource(payload.checkSource ?? payload.check_source, existing.checkSource);
   const probeId = String(payload.probeId ?? payload.probe_id ?? existing.probeId ?? "").trim();
   const nodeType = normalizeNodeType(payload.nodeType ?? payload.node_type, existing.nodeType);
@@ -202,6 +202,9 @@ function normalizeServer(payload, existing = {}) {
       const error = new Error("Dependencia invalida: isso criaria um ciclo na topologia.");
       error.statusCode = 400;
       throw error;
+    }
+    if (parent.groupId) {
+      groupId = parent.groupId;
     }
   }
 
