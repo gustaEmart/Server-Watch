@@ -2,6 +2,10 @@
 
 Este roadmap lista apenas evolucoes ainda pendentes para o ServerWatch. Itens ja implementados, como login, MongoDB, cadastro de usuarios, empresas, probes basicos, instaladores, white label, tema claro/escuro e rotas da interface foram removidos daqui.
 
+## Ajuste rapido de UI
+
+- Fixar a barra lateral para que ela nao role junto com o conteudo ao deslizar a pagina para baixo.
+
 ## Prioridade 1 - Confianca operacional
 
 ### Estado do probe separado do estado do servidor
