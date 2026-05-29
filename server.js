@@ -1813,11 +1813,17 @@ async function handleApi(req, res) {
     }
 
     if (parts[1] === "settings") {
-      if (!requireAdmin(req, res)) return;
-
-      if (req.method === "PUT" && parts[2] === "branding") {
+      if (req.method === "PUT" && parts[2] === "theme") {
         const payload = await readBody(req);
-        state.settings = normalizeBranding(payload, state.settings);
+        state.settings = normalizeBranding(
+          {
+            brandName: state.settings.brandName,
+            brandSubtitle: state.settings.brandSubtitle,
+            logoDataUrl: state.settings.logoDataUrl,
+            theme: payload.theme
+          },
+          state.settings
+        );
         scheduleSave();
         broadcastSnapshot();
         return sendJson(res, 200, publicSettings(session.user));
@@ -1826,6 +1832,16 @@ async function handleApi(req, res) {
       if (req.method === "PUT" && parts[2] === "alerts") {
         const payload = await readBody(req);
         state.settings = normalizeAlertSettings(payload, state.settings);
+        scheduleSave();
+        broadcastSnapshot();
+        return sendJson(res, 200, publicSettings(session.user));
+      }
+
+      if (!requireAdmin(req, res)) return;
+
+      if (req.method === "PUT" && parts[2] === "branding") {
+        const payload = await readBody(req);
+        state.settings = normalizeBranding(payload, state.settings);
         scheduleSave();
         broadcastSnapshot();
         return sendJson(res, 200, publicSettings(session.user));

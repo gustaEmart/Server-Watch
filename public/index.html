@@ -49,12 +49,13 @@
 
         <nav class="nav-tabs" aria-label="Navegacao principal">
           <a class="nav-tab active" href="/dashboard" data-view="dashboard">Dashboard</a>
-          <a class="nav-tab" href="/empresas" data-view="groups">Empresas</a>
-          <a class="nav-tab admin-only" href="/probes" data-view="probes">Probes</a>
-          <a class="nav-tab admin-only" href="/usuarios" data-view="users">Usuarios</a>
-          <a class="nav-tab admin-only" href="/configuracoes" data-view="settings">Configuracoes</a>
-          <a class="nav-tab" href="/historico" data-view="history">Historico</a>
           <a class="nav-tab" href="/alertas" data-view="alerts">Alertas</a>
+          <a class="nav-tab" href="/historico" data-view="history">Historico</a>
+          <a class="nav-tab" href="/configuracoes" data-view="settings">Configuracoes</a>
+          <a class="nav-tab admin-only" href="/admin" data-view="admin">Administracao</a>
+          <a class="nav-tab route-only admin-only" href="/empresas" data-view="groups">Empresas</a>
+          <a class="nav-tab route-only admin-only" href="/probes" data-view="probes">Probes</a>
+          <a class="nav-tab route-only admin-only" href="/usuarios" data-view="users">Usuarios</a>
         </nav>
 
         <section class="company-nav" aria-label="Visualizacoes por empresa">
@@ -200,6 +201,34 @@
           </div>
         </section>
 
+        <section class="view" id="adminView">
+          <div class="wide-panel">
+            <div class="panel-title">
+              <div>
+                <h2>Painel administrativo</h2>
+                <span>Cadastros, coleta e configuracoes do sistema</span>
+              </div>
+            </div>
+            <div class="admin-grid">
+              <button class="admin-card" type="button" data-admin-view="groups">
+                <span>Empresas</span>
+                <strong>Clientes e grupos</strong>
+                <small>Cadastre empresas, organize servidores e mantenha a estrutura operacional.</small>
+              </button>
+              <button class="admin-card" type="button" data-admin-view="probes">
+                <span>Probes</span>
+                <strong>Collectors e instaladores</strong>
+                <small>Token, comandos de instalacao, collectors recebidos e alvos vinculados.</small>
+              </button>
+              <button class="admin-card" type="button" data-admin-view="users">
+                <span>Usuarios</span>
+                <strong>Acessos do sistema</strong>
+                <small>Crie usuarios, altere papeis e desative contas quando necessario.</small>
+              </button>
+            </div>
+          </div>
+        </section>
+
         <section class="view" id="groupsView">
           <div class="wide-panel">
             <div class="panel-title">
@@ -327,7 +356,7 @@
                 <span>Identidade visual</span>
               </div>
             </div>
-            <form class="settings-form" id="brandingForm">
+            <form class="settings-form admin-only" id="brandingForm">
               <div class="brand-preview">
                 <span class="brand-mark brand-logo" id="brandPreviewLogo" aria-hidden="true">
                   <span class="brand-initials" id="brandPreviewInitials">SW</span>
@@ -355,6 +384,19 @@
               </label>
               <small class="field-hint">Use PNG, JPG, WEBP ou SVG com ate aproximadamente 500 KB.</small>
 
+              <div class="dialog-actions">
+                <button class="ghost-button" id="removeBrandLogo" type="button">Remover logo</button>
+                <button class="primary-button" type="submit">Salvar identidade</button>
+              </div>
+            </form>
+
+            <form class="settings-form settings-block" id="themeSettingsForm">
+              <div class="panel-title compact-title">
+                <div>
+                  <h2>Tema</h2>
+                  <span>Preferencia da interface</span>
+                </div>
+              </div>
               <fieldset class="theme-options">
                 <legend>Tema da interface</legend>
                 <label class="theme-option">
@@ -372,10 +414,8 @@
                   </span>
                 </label>
               </fieldset>
-
               <div class="dialog-actions">
-                <button class="ghost-button" id="removeBrandLogo" type="button">Remover logo</button>
-                <button class="primary-button" type="submit">Salvar identidade</button>
+                <button class="primary-button" type="submit">Salvar tema</button>
               </div>
             </form>
 

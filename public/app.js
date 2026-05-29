@@ -81,6 +81,7 @@ const els = {
   usersList: document.querySelector("#usersList"),
   userCount: document.querySelector("#userCount"),
   brandingForm: document.querySelector("#brandingForm"),
+  themeSettingsForm: document.querySelector("#themeSettingsForm"),
   alertSettingsForm: document.querySelector("#alertSettingsForm"),
   brandNameInput: document.querySelector("#brandNameInput"),
   brandSubtitleInput: document.querySelector("#brandSubtitleInput"),
@@ -152,6 +153,7 @@ const els = {
 
 const VIEW_ROUTES = {
   dashboard: "/dashboard",
+  admin: "/admin",
   groups: "/empresas",
   probes: "/probes",
   users: "/usuarios",
@@ -537,7 +539,7 @@ function applySnapshot(payload) {
 }
 
 function activeViewName() {
-  return document.querySelector(".nav-tab.active")?.dataset.view || "dashboard";
+  return document.querySelector(".view.active")?.id?.replace(/View$/, "") || "dashboard";
 }
 
 function viewFromPath(pathname = window.location.pathname) {
@@ -547,6 +549,10 @@ function viewFromPath(pathname = window.location.pathname) {
 
 function routeForView(viewName) {
   return VIEW_ROUTES[viewName] || VIEW_ROUTES.dashboard;
+}
+
+function primaryNavView(viewName) {
+  return ["groups", "probes", "users"].includes(viewName) ? "admin" : viewName;
 }
 
 function setActiveView(viewName, options = {}) {
@@ -559,7 +565,8 @@ function setActiveView(viewName, options = {}) {
 
   document.querySelectorAll(".nav-tab").forEach((item) => item.classList.remove("active"));
   document.querySelectorAll(".view").forEach((item) => item.classList.remove("active"));
-  tab.classList.add("active");
+  const primaryTab = document.querySelector(`.nav-tab[data-view="${primaryNavView(tab.dataset.view)}"]`) || tab;
+  primaryTab.classList.add("active");
   view.classList.add("active");
   updateTopbarContext();
   updateMetricsVisibility();
@@ -588,6 +595,7 @@ function syncViewFromLocation(options = {}) {
 function updateTopbarContext() {
   const titles = {
     dashboard: ["Monitoramento em tempo real", "Disponibilidade dos servidores"],
+    admin: ["Gestao do sistema", "Painel administrativo"],
     groups: ["Organizacao operacional", "Empresas e grupos"],
     probes: ["Instalacao e coleta", "Probe Collector"],
     users: ["Controle de acesso", "Usuarios"],
@@ -1765,7 +1773,7 @@ function renderBrandingForm() {
 }
 
 function renderAlertSettingsForm() {
-  if (!els.alertSettingsForm || !isAdmin()) return;
+  if (!els.alertSettingsForm) return;
   const current = alertSettings();
   if (document.activeElement !== els.probeStaleGraceSeconds) {
     els.probeStaleGraceSeconds.value = current.probeStaleGraceSeconds;
@@ -1811,7 +1819,7 @@ async function submitBranding(event) {
       brandName: els.brandNameInput.value,
       brandSubtitle: els.brandSubtitleInput.value,
       logoDataUrl: selectedLogo ?? current.logoDataUrl,
-      theme: document.querySelector('input[name="themeMode"]:checked')?.value || current.theme
+      theme: current.theme
     };
     const settings = await api("/api/settings/branding", { method: "PUT", body: JSON.stringify(payload) });
     state.settings = { ...state.settings, ...settings };
@@ -1820,6 +1828,19 @@ async function submitBranding(event) {
     showToast("Identidade salva", "A marca da interface foi atualizada.");
   } catch (error) {
     showToast("Falha ao salvar identidade", error.message);
+  }
+}
+
+async function submitThemeSettings(event) {
+  event.preventDefault();
+  const theme = document.querySelector('input[name="themeMode"]:checked')?.value || branding().theme;
+  try {
+    const settings = await api("/api/settings/theme", { method: "PUT", body: JSON.stringify({ theme }) });
+    state.settings = { ...state.settings, ...settings };
+    applyBranding();
+    showToast("Tema salvo", "A preferencia de tema foi atualizada.");
+  } catch (error) {
+    showToast("Falha ao salvar tema", error.message);
   }
 }
 
@@ -2694,7 +2715,12 @@ function bindEvents() {
   document.querySelector("#cancelUserForm").addEventListener("click", closeUserDialog);
   els.userForm.addEventListener("submit", submitUser);
   els.brandingForm?.addEventListener("submit", submitBranding);
+  els.themeSettingsForm?.addEventListener("submit", submitThemeSettings);
   els.alertSettingsForm?.addEventListener("submit", submitAlertSettings);
+
+  document.querySelectorAll("[data-admin-view]").forEach((button) => {
+    button.addEventListener("click", () => setActiveView(button.dataset.adminView));
+  });
   els.removeBrandLogo?.addEventListener("click", async () => {
     try {
       const settings = await api("/api/settings/branding", {
