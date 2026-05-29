@@ -300,7 +300,13 @@ function eventCategoryLabel(category) {
 function displayStatus(server) {
   if (!server.isActive) return "paused";
   if (server.dependencyStatus === "affected") return "dependency_down";
-  if (server.checkSource === "probe" && server.probeStatus === "stale" && server.currentStatus !== "offline") return "probe_stale";
+  if (
+    server.checkSource === "probe" &&
+    server.probeStatus === "stale" &&
+    (server.currentStatus !== "offline" || server.probeFallbackStatus !== "confirmed_offline")
+  ) {
+    return "probe_stale";
+  }
   return server.currentStatus || "unknown";
 }
 
@@ -311,6 +317,15 @@ function probeStatusLabel(status) {
     unknown: "Probe sem status",
     not_applicable: "Sem probe"
   }[status || "unknown"];
+}
+
+function probeFallbackLabel(status) {
+  return {
+    confirmed_online: "Online confirmado pela central",
+    confirmed_offline: "Offline confirmado",
+    central_failed: "Ping central nao confirmou",
+    unconfirmed: "Status nao confirmado"
+  }[status || ""] || "Sem verificacao alternativa";
 }
 
 function probeVersionLabel(probe) {
@@ -1516,6 +1531,7 @@ function renderDetail() {
         <div class="detail-stat"><span>Status do probe</span><strong><span class="status-badge ${server.probeStatus === "stale" ? "probe_stale" : server.probeStatus || "unknown"}">${probeStatusLabel(server.probeStatus)}</span></strong></div>
         <div class="detail-stat"><span>Ultimo envio do probe</span><strong>${formatDate(server.lastProbeSeenAt)}</strong></div>
         <div class="detail-stat"><span>Limite sem contato</span><strong>${server.probeStaleAfterSeconds ? `${server.probeStaleAfterSeconds}s` : "-"}</strong></div>
+        ${server.probeStatus === "stale" ? `<div class="detail-stat"><span>Verificacao alternativa</span><strong>${probeFallbackLabel(server.probeFallbackStatus)}</strong><small>${server.probeFallbackCheckedAt ? formatDate(server.probeFallbackCheckedAt) : ""}</small></div>` : ""}
         ${
           server.probeCheckRequestedAt
             ? `<div class="detail-stat"><span>Checagem solicitada</span><strong>${formatDate(server.probeCheckRequestedAt)}</strong></div>`

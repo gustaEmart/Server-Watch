@@ -765,6 +765,8 @@ function publicServer(server) {
     probeLastSeenAt: probe.lastSeenAt,
     probeStaleAfterSeconds: probe.staleAfterSeconds,
     probeCheckRequestedAt: server.probeCheckRequestedAt || null,
+    probeFallbackStatus: server.probeFallbackStatus || null,
+    probeFallbackCheckedAt: server.probeFallbackCheckedAt || null,
     probeHostMetrics: linkedProbe?.hostMetrics || null,
     probeHostMetricsUpdatedAt: linkedProbe?.hostMetricsUpdatedAt || null,
     probeHostName: linkedProbe?.hostName || null,
@@ -1066,6 +1068,8 @@ async function checkProbeStaleness(nowMs = Date.now()) {
         server.lastLatencyMs = result.latencyMs;
         server.lastError = message;
         server.probeCheckRequestedAt = null;
+        server.probeFallbackStatus = "confirmed_online";
+        server.probeFallbackCheckedAt = checkedAt;
         server.consecutiveFailures = 0;
         server.currentStatus = "online";
         if (server.currentStatus !== previousStatus) {
@@ -1080,15 +1084,15 @@ async function checkProbeStaleness(nowMs = Date.now()) {
       }
 
       if (localTarget) {
-        const message = `${baseMessage} Ping da central falhou: ${result.error || "sem resposta"}`;
+        const message = `${baseMessage} Ping da central nao confirmou o status: ${result.error || "sem resposta"}. Aguardando retorno do probe ou confirmacao por outro probe da mesma rede.`;
         server.lastCheckedAt = checkedAt;
         server.lastLatencyMs = null;
         server.lastError = message;
         server.probeCheckRequestedAt = null;
-        server.consecutiveFailures = (server.consecutiveFailures || 0) + 1;
-        if (server.consecutiveFailures >= server.failureThreshold) {
-          server.currentStatus = "offline";
-        }
+        server.probeFallbackStatus = "central_failed";
+        server.probeFallbackCheckedAt = checkedAt;
+        server.consecutiveFailures = 0;
+        server.currentStatus = "unknown";
 
         if (server.currentStatus !== previousStatus) {
           server.previousStatus = previousStatus;
@@ -1107,7 +1111,17 @@ async function checkProbeStaleness(nowMs = Date.now()) {
         server.lastCheckedAt = checkedAt;
         server.lastLatencyMs = null;
         server.probeCheckRequestedAt = null;
-        broadcast({ type: "server_checked", server: publicServer(server), summary: summary() });
+        server.probeFallbackStatus = "unconfirmed";
+        server.probeFallbackCheckedAt = checkedAt;
+        server.consecutiveFailures = 0;
+        server.currentStatus = "unknown";
+        if (server.currentStatus !== previousStatus) {
+          server.previousStatus = previousStatus;
+          server.statusChangedAt = checkedAt;
+          addEvent(server, previousStatus, server.currentStatus, result.latencyMs, message);
+        } else {
+          broadcast({ type: "server_checked", server: publicServer(server), summary: summary() });
+        }
         changed = true;
       }
     }
@@ -1515,6 +1529,11 @@ function applyProbeResult(server, result, probeId, options = {}) {
   if (!verification) {
     server.lastProbeSeenAt = nowIso();
     server.probeEventStatus = "online";
+    server.probeFallbackStatus = null;
+    server.probeFallbackCheckedAt = null;
+  } else {
+    server.probeFallbackStatus = result.online ? "confirmed_online" : "confirmed_offline";
+    server.probeFallbackCheckedAt = result.checkedAt || nowIso();
   }
   server.probeCheckRequestedAt = null;
   server.lastLatencyMs = result.latencyMs ?? null;
