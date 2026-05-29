@@ -303,7 +303,7 @@ function displayStatus(server) {
   if (
     server.checkSource === "probe" &&
     server.probeStatus === "stale" &&
-    (server.currentStatus !== "offline" || server.probeFallbackStatus !== "confirmed_offline")
+    server.currentStatus !== "offline"
   ) {
     return "probe_stale";
   }

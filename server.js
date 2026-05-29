@@ -1084,15 +1084,18 @@ async function checkProbeStaleness(nowMs = Date.now()) {
       }
 
       if (localTarget) {
-        const message = `${baseMessage} Ping da central nao confirmou o status: ${result.error || "sem resposta"}. Aguardando retorno do probe ou confirmacao por outro probe da mesma rede.`;
+        const wasOffline = previousStatus === "offline";
+        const message = wasOffline
+          ? `${baseMessage} Servidor permanece offline ate confirmacao de retorno. Ping da central nao confirmou retorno: ${result.error || "sem resposta"}.`
+          : `${baseMessage} Ping da central nao confirmou o status: ${result.error || "sem resposta"}. Aguardando retorno do probe ou confirmacao por outro probe da mesma rede.`;
         server.lastCheckedAt = checkedAt;
         server.lastLatencyMs = null;
         server.lastError = message;
         server.probeCheckRequestedAt = null;
-        server.probeFallbackStatus = "central_failed";
+        server.probeFallbackStatus = wasOffline ? "confirmed_offline" : "central_failed";
         server.probeFallbackCheckedAt = checkedAt;
-        server.consecutiveFailures = 0;
-        server.currentStatus = "unknown";
+        server.consecutiveFailures = wasOffline ? Math.max(server.consecutiveFailures || 0, server.failureThreshold || 1) : 0;
+        if (!wasOffline) server.currentStatus = "unknown";
 
         if (server.currentStatus !== previousStatus) {
           server.previousStatus = previousStatus;
@@ -1105,16 +1108,19 @@ async function checkProbeStaleness(nowMs = Date.now()) {
         continue;
       }
 
-      const message = `${baseMessage} Ping da central tambem nao confirmou o status: ${result.error || "sem resposta"}. Aguardando retorno do probe ou confirmacao por outro probe da mesma rede.`;
+      const wasOffline = previousStatus === "offline";
+      const message = wasOffline
+        ? `${baseMessage} Servidor permanece offline ate confirmacao de retorno. Ping da central tambem nao confirmou retorno: ${result.error || "sem resposta"}.`
+        : `${baseMessage} Ping da central tambem nao confirmou o status: ${result.error || "sem resposta"}. Aguardando retorno do probe ou confirmacao por outro probe da mesma rede.`;
       if (server.lastError !== message || requested) {
         server.lastError = message;
         server.lastCheckedAt = checkedAt;
         server.lastLatencyMs = null;
         server.probeCheckRequestedAt = null;
-        server.probeFallbackStatus = "unconfirmed";
+        server.probeFallbackStatus = wasOffline ? "confirmed_offline" : "unconfirmed";
         server.probeFallbackCheckedAt = checkedAt;
-        server.consecutiveFailures = 0;
-        server.currentStatus = "unknown";
+        server.consecutiveFailures = wasOffline ? Math.max(server.consecutiveFailures || 0, server.failureThreshold || 1) : 0;
+        if (!wasOffline) server.currentStatus = "unknown";
         if (server.currentStatus !== previousStatus) {
           server.previousStatus = previousStatus;
           server.statusChangedAt = checkedAt;
