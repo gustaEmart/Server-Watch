@@ -312,6 +312,12 @@ button {
   align-items: start;
   gap: 8px;
   text-align: left;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.company-nav-button > * {
+  pointer-events: none;
 }
 
 .company-nav-button span {
@@ -529,6 +535,24 @@ button {
   background: var(--surface-raised);
 }
 
+.metric-card.clickable-card {
+  cursor: pointer;
+  touch-action: manipulation;
+  transition: border-color 0.16s ease, box-shadow 0.16s ease, transform 0.16s ease;
+}
+
+.metric-card.clickable-card:hover,
+.metric-card.clickable-card:focus-visible {
+  border-color: var(--accent);
+  box-shadow: 0 10px 26px rgba(18, 60, 105, 0.12);
+  outline: none;
+  transform: translateY(-1px);
+}
+
+.metric-card.clickable-card > * {
+  pointer-events: none;
+}
+
 .metric-card.online {
   border-top-color: var(--online);
 }
@@ -691,6 +715,12 @@ button {
   background: var(--surface);
   color: var(--text);
   text-align: left;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.executive-item > * {
+  pointer-events: none;
 }
 
 .executive-item-main,
@@ -1065,6 +1095,12 @@ textarea:focus {
   text-align: left;
   width: calc(100% - var(--dependency-offset));
   margin-left: var(--dependency-offset);
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.server-row > :not(.topology-toggle) {
+  pointer-events: none;
 }
 
 .server-row:hover,
@@ -1110,7 +1146,12 @@ textarea:focus {
   background: var(--surface-muted);
   color: var(--text);
   cursor: pointer;
+  pointer-events: auto;
   transition: background 0.16s ease, border-color 0.16s ease, color 0.16s ease;
+}
+
+.topology-toggle > * {
+  pointer-events: none;
 }
 
 .topology-toggle i {
@@ -1937,6 +1978,11 @@ textarea:focus {
   text-align: left;
   color: var(--text);
   cursor: pointer;
+  touch-action: manipulation;
+}
+
+.probe-card > * {
+  pointer-events: none;
 }
 
 .probe-card.selected {
@@ -2109,6 +2155,12 @@ textarea:focus {
   background: var(--surface);
   color: var(--text);
   text-align: left;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.probe-target-row > * {
+  pointer-events: none;
 }
 
 .probe-target-row span,

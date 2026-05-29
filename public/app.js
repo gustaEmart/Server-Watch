@@ -554,12 +554,22 @@ function setActiveView(viewName, options = {}) {
   view.classList.add("active");
   updateTopbarContext();
   updateMetricsVisibility();
+  if (tab.dataset.view === "alerts") {
+    renderAlerts();
+    refreshAlerts();
+  }
 
   const nextRoute = routeForView(tab.dataset.view);
   if (push && window.location.pathname !== nextRoute) {
     const method = replace ? "replaceState" : "pushState";
     window.history[method]({}, "", nextRoute);
   }
+}
+
+function activateLinkedView(target) {
+  const viewName = target?.dataset?.viewLink;
+  if (!viewName) return;
+  setActiveView(viewName);
 }
 
 function syncViewFromLocation(options = {}) {
@@ -1610,6 +1620,16 @@ function renderAlerts() {
     : `<div class="empty-list">Nenhum alerta registrado.</div>`;
 }
 
+async function refreshAlerts() {
+  if (!els.alertsList) return;
+  try {
+    state.alerts = await api("/api/alerts");
+    renderAlerts();
+  } catch (error) {
+    els.alertsList.innerHTML = `<div class="empty-list">Nao foi possivel carregar os alertas: ${escapeHtml(error.message)}</div>`;
+  }
+}
+
 function renderGroups() {
   if (!els.groupsList) return;
   els.groupCount.textContent = `${state.groups.length} ${state.groups.length === 1 ? "empresa" : "empresas"}`;
@@ -2396,6 +2416,15 @@ function bindEvents() {
       event.preventDefault();
       if (button.hidden) return;
       setActiveView(button.dataset.view);
+    });
+  });
+
+  document.querySelectorAll("[data-view-link]").forEach((card) => {
+    card.addEventListener("click", () => activateLinkedView(card));
+    card.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter" && event.key !== " ") return;
+      event.preventDefault();
+      activateLinkedView(card);
     });
   });
 
