@@ -67,6 +67,22 @@ Objetivo:
 
 - Evoluir alem do ping e das metricas basicas de host ja coletadas pelo collector.
 
+Coletas implementadas em validacao:
+
+- Particoes/volumes de disco.
+- Portas TCP locais em escuta.
+- Servicos conhecidos.
+- Processos principais.
+- Eventos criticos recentes.
+- Inventario basico de virtualizacao quando o host expor Hyper-V ou Proxmox.
+
+Ajustes pendentes para a proxima iteracao:
+
+- Refinar a exibicao de portas: nao exibir o bloco para todos os servidores; mostrar apenas quando houver valor operacional, principalmente maquinas com mais de um IP/interface relevante.
+- Definir e documentar o criterio de "servicos criticos". A coleta atual usa uma lista fixa de nomes conhecidos, mas isso precisa virar configuracao por ambiente/empresa/servidor.
+- Revisar "processos principais": hoje a coleta lista processos por consumo, mas isso nao significa criticidade operacional. Separar "top processos" de "processos criticos configurados".
+- Corrigir caracteres quebrados nos textos coletados de logs/eventos, especialmente mensagens do Windows Event Viewer. Normalizar encoding antes de enviar/salvar/exibir.
+
 Coletas futuras:
 
 - SNMP dentro da LAN do cliente.
