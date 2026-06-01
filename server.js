@@ -1593,14 +1593,22 @@ function ensureProbeServer(probe) {
   if (!hostname) return { server: null, changed: false };
 
   const serverName = String(probe.name || probe.hostName || probe.id).trim();
-  const existing = state.servers.find(
+  const existing =
+    state.servers.find(
     (server) => !server.deletedAt && server.checkSource === "probe" && server.probeId === probe.id
-  );
+    ) ||
+    state.servers.find(
+      (server) => server.deletedAt && server.autoCreatedByProbe && server.checkSource === "probe" && server.probeId === probe.id
+    );
 
   if (existing) {
     let changed = false;
     const seenAt = probe.lastSeenAt || nowIso();
     const previousStatus = existing.currentStatus || "unknown";
+    if (existing.deletedAt) {
+      existing.deletedAt = null;
+      changed = true;
+    }
     if (existing.autoCreatedByProbe && existing.hostname !== hostname) {
       existing.hostname = hostname;
       changed = true;
