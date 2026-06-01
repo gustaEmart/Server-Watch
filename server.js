@@ -18,6 +18,7 @@ const DOWNLOADS = {
     path: resolve("tools/probe/install-linux.sh"),
     filename: "serverwatch-probe-install-linux.sh",
     contentType: "text/x-shellscript; charset=utf-8",
+    public: true,
     allowProbeToken: true
   },
   "/downloads/probe/collector.js": {
