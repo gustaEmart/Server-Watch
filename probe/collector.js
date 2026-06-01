@@ -5,7 +5,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const DEFAULT_CONFIG = new URL("./config.json", import.meta.url);
-const VERSION = "0.6.2";
+const VERSION = "0.6.3";
 const DEFAULT_QUEUE_MAX_BATCHES = 1000;
 const HOST_METRICS_CACHE_MS = 60 * 1000;
 const HOST_METRICS_TIMEOUT_MS = 7000;
@@ -846,8 +846,7 @@ async function getTargets(config) {
     addresses: JSON.stringify(metadata.addresses),
     platform: metadata.platform,
     primaryMac: metadata.primaryMac,
-    macAddresses: JSON.stringify(metadata.macAddresses),
-    hostMetrics: JSON.stringify(metadata.hostMetrics)
+    macAddresses: JSON.stringify(metadata.macAddresses)
   });
   return requestJson(config, `/api/probe/targets?${params.toString()}`);
 }
