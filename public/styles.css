@@ -508,6 +508,11 @@ button {
   padding: 0 10px;
 }
 
+.primary-button.compact {
+  min-height: 34px;
+  padding: 0 12px;
+}
+
 .danger-button.compact {
   min-height: 34px;
   padding: 0 10px;
@@ -1383,6 +1388,28 @@ textarea:focus {
 .status-badge.probe-version.unknown {
   background: var(--tag-bg);
   color: var(--tag-text);
+}
+
+.status-badge.probe-update-status {
+  min-width: 0;
+  text-transform: none;
+}
+
+.status-badge.probe-update-status.pending,
+.status-badge.probe-update-status.running {
+  background: rgba(59, 130, 246, 0.14);
+  color: var(--accent-strong);
+}
+
+.status-badge.probe-update-status.succeeded {
+  background: var(--online-soft);
+  color: var(--online-text);
+}
+
+.status-badge.probe-update-status.failed,
+.status-badge.probe-update-status.unsupported {
+  background: rgba(220, 38, 38, 0.1);
+  color: var(--danger);
 }
 
 .probe-inline-badge {
@@ -2347,6 +2374,22 @@ textarea:focus {
   padding: 11px;
   background: rgba(245, 158, 11, 0.1);
   color: var(--text);
+}
+
+.probe-update-notice.running {
+  border-color: rgba(59, 130, 246, 0.36);
+  background: rgba(59, 130, 246, 0.08);
+}
+
+.probe-update-notice.succeeded {
+  border-color: rgba(22, 163, 74, 0.32);
+  background: rgba(22, 163, 74, 0.08);
+}
+
+.probe-update-notice.failed,
+.probe-update-notice.unsupported {
+  border-color: rgba(220, 38, 38, 0.28);
+  background: rgba(220, 38, 38, 0.06);
 }
 
 .probe-update-notice strong,

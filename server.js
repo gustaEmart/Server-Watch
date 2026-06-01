@@ -66,7 +66,8 @@ const SESSION_COOKIE = "sw_session";
 const SESSION_TTL_MS = 8 * 60 * 60 * 1000;
 const DEFAULT_ADMIN_EMAIL = process.env.SERVERWATCH_ADMIN_EMAIL || "admin@serverwatch.local";
 const DEFAULT_ADMIN_PASSWORD = process.env.SERVERWATCH_ADMIN_PASSWORD || "admin123";
-const PROBE_COLLECTOR_VERSION = "0.6.3";
+const PROBE_COLLECTOR_VERSION = "0.6.4";
+const PROBE_UPDATE_SUPPORTED_PLATFORMS = new Set(["linux"]);
 
 const sockets = new Set();
 const sessions = new Map();
@@ -77,6 +78,7 @@ let state = {
   users: [],
   events: [],
   alerts: [],
+  probeUpdateRequests: [],
   settings: {
     defaultInterval: 10,
     defaultFailureThreshold: 2,
@@ -552,6 +554,7 @@ async function loadState() {
     ...parsed,
     groups: Array.isArray(parsed.groups) ? parsed.groups : [],
     probes: Array.isArray(parsed.probes) ? parsed.probes : [],
+    probeUpdateRequests: Array.isArray(parsed.probeUpdateRequests) ? parsed.probeUpdateRequests : [],
     users: Array.isArray(parsed.users) ? parsed.users : [],
     settings: { ...state.settings, ...(parsed.settings || {}) }
   };
@@ -1251,10 +1254,41 @@ function probeVersionStatus(probe) {
   return compareVersions(probe.version, PROBE_COLLECTOR_VERSION) < 0 ? "outdated" : "current";
 }
 
+function probeUpdateSupported(probe) {
+  return PROBE_UPDATE_SUPPORTED_PLATFORMS.has(normalizeProbePlatform(probe.platform, null));
+}
+
+function activeProbeUpdateRequest(probeId) {
+  return (state.probeUpdateRequests || []).find(
+    (request) => request.probeId === probeId && ["pending", "running"].includes(request.status)
+  ) || null;
+}
+
+function latestProbeUpdateRequest(probeId) {
+  return (state.probeUpdateRequests || [])
+    .filter((request) => request.probeId === probeId)
+    .sort((left, right) => new Date(right.requestedAt || 0).getTime() - new Date(left.requestedAt || 0).getTime())[0] || null;
+}
+
+function publicProbeUpdateRequest(request) {
+  if (!request) return null;
+  return {
+    id: request.id,
+    probeId: request.probeId,
+    targetVersion: request.targetVersion,
+    status: request.status,
+    requestedAt: request.requestedAt || null,
+    startedAt: request.startedAt || null,
+    finishedAt: request.finishedAt || null,
+    error: request.error || null
+  };
+}
+
 function publicProbe(probe) {
   const servers = listedServers().filter((server) => server.checkSource === "probe" && server.probeId === probe.id);
   const staleServers = servers.filter((server) => probeConnection(server).status === "stale").length;
   const versionStatus = probeVersionStatus(probe);
+  const updateRequest = activeProbeUpdateRequest(probe.id) || latestProbeUpdateRequest(probe.id);
   return {
     id: probe.id,
     name: probe.name || probe.id,
@@ -1262,6 +1296,8 @@ function publicProbe(probe) {
     latestVersion: PROBE_COLLECTOR_VERSION,
     versionStatus,
     updateAvailable: versionStatus === "outdated",
+    updateSupported: probeUpdateSupported(probe),
+    updateRequest: publicProbeUpdateRequest(updateRequest),
     hostName: probe.hostName || null,
     primaryAddress: probe.primaryAddress || null,
     addresses: Array.isArray(probe.addresses) ? probe.addresses : [],
@@ -1539,6 +1575,46 @@ function recordProbeVersionChange(probeId, previousVersion, nextVersion) {
   addProbeEvent(server, "probe_updated", `Probe atualizado de ${previousVersion} para ${nextVersion}.`);
 }
 
+function finishProbeUpdateIfCurrent(probe) {
+  if (!probe?.version) return false;
+  const request = activeProbeUpdateRequest(probe.id);
+  if (!request || compareVersions(probe.version, request.targetVersion) < 0) return false;
+  request.status = "succeeded";
+  request.finishedAt = nowIso();
+  request.error = null;
+  const server = linkedServerForProbe(probe.id);
+  if (server) addProbeEvent(server, "probe_update_succeeded", `Atualizacao do probe concluida em ${probe.version}.`);
+  return true;
+}
+
+function createProbeUpdateRequest(probe, requestedBy = "Sistema") {
+  if (!probe) return { error: "Probe nao encontrado.", status: 404 };
+  if (!probeUpdateSupported(probe)) {
+    return { error: "Atualizacao remota automatica esta disponivel apenas para probes Linux.", status: 409 };
+  }
+  if (probeVersionStatus(probe) !== "outdated") {
+    return { error: "Este probe ja esta na versao atual.", status: 409 };
+  }
+  const active = activeProbeUpdateRequest(probe.id);
+  if (active) return { request: active, created: false };
+  const request = {
+    id: randomUUID(),
+    probeId: probe.id,
+    targetVersion: PROBE_COLLECTOR_VERSION,
+    status: "pending",
+    requestedAt: nowIso(),
+    requestedBy,
+    startedAt: null,
+    finishedAt: null,
+    error: null
+  };
+  state.probeUpdateRequests.unshift(request);
+  state.probeUpdateRequests = state.probeUpdateRequests.slice(0, 500);
+  const server = linkedServerForProbe(probe.id);
+  if (server) addProbeEvent(server, "probe_update_requested", `Atualizacao do probe solicitada para ${PROBE_COLLECTOR_VERSION}.`);
+  return { request, created: true };
+}
+
 function upsertProbe({ probeId, name, version, hostName, primaryAddress, addresses, platform, primaryMac, macAddresses, hostMetrics, remoteAddress }) {
   const id = String(probeId || "").trim();
   if (!id) return null;
@@ -1566,7 +1642,7 @@ function upsertProbe({ probeId, name, version, hostName, primaryAddress, address
   };
   if (existing) {
     const previousVersion = existing.version || null;
-    const changed =
+    let changed =
       existing.name !== payload.name ||
       existing.version !== payload.version ||
       existing.hostName !== payload.hostName ||
@@ -1581,10 +1657,12 @@ function upsertProbe({ probeId, name, version, hostName, primaryAddress, address
       existing.deletedAt !== payload.deletedAt;
     Object.assign(existing, payload);
     recordProbeVersionChange(existing.id, previousVersion, existing.version || null);
+    if (finishProbeUpdateIfCurrent(existing)) changed = true;
     return { probe: existing, changed };
   }
   const probe = { createdAt: nowIso(), ...payload };
   state.probes.push(probe);
+  finishProbeUpdateIfCurrent(probe);
   return { probe, changed: true };
 }
 
@@ -1696,6 +1774,7 @@ function ensureProbeServer(probe) {
 
 function probeTargets(probeId) {
   const probe = (state.probes || []).find((item) => item.id === probeId);
+  const updateRequest = activeProbeUpdateRequest(probeId);
   const toTarget = (server, verification = false) => ({
     id: server.id,
     name: server.name,
@@ -1719,7 +1798,18 @@ function probeTargets(probeId) {
         .map((server) => toTarget(server, true))
     : [];
 
-  return [...ownedTargets, ...verificationTargets];
+  return {
+    targets: [...ownedTargets, ...verificationTargets],
+    updateRequest:
+      updateRequest?.status === "pending"
+        ? {
+            id: updateRequest.id,
+            probeId: updateRequest.probeId,
+            targetVersion: updateRequest.targetVersion,
+            requestedAt: updateRequest.requestedAt
+          }
+        : null
+  };
 }
 
 function applyProbeResult(server, result, probeId, options = {}) {
@@ -1965,9 +2055,11 @@ async function handleApi(req, res) {
         const ensuredServer = ensureProbeServer(registered.probe);
         scheduleSave();
         if (registered.changed || ensuredServer.changed) broadcastSnapshot();
+        const probeWork = probeTargets(registered.probe.id);
         return sendJson(res, 200, {
           probe: publicProbe(registered.probe),
-          targets: probeTargets(registered.probe.id)
+          targets: probeWork.targets,
+          updateRequest: probeWork.updateRequest
         });
       }
 
@@ -2009,6 +2101,37 @@ async function handleApi(req, res) {
         if (registered.changed || ensuredServer.changed || accepted > 0) broadcastSnapshot();
         return sendJson(res, 200, { ok: true, accepted });
       }
+
+      if (req.method === "POST" && parts[2] === "update-status") {
+        const payload = await readBody(req);
+        const probeId = String(payload.probeId || "").trim();
+        const requestId = String(payload.requestId || "").trim();
+        const status = String(payload.status || "").trim();
+        const request = (state.probeUpdateRequests || []).find(
+          (item) => item.id === requestId && item.probeId === probeId
+        );
+        if (!request) return sendJson(res, 404, { error: "Solicitacao de atualizacao nao encontrada." });
+        if (!["running", "failed", "unsupported", "succeeded"].includes(status)) {
+          return sendJson(res, 400, { error: "Status de atualizacao invalido." });
+        }
+        request.status = status;
+        request.error = payload.error ? String(payload.error).slice(0, 500) : null;
+        if (status === "running") request.startedAt = request.startedAt || nowIso();
+        if (["failed", "unsupported", "succeeded"].includes(status)) request.finishedAt = nowIso();
+        const server = linkedServerForProbe(probeId);
+        if (server && status !== "running") {
+          addProbeEvent(
+            server,
+            `probe_update_${status}`,
+            status === "succeeded"
+              ? `Atualizacao do probe concluida em ${request.targetVersion}.`
+              : `Atualizacao do probe nao foi concluida: ${request.error || status}.`
+          );
+        }
+        scheduleSave();
+        broadcastSnapshot();
+        return sendJson(res, 200, { ok: true, request: publicProbeUpdateRequest(request) });
+      }
     }
 
     const session = requireSession(req, res);
@@ -2028,9 +2151,38 @@ async function handleApi(req, res) {
         return sendJson(res, 200, (state.probes || []).filter((probe) => !probe.deletedAt).map(publicProbe));
       }
 
+      if (req.method === "POST" && parts[2] === "update-outdated") {
+        const requestedBy = session.user.name || session.user.email || "Administrador";
+        const results = (state.probes || [])
+          .filter((probe) => !probe.deletedAt && probeVersionStatus(probe) === "outdated" && probeUpdateSupported(probe))
+          .map((probe) => {
+            const result = createProbeUpdateRequest(probe, requestedBy);
+            return {
+              probe: publicProbe(probe),
+              request: publicProbeUpdateRequest(result.request),
+              created: Boolean(result.created),
+              error: result.error || null
+            };
+          });
+        scheduleSave();
+        broadcastSnapshot();
+        return sendJson(res, 202, { count: results.length, results });
+      }
+
       const id = parts[2];
       const probe = (state.probes || []).find((item) => item.id === id && !item.deletedAt);
       if (!probe) return notFound(res);
+
+      if (req.method === "POST" && parts[3] === "update") {
+        const result = createProbeUpdateRequest(probe, session.user.name || session.user.email || "Administrador");
+        if (result.error) return sendJson(res, result.status || 400, { error: result.error });
+        scheduleSave();
+        broadcastSnapshot();
+        return sendJson(res, result.created ? 202 : 200, {
+          probe: publicProbe(probe),
+          request: publicProbeUpdateRequest(result.request)
+        });
+      }
 
       if (req.method === "DELETE" && parts.length === 3) {
         const linkedServers = listedServers().filter((server) => server.checkSource === "probe" && server.probeId === probe.id);

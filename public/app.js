@@ -112,6 +112,7 @@ const els = {
   userActive: document.querySelector("#userActive"),
   userPassword: document.querySelector("#userPassword"),
   probeCount: document.querySelector("#probeCount"),
+  updateOutdatedProbes: document.querySelector("#updateOutdatedProbes"),
   probesList: document.querySelector("#probesList"),
   probeDetailPanel: document.querySelector("#probeDetailPanel"),
   probeTokenValue: document.querySelector("#probeTokenValue"),
@@ -347,6 +348,22 @@ function probeVersionBadge(probe) {
       ? "Atualizado"
       : "Versao desconhecida";
   return `<span class="status-badge probe-version ${escapeHtml(status)}">${escapeHtml(label)}</span>`;
+}
+
+function probeUpdateStatusLabel(status) {
+  return {
+    pending: "Atualizacao pendente",
+    running: "Atualizando",
+    succeeded: "Atualizado remotamente",
+    failed: "Falha na atualizacao",
+    unsupported: "Atualizacao manual"
+  }[status || ""] || "Sem atualizacao remota";
+}
+
+function probeUpdateStatusBadge(probe) {
+  const request = probe?.updateRequest;
+  if (!request) return "";
+  return `<span class="status-badge probe-update-status ${escapeHtml(request.status)}">${escapeHtml(probeUpdateStatusLabel(request.status))}</span>`;
 }
 
 function severityLabel(severity) {
@@ -2404,11 +2421,20 @@ function renderProbeDetail(probe) {
   const mac = primaryMac(probe);
   const address = probe.primaryAddress || probe.addresses?.[0] || probe.lastAddress || "-";
   const canRemove = linkedServers.length === 0;
-  const updateNotice = probe.updateAvailable
+  const updateRequest = probe.updateRequest;
+  const canRemoteUpdate = probe.updateAvailable && probe.updateSupported && !["pending", "running"].includes(updateRequest?.status);
+  const updateNotice = updateRequest
+    ? `
+      <div class="probe-update-notice ${escapeHtml(updateRequest.status)}">
+        <strong>${escapeHtml(probeUpdateStatusLabel(updateRequest.status))}</strong>
+        <span>${escapeHtml(updateRequest.error || `Alvo ${updateRequest.targetVersion || probe.latestVersion || "-"}. Solicitado em ${formatDate(updateRequest.requestedAt)}.`)}</span>
+      </div>
+    `
+    : probe.updateAvailable
     ? `
       <div class="probe-update-notice">
         <strong>Atualizacao disponivel</strong>
-        <span>Este collector esta em ${escapeHtml(probe.version || "-")} e a versao atual e ${escapeHtml(probe.latestVersion || "-")}.</span>
+        <span>Este collector esta em ${escapeHtml(probe.version || "-")} e a versao atual e ${escapeHtml(probe.latestVersion || "-")}.${probe.updateSupported ? "" : " Atualizacao automatica disponivel apenas para Linux."}</span>
       </div>
     `
     : "";
@@ -2488,6 +2514,9 @@ function renderProbeDetail(probe) {
     </div>
 
     <div class="probe-actions">
+      <button class="primary-button compact" type="button" data-action="update-probe" data-probe-id="${escapeHtml(probe.id)}" ${canRemoteUpdate ? "" : "disabled"}>
+        Atualizar probe
+      </button>
       <button class="danger-button compact" type="button" data-action="delete-probe" data-probe-id="${escapeHtml(probe.id)}" ${canRemove ? "" : "disabled"}>
         Remover probe antigo
       </button>
@@ -2508,6 +2537,13 @@ function renderProbes() {
   });
   els.probeInstallCommand.textContent = token ? probeInstallCommand() : "Token ainda nao disponivel.";
   els.probeCount.textContent = `${state.probes.length} ${state.probes.length === 1 ? "probe conectado" : "probes conectados"}`;
+  const updatableCount = state.probes.filter(
+    (probe) => probe.updateAvailable && probe.updateSupported && !["pending", "running"].includes(probe.updateRequest?.status)
+  ).length;
+  if (els.updateOutdatedProbes) {
+    els.updateOutdatedProbes.disabled = updatableCount === 0;
+    els.updateOutdatedProbes.textContent = updatableCount ? `Atualizar ${updatableCount}` : "Atualizar desatualizados";
+  }
   if (state.selectedProbeId && !state.probes.some((probe) => probe.id === state.selectedProbeId)) {
     state.selectedProbeId = null;
   }
@@ -2527,6 +2563,7 @@ function renderProbes() {
               <div class="probe-card-meta">
                 <strong><span class="status-badge ${probe.status === "stale" ? "probe_stale" : probe.status || "unknown"}">${probeStatusLabel(probe.status)}</span></strong>
                 ${probe.updateAvailable ? probeVersionBadge(probe) : ""}
+                ${probeUpdateStatusBadge(probe)}
                 <span>${formatDate(probe.lastSeenAt)}</span>
                 <span>${escapeHtml(probe.lastAddress || "sem endereco")}</span>
               </div>
@@ -3082,6 +3119,15 @@ function bindEvents() {
     renderProbes();
   });
 
+  els.updateOutdatedProbes?.addEventListener("click", async () => {
+    try {
+      const response = await api("/api/probes/update-outdated", { method: "POST" });
+      showToast("Atualizacao solicitada", `${response.count || 0} probes Linux foram colocados na fila.`);
+    } catch (error) {
+      showToast("Falha ao atualizar probes", error.message);
+    }
+  });
+
   els.probeDetailPanel?.addEventListener("click", async (event) => {
     const serverRow = eventClosest(event, "[data-server-id]");
     if (serverRow) {
@@ -3096,6 +3142,18 @@ function bindEvents() {
 
     if (button.dataset.action === "copy-probe-repair") {
       copyText(probeInstallCommandFor(probe), "Comando de reparo do probe copiado.");
+      return;
+    }
+
+    if (button.dataset.action === "update-probe") {
+      try {
+        const response = await api(`/api/probes/${encodeURIComponent(probe.id)}/update`, { method: "POST" });
+        state.probes = state.probes.map((item) => (item.id === probe.id ? response.probe : item));
+        renderProbes();
+        showToast("Atualizacao solicitada", `${probe.name || probe.id} sera atualizado no proximo contato.`);
+      } catch (error) {
+        showToast("Falha ao solicitar atualizacao", error.message);
+      }
       return;
     }
 

@@ -5,11 +5,12 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const DEFAULT_CONFIG = new URL("./config.json", import.meta.url);
-const VERSION = "0.6.3";
+const VERSION = "0.6.4";
 const DEFAULT_QUEUE_MAX_BATCHES = 1000;
 const HOST_METRICS_CACHE_MS = 60 * 1000;
 const HOST_METRICS_TIMEOUT_MS = 7000;
 const REQUEST_TIMEOUT_MS = 15000;
+const handledUpdateRequests = new Set();
 const CRITICAL_SERVICE_NAMES = [
   "apache2",
   "docker",
@@ -863,6 +864,72 @@ async function sendResults(config, results) {
   });
 }
 
+function shellQuote(value) {
+  return `'${String(value || "").replaceAll("'", "'\"'\"'")}'`;
+}
+
+async function reportUpdateStatus(config, request, status, error = null) {
+  await requestJson(config, "/api/probe/update-status", {
+    method: "POST",
+    body: JSON.stringify({
+      probeId: config.probeId,
+      requestId: request.id,
+      status,
+      error
+    })
+  });
+}
+
+function spawnDetached(command, args) {
+  const child = spawn(command, args, {
+    detached: true,
+    stdio: "ignore"
+  });
+  child.unref();
+}
+
+async function handleUpdateRequest(config, request) {
+  if (!request?.id || handledUpdateRequests.has(request.id)) return;
+  handledUpdateRequests.add(request.id);
+
+  if (os.platform() !== "linux") {
+    await reportUpdateStatus(config, request, "unsupported", "Atualizacao remota automatica disponivel apenas para Linux.");
+    return;
+  }
+
+  const installCommand = [
+    `curl -fsSL ${shellQuote(`${config.serverUrl}/downloads/probe/linux-installer`)}`,
+    "|",
+    "bash -s -- --repair",
+    "--server-url",
+    shellQuote(config.serverUrl),
+    "--probe-id",
+    shellQuote(config.probeId),
+    "--token",
+    shellQuote(config.token),
+    "--name",
+    shellQuote(config.name || config.probeId)
+  ].join(" ");
+  const unitName = `serverwatch-probe-update-${String(request.id).replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 24)}`;
+  await reportUpdateStatus(config, request, "running");
+
+  try {
+    spawnDetached("systemd-run", [
+      "--unit",
+      unitName,
+      "--description",
+      "ServerWatch Probe Collector update",
+      "/usr/bin/env",
+      "bash",
+      "-lc",
+      installCommand
+    ]);
+    console.log(`Scheduled probe update ${request.id} to ${request.targetVersion || "latest"}`);
+  } catch (error) {
+    await reportUpdateStatus(config, request, "failed", error.message);
+  }
+}
+
 async function runLoop(config) {
   const nextChecks = new Map();
   let cachedTargets = [];
@@ -872,6 +939,13 @@ async function runLoop(config) {
     try {
       const payload = await getTargets(config);
       cachedTargets = Array.isArray(payload.targets) ? payload.targets : [];
+      if (payload.updateRequest) {
+        try {
+          await handleUpdateRequest(config, payload.updateRequest);
+        } catch (error) {
+          console.error(`[${new Date().toISOString()}] Update request failed: ${error.message}`);
+        }
+      }
       if (offlineSince) {
         const offlineMs = Date.now() - offlineSince.getTime();
         console.log(`ServerWatch connection restored after ${Math.round(offlineMs / 1000)}s`);
