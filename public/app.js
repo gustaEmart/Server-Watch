@@ -2223,6 +2223,10 @@ function renderMetricRows(title, subtitle, rows) {
 
 function renderExtendedServerMetrics(metrics) {
   if (!metrics) return "";
+  const relevantAddresses = (metrics.networkInterfaces || [])
+    .flatMap((item) => item.addresses || [])
+    .map((address) => address.address)
+    .filter((address) => address && !address.startsWith("127.") && !address.startsWith("169.254.") && address !== "::1");
   const diskRows = (metrics.diskPartitions || []).map((item) => `
     <article class="profile-data-row">
       <div>
@@ -2236,7 +2240,7 @@ function renderExtendedServerMetrics(metrics) {
     </article>
   `);
 
-  const portRows = (metrics.listeningPorts || []).map((item) => `
+  const portRows = relevantAddresses.length > 1 ? (metrics.listeningPorts || []).map((item) => `
     <article class="profile-data-row compact-row">
       <div>
         <strong>${escapeHtml(String(item.port || "-"))}</strong>
@@ -2246,7 +2250,7 @@ function renderExtendedServerMetrics(metrics) {
         <span>${escapeHtml(item.address || "todas interfaces")}</span>
       </div>
     </article>
-  `);
+  `) : [];
 
   const serviceRows = (metrics.services || []).map((item) => {
     const status = item.status || item.active || "-";
@@ -2301,12 +2305,25 @@ function renderExtendedServerMetrics(metrics) {
       </div>
     </article>
   `);
+  const proxmoxStorageRows = (metrics.proxmoxStorage || []).map((item) => `
+    <article class="profile-data-row">
+      <div>
+        <strong>${escapeHtml(item.name || "-")}</strong>
+        <small>${escapeHtml([item.type, item.status].filter(Boolean).join(" · ") || "storage Proxmox")}</small>
+      </div>
+      <div>
+        <span>${formatPercent(item.usedPercent)}</span>
+        <small>${formatBytes(item.usedBytes)} / ${formatBytes(item.totalBytes)} · livre ${formatBytes(item.availableBytes)}</small>
+      </div>
+    </article>
+  `);
 
   return [
     renderMetricRows("Particoes de disco", `${diskRows.length} volumes`, diskRows),
-    renderMetricRows("Portas locais", `${portRows.length} portas em escuta`, portRows),
+    renderMetricRows("Storage Proxmox", `${proxmoxStorageRows.length} storages`, proxmoxStorageRows),
+    renderMetricRows("Portas locais", `${portRows.length} portas em host multi-IP`, portRows),
     renderMetricRows("Servicos criticos", `${serviceRows.length} servicos encontrados`, serviceRows),
-    renderMetricRows("Processos principais", `${processRows.length} processos`, processRows),
+    renderMetricRows("Top processos por consumo", `${processRows.length} processos por CPU`, processRows),
     renderMetricRows("Eventos criticos", `${eventRows.length} eventos`, eventRows),
     renderMetricRows("Virtualizacao", `${virtualizationRows.length} convidados`, virtualizationRows)
   ].join("");

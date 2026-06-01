@@ -46,7 +46,7 @@ const SESSION_COOKIE = "sw_session";
 const SESSION_TTL_MS = 8 * 60 * 60 * 1000;
 const DEFAULT_ADMIN_EMAIL = process.env.SERVERWATCH_ADMIN_EMAIL || "admin@serverwatch.local";
 const DEFAULT_ADMIN_PASSWORD = process.env.SERVERWATCH_ADMIN_PASSWORD || "admin123";
-const PROBE_COLLECTOR_VERSION = "0.6.0";
+const PROBE_COLLECTOR_VERSION = "0.6.1";
 
 const sockets = new Set();
 const sessions = new Map();
@@ -1415,6 +1415,20 @@ function normalizeHostMetrics(value, fallback = null) {
         .filter((item) => item.name || item.id)
         .slice(0, 64)
     : [];
+  const proxmoxStorage = Array.isArray(metrics.proxmoxStorage)
+    ? metrics.proxmoxStorage
+        .map((item) => ({
+          name: metricText(item?.name, 120),
+          type: metricText(item?.type, 80),
+          status: metricText(item?.status, 80),
+          totalBytes: normalizeNumber(item?.totalBytes),
+          usedBytes: normalizeNumber(item?.usedBytes),
+          availableBytes: normalizeNumber(item?.availableBytes),
+          usedPercent: normalizeNumber(item?.usedPercent)
+        }))
+        .filter((item) => item.name)
+        .slice(0, 32)
+    : [];
 
   return {
     collectedAt: String(metrics.collectedAt || nowIso()),
@@ -1440,6 +1454,7 @@ function normalizeHostMetrics(value, fallback = null) {
     topProcesses,
     criticalEvents,
     virtualization,
+    proxmoxStorage,
     system: {
       uptimeSeconds: normalizeNumber(metrics.system?.uptimeSeconds),
       arch: String(metrics.system?.arch || "").trim() || null,

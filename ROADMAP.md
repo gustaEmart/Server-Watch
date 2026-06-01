@@ -78,11 +78,8 @@ Coletas implementadas em validacao:
 
 Ajustes pendentes para a proxima iteracao:
 
-- Refinar a exibicao de portas: nao exibir o bloco para todos os servidores; mostrar apenas quando houver valor operacional, principalmente maquinas com mais de um IP/interface relevante.
 - Definir e documentar o criterio de "servicos criticos". A coleta atual usa uma lista fixa de nomes conhecidos, mas isso precisa virar configuracao por ambiente/empresa/servidor.
 - Revisar "processos principais": hoje a coleta lista processos por consumo, mas isso nao significa criticidade operacional. Separar "top processos" de "processos criticos configurados".
-- Corrigir caracteres quebrados nos textos coletados de logs/eventos, especialmente mensagens do Windows Event Viewer. Normalizar encoding antes de enviar/salvar/exibir.
-- Revisar coleta de storage em Proxmox: o espaco ocupado dos storages nao esta sendo exibido corretamente e precisa considerar a fonte correta do Proxmox, nao apenas o `df` do host.
 
 Coletas futuras:
 

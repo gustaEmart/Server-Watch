@@ -5,7 +5,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const DEFAULT_CONFIG = new URL("./config.json", import.meta.url);
-const VERSION = "0.6.0";
+const VERSION = "0.6.1";
 const DEFAULT_QUEUE_MAX_BATCHES = 1000;
 const CRITICAL_SERVICE_NAMES = [
   "apache2",
@@ -151,16 +151,20 @@ function runCommand(command, args, timeoutMs = 2500) {
   });
 }
 
+function runPowerShell(command, timeoutMs = 2500) {
+  return runCommand("powershell.exe", [
+    "-NoProfile",
+    "-ExecutionPolicy",
+    "Bypass",
+    "-Command",
+    `[Console]::OutputEncoding=[System.Text.Encoding]::UTF8; $OutputEncoding=[System.Text.Encoding]::UTF8; ${command}`
+  ], timeoutMs);
+}
+
 async function diskUsage() {
   try {
     if (os.platform() === "win32") {
-      const output = await runCommand("powershell.exe", [
-        "-NoProfile",
-        "-ExecutionPolicy",
-        "Bypass",
-        "-Command",
-        "$d=Get-CimInstance Win32_LogicalDisk -Filter \"DeviceID='C:'\"; if($d){[pscustomobject]@{mount=$d.DeviceID;totalBytes=[int64]$d.Size;freeBytes=[int64]$d.FreeSpace}|ConvertTo-Json -Compress}"
-      ]);
+      const output = await runPowerShell("$d=Get-CimInstance Win32_LogicalDisk -Filter \"DeviceID='C:'\"; if($d){[pscustomobject]@{mount=$d.DeviceID;totalBytes=[int64]$d.Size;freeBytes=[int64]$d.FreeSpace}|ConvertTo-Json -Compress}");
       const parsed = JSON.parse(output.trim());
       const totalBytes = Number(parsed.totalBytes || 0);
       const freeBytes = Number(parsed.freeBytes || 0);
@@ -199,13 +203,7 @@ async function diskUsage() {
 async function diskPartitions() {
   try {
     if (os.platform() === "win32") {
-      const output = await runCommand("powershell.exe", [
-        "-NoProfile",
-        "-ExecutionPolicy",
-        "Bypass",
-        "-Command",
-        "Get-CimInstance Win32_LogicalDisk -Filter \"DriveType=3\" | Select-Object DeviceID,VolumeName,FileSystem,Size,FreeSpace | ConvertTo-Json -Compress"
-      ], 4000);
+      const output = await runPowerShell("Get-CimInstance Win32_LogicalDisk -Filter \"DriveType=3\" | Select-Object DeviceID,VolumeName,FileSystem,Size,FreeSpace | ConvertTo-Json -Compress", 4000);
       const parsed = JSON.parse(output.trim() || "[]");
       const rows = Array.isArray(parsed) ? parsed : [parsed];
       return rows
@@ -263,13 +261,7 @@ function splitCommandLines(output) {
 async function listeningPorts() {
   try {
     if (os.platform() === "win32") {
-      const output = await runCommand("powershell.exe", [
-        "-NoProfile",
-        "-ExecutionPolicy",
-        "Bypass",
-        "-Command",
-        "Get-NetTCPConnection -State Listen | Select-Object LocalAddress,LocalPort,OwningProcess | Sort-Object LocalPort -Unique | ConvertTo-Json -Compress"
-      ], 4000);
+      const output = await runPowerShell("Get-NetTCPConnection -State Listen | Select-Object LocalAddress,LocalPort,OwningProcess | Sort-Object LocalPort -Unique | ConvertTo-Json -Compress", 4000);
       const parsed = JSON.parse(output.trim() || "[]");
       const rows = Array.isArray(parsed) ? parsed : [parsed];
       return rows
@@ -315,13 +307,7 @@ async function criticalServices() {
   try {
     if (os.platform() === "win32") {
       const names = CRITICAL_SERVICE_NAMES.map((name) => `'${name.replace(/'/g, "''")}'`).join(",");
-      const output = await runCommand("powershell.exe", [
-        "-NoProfile",
-        "-ExecutionPolicy",
-        "Bypass",
-        "-Command",
-        `$names=@(${names}); Get-Service | Where-Object {$names -contains $_.Name -or $names -contains $_.DisplayName} | Select-Object Name,DisplayName,Status,StartType | ConvertTo-Json -Compress`
-      ], 4500);
+      const output = await runPowerShell(`$names=@(${names}); Get-Service | Where-Object {$names -contains $_.Name -or $names -contains $_.DisplayName} | Select-Object Name,DisplayName,Status,StartType | ConvertTo-Json -Compress`, 4500);
       const parsed = JSON.parse(output.trim() || "[]");
       const rows = Array.isArray(parsed) ? parsed : [parsed];
       return rows
@@ -361,13 +347,7 @@ async function criticalServices() {
 async function topProcesses() {
   try {
     if (os.platform() === "win32") {
-      const output = await runCommand("powershell.exe", [
-        "-NoProfile",
-        "-ExecutionPolicy",
-        "Bypass",
-        "-Command",
-        "Get-Process | Sort-Object CPU -Descending | Select-Object -First 10 ProcessName,Id,CPU,WorkingSet64 | ConvertTo-Json -Compress"
-      ], 4500);
+      const output = await runPowerShell("Get-Process | Sort-Object CPU -Descending | Select-Object -First 10 ProcessName,Id,CPU,WorkingSet64 | ConvertTo-Json -Compress", 4500);
       const parsed = JSON.parse(output.trim() || "[]");
       const rows = Array.isArray(parsed) ? parsed : [parsed];
       return rows
@@ -403,13 +383,7 @@ async function topProcesses() {
 async function criticalEvents() {
   try {
     if (os.platform() === "win32") {
-      const output = await runCommand("powershell.exe", [
-        "-NoProfile",
-        "-ExecutionPolicy",
-        "Bypass",
-        "-Command",
-        "Get-WinEvent -FilterHashtable @{LogName=@('System','Application');Level=@(1,2)} -MaxEvents 10 | Select-Object TimeCreated,ProviderName,Id,LevelDisplayName,Message | ConvertTo-Json -Compress"
-      ], 6000);
+      const output = await runPowerShell("Get-WinEvent -FilterHashtable @{LogName=@('System','Application');Level=@(1,2)} -MaxEvents 10 | Select-Object TimeCreated,ProviderName,Id,LevelDisplayName,Message | ConvertTo-Json -Compress", 6000);
       const parsed = JSON.parse(output.trim() || "[]");
       const rows = Array.isArray(parsed) ? parsed : [parsed];
       return rows
@@ -444,13 +418,7 @@ async function criticalEvents() {
 async function virtualizationInventory() {
   try {
     if (os.platform() === "win32") {
-      const output = await runCommand("powershell.exe", [
-        "-NoProfile",
-        "-ExecutionPolicy",
-        "Bypass",
-        "-Command",
-        "if(Get-Command Get-VM -ErrorAction SilentlyContinue){Get-VM | Select-Object Name,State,Status,Uptime,MemoryAssigned,ProcessorCount | ConvertTo-Json -Compress}"
-      ], 5000);
+      const output = await runPowerShell("if(Get-Command Get-VM -ErrorAction SilentlyContinue){Get-VM | Select-Object Name,State,Status,Uptime,MemoryAssigned,ProcessorCount | ConvertTo-Json -Compress}", 5000);
       if (!output.trim()) return [];
       const parsed = JSON.parse(output.trim() || "[]");
       const rows = Array.isArray(parsed) ? parsed : [parsed];
@@ -491,6 +459,35 @@ async function virtualizationInventory() {
   }
 }
 
+async function proxmoxStorage() {
+  if (os.platform() === "win32") return [];
+  try {
+    const output = await runCommand("pvesm", ["status"], 3500);
+    return splitCommandLines(output)
+      .slice(1)
+      .map((line) => {
+        const parts = line.split(/\s+/);
+        if (parts.length < 6) return null;
+        const totalBytes = Number(parts[3]) * 1024;
+        const usedBytes = Number(parts[4]) * 1024;
+        const availableBytes = Number(parts[5]) * 1024;
+        return {
+          name: parts[0] || null,
+          type: parts[1] || null,
+          status: parts[2] || null,
+          totalBytes: Number.isFinite(totalBytes) ? totalBytes : null,
+          usedBytes: Number.isFinite(usedBytes) ? usedBytes : null,
+          availableBytes: Number.isFinite(availableBytes) ? availableBytes : null,
+          usedPercent: Number.isFinite(totalBytes) && totalBytes > 0 ? Math.round((usedBytes / totalBytes) * 100) : null
+        };
+      })
+      .filter((row) => row?.name)
+      .slice(0, 32);
+  } catch {
+    return [];
+  }
+}
+
 function parseLinkSpeedMbps(value) {
   const text = String(value || "").trim();
   if (!text) return null;
@@ -504,13 +501,7 @@ function parseLinkSpeedMbps(value) {
 async function windowsAdapterDetails() {
   if (os.platform() !== "win32") return new Map();
   try {
-    const output = await runCommand("powershell.exe", [
-      "-NoProfile",
-      "-ExecutionPolicy",
-      "Bypass",
-      "-Command",
-      "Get-NetAdapter | Select-Object Name,InterfaceDescription,Status,LinkSpeed,MacAddress | ConvertTo-Json -Compress"
-    ]);
+    const output = await runPowerShell("Get-NetAdapter | Select-Object Name,InterfaceDescription,Status,LinkSpeed,MacAddress | ConvertTo-Json -Compress");
     const parsed = JSON.parse(output.trim() || "[]");
     const rows = Array.isArray(parsed) ? parsed : [parsed];
     const byName = new Map();
@@ -610,6 +601,7 @@ async function hostMetrics() {
     topProcesses: await topProcesses(),
     criticalEvents: await criticalEvents(),
     virtualization: await virtualizationInventory(),
+    proxmoxStorage: await proxmoxStorage(),
     system: {
       uptimeSeconds: Math.floor(os.uptime()),
       arch: os.arch(),
