@@ -1,7 +1,8 @@
 import { createServer } from "node:http";
 import { createHash, randomUUID, scryptSync, timingSafeEqual } from "node:crypto";
 import { spawn } from "node:child_process";
-import { readFile } from "node:fs/promises";
+import { createReadStream } from "node:fs";
+import { readFile, stat } from "node:fs/promises";
 import { extname, join, resolve } from "node:path";
 import os from "node:os";
 import { createStorage } from "./storage/index.js";
@@ -29,6 +30,12 @@ const DOWNLOADS = {
     path: resolve("probe/setup-server.js"),
     filename: "setup-server.js",
     contentType: "text/javascript; charset=utf-8",
+    allowProbeToken: true
+  },
+  "/downloads/probe/node-runtime-windows-x64": {
+    path: resolve(process.env.SERVERWATCH_WINDOWS_NODE_RUNTIME_PATH || "downloads/node-v20.19.2-win-x64.zip"),
+    filename: "serverwatch-node-runtime-win-x64.zip",
+    contentType: "application/zip",
     allowProbeToken: true
   },
   "/downloads/probe/windows-installer": {
@@ -1835,14 +1842,14 @@ async function serveDownload(req, res) {
   }
 
   try {
-    const content = await readFile(download.path);
+    const fileStat = await stat(download.path);
     res.writeHead(200, {
       "Content-Type": download.contentType,
-      "Content-Length": content.length,
+      "Content-Length": fileStat.size,
       "Content-Disposition": `attachment; filename="${download.filename}"`,
       "Cache-Control": "no-store"
     });
-    res.end(content);
+    createReadStream(download.path).pipe(res);
   } catch {
     notFound(res);
   }

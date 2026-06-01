@@ -5,6 +5,7 @@ npm-debug.log*
 .DS_Store
 dist/
 *.exe
+downloads/node-v*-win-x64.zip
 tools/probe/windows/dotnet-installer/assets/node.exe
 .codex_ssh/
 .serverwatch.pid
