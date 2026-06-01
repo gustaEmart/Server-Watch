@@ -246,7 +246,7 @@ ensure_node_runtime() {
 
   mkdir -p "$INSTALL_DIR"
   echo "Installing isolated Node.js ${NODE_VERSION_REQUIRED} runtime for ServerWatch Probe..." >&2
-  download_url "https://nodejs.org/dist/v${NODE_VERSION_REQUIRED}/${archive_name}" "$archive_path"
+  download_asset "node-runtime-${platform}" "$archive_path"
   rm -rf "$runtime_root"
   mkdir -p "$runtime_root"
   tar -xJf "$archive_path" --strip-components=1 -C "$runtime_root"

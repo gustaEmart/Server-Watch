@@ -38,6 +38,18 @@ const DOWNLOADS = {
     contentType: "application/zip",
     allowProbeToken: true
   },
+  "/downloads/probe/node-runtime-linux-x64": {
+    path: resolve(process.env.SERVERWATCH_LINUX_X64_NODE_RUNTIME_PATH || "downloads/node-v20.19.2-linux-x64.tar.xz"),
+    filename: "serverwatch-node-runtime-linux-x64.tar.xz",
+    contentType: "application/x-xz",
+    allowProbeToken: true
+  },
+  "/downloads/probe/node-runtime-linux-arm64": {
+    path: resolve(process.env.SERVERWATCH_LINUX_ARM64_NODE_RUNTIME_PATH || "downloads/node-v20.19.2-linux-arm64.tar.xz"),
+    filename: "serverwatch-node-runtime-linux-arm64.tar.xz",
+    contentType: "application/x-xz",
+    allowProbeToken: true
+  },
   "/downloads/probe/windows-installer": {
     path: resolve(process.env.SERVERWATCH_WINDOWS_INSTALLER_PATH || "downloads/ServerWatchProbeSetup.exe"),
     filename: "ServerWatchProbeSetup.exe",
@@ -53,7 +65,7 @@ const SESSION_COOKIE = "sw_session";
 const SESSION_TTL_MS = 8 * 60 * 60 * 1000;
 const DEFAULT_ADMIN_EMAIL = process.env.SERVERWATCH_ADMIN_EMAIL || "admin@serverwatch.local";
 const DEFAULT_ADMIN_PASSWORD = process.env.SERVERWATCH_ADMIN_PASSWORD || "admin123";
-const PROBE_COLLECTOR_VERSION = "0.6.1";
+const PROBE_COLLECTOR_VERSION = "0.6.2";
 
 const sockets = new Set();
 const sessions = new Map();

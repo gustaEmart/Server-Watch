@@ -5,8 +5,11 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const DEFAULT_CONFIG = new URL("./config.json", import.meta.url);
-const VERSION = "0.6.1";
+const VERSION = "0.6.2";
 const DEFAULT_QUEUE_MAX_BATCHES = 1000;
+const HOST_METRICS_CACHE_MS = 60 * 1000;
+const HOST_METRICS_TIMEOUT_MS = 7000;
+const REQUEST_TIMEOUT_MS = 15000;
 const CRITICAL_SERVICE_NAMES = [
   "apache2",
   "docker",
@@ -118,6 +121,14 @@ function cpuUsageFromSnapshots(start, end) {
   }).filter((value) => value !== null);
   if (!usages.length) return null;
   return Math.round(usages.reduce((sum, value) => sum + value, 0) / usages.length);
+}
+
+function withTimeout(promise, timeoutMs, message) {
+  let timeoutId;
+  const timeout = new Promise((_, reject) => {
+    timeoutId = setTimeout(() => reject(new Error(message)), timeoutMs);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timeoutId));
 }
 
 function runCommand(command, args, timeoutMs = 2500) {
@@ -611,10 +622,44 @@ async function hostMetrics() {
   };
 }
 
+let hostMetricsCache = null;
+let hostMetricsCacheAt = 0;
+let hostMetricsInFlight = null;
+
+async function safeHostMetrics() {
+  const now = Date.now();
+  if (hostMetricsCache && now - hostMetricsCacheAt < HOST_METRICS_CACHE_MS) {
+    return hostMetricsCache;
+  }
+
+  if (!hostMetricsInFlight) {
+    hostMetricsInFlight = hostMetrics()
+      .then((metrics) => {
+        hostMetricsCache = metrics;
+        hostMetricsCacheAt = Date.now();
+        return metrics;
+      })
+      .catch((error) => {
+        console.error(`[${new Date().toISOString()}] Host metrics failed: ${error.message}`);
+        return hostMetricsCache;
+      })
+      .finally(() => {
+        hostMetricsInFlight = null;
+      });
+  }
+
+  try {
+    return await withTimeout(hostMetricsInFlight, HOST_METRICS_TIMEOUT_MS, "Host metrics collection timed out.");
+  } catch (error) {
+    console.error(`[${new Date().toISOString()}] ${error.message}`);
+    return hostMetricsCache;
+  }
+}
+
 async function probeMetadata(config) {
   const addresses = localAddresses();
   const macAddresses = localMacAddresses();
-  return {
+  const metadata = {
     probeId: config.probeId,
     name: config.name || config.probeId,
     version: VERSION,
@@ -623,9 +668,11 @@ async function probeMetadata(config) {
     primaryAddress: addresses[0] || "",
     addresses,
     primaryMac: macAddresses[0] || "",
-    macAddresses,
-    hostMetrics: await hostMetrics()
+    macAddresses
   };
+  const metrics = await safeHostMetrics();
+  if (metrics) metadata.hostMetrics = metrics;
+  return metadata;
 }
 
 function parseLatency(output) {
@@ -696,15 +743,30 @@ function pingHost(hostname, timeoutMs) {
 }
 
 async function requestJson(config, path, options = {}) {
-  const response = await fetch(`${config.serverUrl}${path}`, {
-    ...options,
-    headers: {
+  const { timeoutMs = REQUEST_TIMEOUT_MS, headers = {}, ...fetchOptions } = options;
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  let response;
+  try {
+    response = await fetch(`${config.serverUrl}${path}`, {
+      ...fetchOptions,
+      signal: controller.signal,
+      headers: {
       "Content-Type": "application/json",
       Authorization: `Bearer ${config.token}`,
       "X-ServerWatch-Probe-Token": config.token,
-      ...(options.headers || {})
+        ...headers
+      }
+    });
+  } catch (error) {
+    if (error.name === "AbortError") {
+      throw new Error(`Timeout ao conectar no ServerWatch apos ${Math.round(timeoutMs / 1000)}s.`);
     }
-  });
+    throw error;
+  } finally {
+    clearTimeout(timeoutId);
+  }
+
   const body = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(body.error || `HTTP ${response.status}`);
   return body;

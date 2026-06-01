@@ -10,7 +10,7 @@ namespace ServerWatchProbeSetup;
 internal static class Program
 {
     private const string TaskName = "ServerWatch Probe Collector";
-    private const string ProbeCollectorVersion = "0.2.0";
+    private const string ProbeCollectorVersion = "0.6.2";
     private const string NodeRuntimeDownloadPath = "/downloads/probe/node-runtime-windows-x64";
     private static readonly string InstallDir = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
