@@ -1536,6 +1536,8 @@ function ensureProbeServer(probe) {
 
   if (existing) {
     let changed = false;
+    const seenAt = probe.lastSeenAt || nowIso();
+    const previousStatus = existing.currentStatus || "unknown";
     if (existing.autoCreatedByProbe && existing.hostname !== hostname) {
       existing.hostname = hostname;
       changed = true;
@@ -1558,6 +1560,24 @@ function ensureProbeServer(probe) {
     }
     if (JSON.stringify(existing.macAddresses || []) !== JSON.stringify(probe.macAddresses || [])) {
       existing.macAddresses = Array.isArray(probe.macAddresses) ? probe.macAddresses : [];
+      changed = true;
+    }
+    if (existing.lastProbeSeenAt !== seenAt) {
+      existing.lastProbeSeenAt = seenAt;
+      changed = true;
+    }
+    existing.probeEventStatus = "online";
+    existing.probeFallbackStatus = null;
+    existing.probeFallbackCheckedAt = null;
+    if (existing.currentStatus !== "online") {
+      existing.currentStatus = "online";
+      existing.consecutiveFailures = 0;
+      existing.lastCheckedAt = seenAt;
+      existing.lastLatencyMs = existing.lastLatencyMs ?? 0;
+      existing.lastError = null;
+      existing.previousStatus = previousStatus;
+      existing.statusChangedAt = seenAt;
+      addEvent(existing, previousStatus, "online", existing.lastLatencyMs, `Contato recebido do probe ${probe.id}.`);
       changed = true;
     }
     if (changed) existing.updatedAt = nowIso();
@@ -1583,13 +1603,14 @@ function ensureProbeServer(probe) {
     nodeType: "server",
     infrastructurePlatform: "none",
     parentId: null,
-    currentStatus: "unknown",
+    currentStatus: "online",
     previousStatus: "unknown",
     statusChangedAt: createdAt,
-    lastCheckedAt: null,
-    lastLatencyMs: null,
+    lastCheckedAt: probe.lastSeenAt || createdAt,
+    lastLatencyMs: 0,
     lastError: null,
     lastProbeSeenAt: probe.lastSeenAt || createdAt,
+    probeEventStatus: "online",
     platform: probe.platform || null,
     primaryMac: probe.primaryMac || null,
     macAddresses: Array.isArray(probe.macAddresses) ? probe.macAddresses : [],

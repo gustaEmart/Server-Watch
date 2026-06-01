@@ -580,8 +580,9 @@ function setActiveView(viewName, options = {}) {
   const requestedTab = document.querySelector(`.nav-tab[data-view="${viewName}"]`);
   const nextView = requestedTab?.hidden ? "dashboard" : viewName;
   const tab = document.querySelector(`.nav-tab[data-view="${nextView}"]`) || document.querySelector('[data-view="dashboard"]');
+  if (!tab) return;
   const view = document.querySelector(`#${tab.dataset.view}View`);
-  if (!tab || !view) return;
+  if (!view) return;
 
   document.querySelectorAll(".nav-tab").forEach((item) => item.classList.remove("active"));
   document.querySelectorAll(".view").forEach((item) => item.classList.remove("active"));
@@ -1063,6 +1064,27 @@ function renderMetrics() {
 
 function serverById(id) {
   return state.servers.find((server) => server.id === id) || null;
+}
+
+function eventClosest(event, selector) {
+  const target = event?.target;
+  if (target?.closest) return target.closest(selector);
+  return target?.parentElement?.closest ? target.parentElement.closest(selector) : null;
+}
+
+function selectServer(serverId, options = {}) {
+  if (!serverById(serverId)) return false;
+  state.selectedServerId = serverId;
+  if (options.view) {
+    setActiveView(options.view);
+    render();
+    return true;
+  }
+  renderServers();
+  renderDetail();
+  renderServerDirectory();
+  renderServerProfile();
+  return true;
 }
 
 function eventServer(event) {
@@ -2968,7 +2990,7 @@ function bindEvents() {
   });
 
   els.companyNav.addEventListener("click", (event) => {
-    const button = event.target.closest("[data-company-id]");
+    const button = eventClosest(event, "[data-company-id]");
     if (!button) return;
     state.filters.groupId = button.dataset.companyId;
     els.groupFilter.value = state.filters.groupId;
@@ -2977,7 +2999,7 @@ function bindEvents() {
   });
 
   els.executiveDashboard?.addEventListener("click", (event) => {
-    const alertGroupButton = event.target.closest("[data-alert-group-id]");
+    const alertGroupButton = eventClosest(event, "[data-alert-group-id]");
     if (alertGroupButton?.dataset.alertGroupId) {
       state.alertFilters.groupId = alertGroupButton.dataset.alertGroupId;
       state.alertFilters.status = "open";
@@ -2990,14 +3012,12 @@ function bindEvents() {
       return;
     }
 
-    const serverButton = event.target.closest("[data-server-id]");
+    const serverButton = eventClosest(event, "[data-server-id]");
     if (serverButton?.dataset.serverId) {
-      state.selectedServerId = serverButton.dataset.serverId;
-      setActiveView("dashboard");
-      render();
+      selectServer(serverButton.dataset.serverId, { view: "dashboard" });
       return;
     }
-    const companyButton = event.target.closest("[data-company-id]");
+    const companyButton = eventClosest(event, "[data-company-id]");
     if (companyButton?.dataset.companyId) {
       state.filters.groupId = companyButton.dataset.companyId;
       els.groupFilter.value = state.filters.groupId;
@@ -3053,22 +3073,20 @@ function bindEvents() {
   });
 
   els.probesList?.addEventListener("click", (event) => {
-    const card = event.target.closest("[data-probe-id]");
+    const card = eventClosest(event, "[data-probe-id]");
     if (!card) return;
     state.selectedProbeId = card.dataset.probeId;
     renderProbes();
   });
 
   els.probeDetailPanel?.addEventListener("click", async (event) => {
-    const serverRow = event.target.closest("[data-server-id]");
+    const serverRow = eventClosest(event, "[data-server-id]");
     if (serverRow) {
-      state.selectedServerId = serverRow.dataset.serverId;
-      setActiveView("dashboard");
-      render();
+      selectServer(serverRow.dataset.serverId, { view: "dashboard" });
       return;
     }
 
-    const button = event.target.closest("[data-action]");
+    const button = eventClosest(event, "[data-action]");
     if (!button) return;
     const probe = state.probes.find((item) => item.id === button.dataset.probeId);
     if (!probe) return;
@@ -3131,7 +3149,7 @@ function bindEvents() {
   });
 
   els.usersList.addEventListener("click", async (event) => {
-    const button = event.target.closest("[data-user-action]");
+    const button = eventClosest(event, "[data-user-action]");
     if (!button) return;
     const user = state.users.find((item) => item.id === button.dataset.id);
     if (!user) return;
@@ -3151,14 +3169,14 @@ function bindEvents() {
 
   els.groupsList.addEventListener("click", (event) => {
     if (!isAdmin()) return;
-    const button = event.target.closest("[data-group-action]");
+    const button = eventClosest(event, "[data-group-action]");
     if (!button) return;
     const group = state.groups.find((item) => item.id === button.dataset.id);
     if (group && button.dataset.groupAction === "edit") openGroupDialog(group);
   });
 
   els.serverList.addEventListener("click", (event) => {
-    const topologyToggle = event.target.closest("[data-topology-toggle]");
+    const topologyToggle = eventClosest(event, "[data-topology-toggle]");
     if (topologyToggle) {
       event.preventDefault();
       event.stopPropagation();
@@ -3169,52 +3187,43 @@ function bindEvents() {
       return;
     }
 
-    const row = event.target.closest("[data-server-id]");
+    const row = eventClosest(event, "[data-server-id]");
     if (!row) return;
-    state.selectedServerId = row.dataset.serverId;
-    renderServers();
-    renderDetail();
-    renderServerDirectory();
-    renderServerProfile();
+    selectServer(row.dataset.serverId);
   });
 
   els.detailPanel.addEventListener("click", async (event) => {
-    const profileButton = event.target.closest("[data-view-server]");
+    const profileButton = eventClosest(event, "[data-view-server]");
     if (profileButton) {
-      state.selectedServerId = profileButton.dataset.viewServer;
-      setActiveView("servers");
-      render();
+      selectServer(profileButton.dataset.viewServer, { view: "servers" });
       return;
     }
 
-    const button = event.target.closest("[data-action]");
+    const button = eventClosest(event, "[data-action]");
     if (!button) return;
     await handleServerAction(button);
   });
 
   els.serverDirectoryList?.addEventListener("click", (event) => {
-    const button = event.target.closest("[data-profile-server-id]");
+    const button = eventClosest(event, "[data-profile-server-id]");
     if (!button) return;
-    state.selectedServerId = button.dataset.profileServerId;
-    renderServerDirectory();
-    renderServerProfile();
+    selectServer(button.dataset.profileServerId);
   });
 
   els.serverProfilePanel?.addEventListener("click", async (event) => {
-    const profileServer = event.target.closest("[data-profile-server-id]");
+    const profileServer = eventClosest(event, "[data-profile-server-id]");
     if (profileServer) {
-      state.selectedServerId = profileServer.dataset.profileServerId;
-      render();
+      selectServer(profileServer.dataset.profileServerId);
       return;
     }
 
-    const button = event.target.closest("[data-action]");
+    const button = eventClosest(event, "[data-action]");
     if (!button) return;
     await handleServerAction(button);
   });
 
   els.alertsList.addEventListener("click", async (event) => {
-    const button = event.target.closest("[data-alert-action]");
+    const button = eventClosest(event, "[data-alert-action]");
     if (!button) return;
     const alert = state.alerts.find((item) => item.id === button.dataset.alertId);
     if (!alert) return;
