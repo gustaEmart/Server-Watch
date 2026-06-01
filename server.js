@@ -117,6 +117,16 @@ function normalizeNodeType(value, fallback = "server") {
   return NODE_TYPES.has(type) ? type : "server";
 }
 
+function normalizeChildIds(value) {
+  if (Array.isArray(value)) {
+    return [...new Set(value.map((item) => String(item || "").trim()).filter(Boolean))];
+  }
+  if (typeof value === "string") {
+    return [...new Set(value.split(",").map((item) => item.trim()).filter(Boolean))];
+  }
+  return [];
+}
+
 function normalizeInfrastructurePlatform(value, fallback = "none") {
   const platform = String(value || fallback || "none").trim().toLowerCase();
   return INFRASTRUCTURE_PLATFORMS.has(platform) ? platform : "none";
@@ -228,6 +238,39 @@ function normalizeServer(payload, existing = {}) {
     isActive: Boolean(payload.isActive ?? payload.is_active ?? existing.isActive ?? true),
     updatedAt: nowIso()
   };
+}
+
+function syncVirtualizerChildren(parent, childIds = [], actorName = "Sistema") {
+  if (!parent || parent.deletedAt || parent.nodeType !== "hypervisor") return 0;
+  const selected = new Set(normalizeChildIds(childIds));
+  let updated = 0;
+
+  for (const server of listedServers()) {
+    if (server.id === parent.id || server.nodeType === "hypervisor") continue;
+    if (isDescendantServer(parent.id, server.id)) continue;
+
+    const alreadyChild = server.parentId === parent.id;
+    const canAttach = !server.parentId || alreadyChild;
+    const shouldAttach = selected.has(server.id) && canAttach;
+    const shouldDetach = !selected.has(server.id) && alreadyChild;
+    if (!shouldAttach && !shouldDetach) continue;
+
+    server.parentId = shouldAttach ? parent.id : null;
+    server.nodeType = shouldAttach ? "vm" : normalizeNodeType(server.nodeType);
+    if (shouldAttach && parent.groupId) {
+      server.groupId = parent.groupId;
+    }
+    server.updatedAt = nowIso();
+    addAdministrativeEvent(
+      server,
+      "server_edited",
+      shouldAttach ? `Servidor vinculado como VM de ${parent.name}.` : `Servidor desvinculado de ${parent.name}.`,
+      actorName
+    );
+    updated += 1;
+  }
+
+  return updated;
 }
 
 function normalizeGroup(payload, existing = {}) {
@@ -2154,9 +2197,10 @@ async function handleApi(req, res) {
         };
         state.servers.unshift(server);
         addAdministrativeEvent(server, "server_created", "Servidor cadastrado.", session.user.name);
+        const childUpdates = "childIds" in payload ? syncVirtualizerChildren(server, payload.childIds, session.user.name) : 0;
         scheduleSave();
         broadcastSnapshot();
-        return sendJson(res, 201, publicServer(server));
+        return sendJson(res, 201, { ...publicServer(server), childUpdates });
       }
 
       const id = parts[2];
@@ -2174,9 +2218,10 @@ async function handleApi(req, res) {
           server.autoCreatedByProbe = false;
         }
         addAdministrativeEvent(server, "server_edited", "Cadastro do servidor editado.", session.user.name);
+        const childUpdates = "childIds" in payload ? syncVirtualizerChildren(server, payload.childIds, session.user.name) : 0;
         scheduleSave();
         broadcastSnapshot();
-        return sendJson(res, 200, publicServer(server));
+        return sendJson(res, 200, { ...publicServer(server), childUpdates });
       }
 
       if (req.method === "DELETE" && parts.length === 3) {

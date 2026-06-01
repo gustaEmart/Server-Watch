@@ -2774,13 +2774,16 @@ async function submitServer(event) {
     tags: els.serverTags.value,
     description: els.serverDescription.value
   };
+  if (payload.nodeType === "hypervisor") {
+    payload.childIds = selectedVirtualizerChildIds();
+  }
   const parent = serverByFormParent();
   if (parent?.groupId) payload.groupId = parent.groupId;
   try {
     const saved = id
       ? await api(`/api/servers/${id}`, { method: "PUT", body: JSON.stringify(payload) })
       : await api("/api/servers", { method: "POST", body: JSON.stringify(payload) });
-    const childUpdates = await syncVirtualizerChildren(saved.id);
+    const childUpdates = Number(saved.childUpdates || 0);
     state.selectedServerId = saved.id;
     closeDialog();
     showToast(
