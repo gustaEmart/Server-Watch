@@ -17,10 +17,6 @@ Usage:
   curl -fsSL <serverwatch-url>/downloads/probe/linux-installer | sudo bash -s -- --repair --server-url <url> --probe-id <id> --token <token> [--name <name>]
   curl -fsSL <serverwatch-url>/downloads/probe/linux-installer | sudo bash -s -- --remove
 
-Local repository fallback:
-  sudo bash tools/probe/install-linux.sh --server-url <url> --probe-id <id> --token <token> [--name <name>]
-  sudo bash tools/probe/install-linux.sh --remove
-
 Setup UI:
   node probe/setup-server.js --config ./config.json
 USAGE
@@ -266,15 +262,9 @@ else
   step 8 "Iniciando instalacao..."
 fi
 
-if [[ -f "probe/collector.js" && -f "probe/setup-server.js" ]]; then
-  step 15 "Usando arquivos locais do probe..."
-  cp probe/collector.js "$TMP_DIR/collector.js"
-  cp probe/setup-server.js "$TMP_DIR/setup-server.js"
-else
-  step 15 "Baixando arquivos do probe de ${SERVER_URL}..."
-  download_asset "collector.js" "$TMP_DIR/collector.js"
-  download_asset "setup-server.js" "$TMP_DIR/setup-server.js"
-fi
+step 15 "Baixando arquivos do probe de ${SERVER_URL}..."
+download_asset "collector.js" "$TMP_DIR/collector.js"
+download_asset "setup-server.js" "$TMP_DIR/setup-server.js"
 
 step 35 "Preparando runtime e diretorio de instalacao..."
 create_backup
