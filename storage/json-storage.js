@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import { basename, dirname, extname, join } from "node:path";
 
 const MAX_BACKUPS = 10;
+const BACKUP_INTERVAL_MS = 60_000;
 
 function backupPrefix(dataFile) {
   const extension = extname(dataFile);
@@ -59,6 +60,8 @@ async function pruneBackups(dataFile) {
 }
 
 export function createJsonStorage({ dataFile }) {
+  let lastBackupAt = 0;
+
   return {
     kind: "json",
     async loadState() {
@@ -79,9 +82,12 @@ export function createJsonStorage({ dataFile }) {
     },
     async saveState(state) {
       await mkdir(dirname(dataFile), { recursive: true });
-      if (existsSync(dataFile)) {
+      if (existsSync(dataFile) && Date.now() - lastBackupAt >= BACKUP_INTERVAL_MS) {
         const current = await readFile(dataFile, "utf8").catch(() => "");
-        if (current.trim()) await copyFile(dataFile, backupFileName(dataFile)).catch(() => {});
+        if (current.trim()) {
+          await copyFile(dataFile, backupFileName(dataFile)).catch(() => {});
+          lastBackupAt = Date.now();
+        }
       }
       const tempFile = `${dataFile}.${process.pid}.${Date.now()}.tmp`;
       await writeFile(tempFile, JSON.stringify(state, null, 2), "utf8");
