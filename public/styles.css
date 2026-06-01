@@ -185,11 +185,16 @@ button {
   background: var(--sidebar-bg);
   color: var(--sidebar-text);
   padding: 22px;
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  max-height: 100vh;
   display: flex;
   flex-direction: column;
   gap: 28px;
   min-width: 0;
-  overflow: hidden;
+  overflow-x: hidden;
+  overflow-y: auto;
 }
 
 .brand {
@@ -2660,10 +2665,13 @@ label {
     position: sticky;
     top: 0;
     z-index: 5;
+    height: auto;
+    max-height: none;
     padding: 14px;
     flex-direction: row;
     align-items: center;
     flex-wrap: wrap;
+    overflow: visible;
   }
 
   .nav-tabs {
