@@ -4322,3 +4322,161 @@ body {
   border-color: rgba(218, 54, 51, 0.55);
   background: rgba(218, 54, 51, 0.16);
 }
+
+/* Visual refresh: dynamic states, metric bars and striped lists */
+.metric-card.offline {
+  border-color: var(--border-default);
+}
+
+.metric-card.offline::before {
+  background: var(--border-default);
+}
+
+.metric-card.offline strong {
+  color: var(--text-primary);
+}
+
+.metric-card.offline.has-alerts {
+  border-color: color-mix(in srgb, var(--color-danger) 72%, var(--border-default));
+}
+
+.metric-card.offline.has-alerts::before {
+  background: var(--color-danger);
+}
+
+.metric-card.offline.has-alerts strong {
+  color: var(--color-danger);
+}
+
+.metric-card.availability-success #metricAvailability {
+  color: var(--color-success);
+}
+
+.metric-card.availability-warning #metricAvailability {
+  color: var(--color-warning);
+}
+
+.metric-card.availability-danger #metricAvailability {
+  color: var(--color-danger);
+}
+
+.metric-card.availability-neutral #metricAvailability {
+  color: var(--text-primary);
+}
+
+.detail-section {
+  display: grid;
+  gap: 10px;
+}
+
+.detail-section h3,
+.profile-section > .panel-title h3,
+.server-metrics-summary .panel-title h3,
+.probe-metrics .panel-title h3,
+.profile-extra-list .panel-title h3 {
+  margin: 0;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--border-muted);
+  color: var(--text-muted);
+  font-size: 0.7rem;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.detail-stat {
+  background: var(--bg-elevated);
+}
+
+.detail-stat span:first-child {
+  color: var(--text-muted);
+  font-size: 0.7rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.detail-stat strong {
+  color: var(--text-primary);
+  font-size: 0.92rem;
+  font-weight: 650;
+}
+
+.metric-stat {
+  gap: 7px;
+}
+
+.metric-bar {
+  width: 100%;
+  height: 4px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--bg-overlay);
+}
+
+.metric-bar span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--color-neutral);
+}
+
+.metric-bar.success span {
+  background: var(--color-success);
+}
+
+.metric-bar.warning span {
+  background: var(--color-warning);
+}
+
+.metric-bar.danger span {
+  background: var(--color-danger);
+}
+
+.server-group-items > .server-row:nth-of-type(odd),
+.server-directory-list > .server-directory-item:nth-child(odd),
+.probes-list > .probe-card:nth-child(odd),
+.probe-targets > .probe-target-row:nth-child(odd),
+.groups-list > .group-card:nth-child(odd),
+.users-list > .user-card:nth-child(odd),
+.timeline > .timeline-item:nth-child(odd),
+.mini-history > .timeline-item:nth-child(odd),
+.profile-extra-list > .profile-data-row:nth-of-type(odd),
+.probe-network-list > .network-interface-row:nth-of-type(odd),
+.dependency-list > button:nth-child(odd),
+.virtualizer-child-list > .virtualizer-child-option:nth-child(odd) {
+  background: color-mix(in srgb, var(--bg-elevated) 72%, var(--bg-surface));
+}
+
+.server-group-items > .server-row:nth-of-type(even),
+.server-directory-list > .server-directory-item:nth-child(even),
+.probes-list > .probe-card:nth-child(even),
+.probe-targets > .probe-target-row:nth-child(even),
+.groups-list > .group-card:nth-child(even),
+.users-list > .user-card:nth-child(even),
+.timeline > .timeline-item:nth-child(even),
+.mini-history > .timeline-item:nth-child(even),
+.profile-extra-list > .profile-data-row:nth-of-type(even),
+.probe-network-list > .network-interface-row:nth-of-type(even),
+.dependency-list > button:nth-child(even),
+.virtualizer-child-list > .virtualizer-child-option:nth-child(even) {
+  background: color-mix(in srgb, var(--bg-surface) 82%, var(--bg-elevated));
+}
+
+.server-row:hover,
+.server-directory-item:hover,
+.probe-card:hover,
+.probe-target-row:hover,
+.group-card:hover,
+.user-card:hover,
+.dependency-list button:hover,
+.virtualizer-child-option:hover {
+  background: var(--bg-elevated);
+}
+
+.server-row.selected,
+.server-directory-item.selected,
+.probe-card.selected {
+  border-color: var(--color-accent);
+  background: var(--selected-bg);
+  box-shadow: inset 3px 0 0 var(--color-accent);
+}

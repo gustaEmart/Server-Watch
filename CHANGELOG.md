@@ -26,6 +26,7 @@ Resumo das versoes estaveis publicadas do ServerWatch.
 - Melhora a leitura da pagina de servidores com secoes de inventario, perfil e dados coletados mais segmentadas.
 - Refina telas administrativas, alertas, historico, configuracoes e formularios para maior consistencia visual.
 - Ajusta hierarquia visual de topbar, acoes principais, KPIs e cards da visao executiva.
+- Conclui pontos pendentes do redesign com KPIs dinamicos, secoes de detalhe, barras de metricas e listas com linhas alternadas.
 - Resume o README e centraliza o historico de versoes neste arquivo.
 
 ## v1.2.1 - 2026-05-29

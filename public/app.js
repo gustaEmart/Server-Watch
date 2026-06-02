@@ -555,6 +555,29 @@ function formatPercent(value) {
   return Number.isFinite(number) ? `${Math.round(number)}%` : "-";
 }
 
+function metricTone(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return "neutral";
+  if (number >= 90) return "danger";
+  if (number >= 70) return "warning";
+  return "success";
+}
+
+function availabilityTone(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return "neutral";
+  if (number >= 95) return "success";
+  if (number >= 80) return "warning";
+  return "danger";
+}
+
+function metricBar(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return "";
+  const percent = Math.max(0, Math.min(100, Math.round(number)));
+  return `<div class="metric-bar ${metricTone(number)}" aria-hidden="true"><span style="width:${percent}%"></span></div>`;
+}
+
 function formatUptime(seconds) {
   const totalSeconds = Number(seconds);
   if (!Number.isFinite(totalSeconds) || totalSeconds < 0) return "-";
@@ -1094,6 +1117,8 @@ function renderMetrics() {
   const dependencyPct = (counts.dependency_down / statusTotal) * 100;
   const unknownPct = (counts.unknown / statusTotal) * 100;
   const pausedPct = (counts.paused / statusTotal) * 100;
+  const alertsOpen = Number(state.summary.alertsOpen ?? 0);
+  const availability = Number(state.summary.availability24h ?? 0);
 
   els.overviewScope.textContent = groupScopeLabel();
   els.metricTotal.textContent = activeTotal;
@@ -1101,6 +1126,12 @@ function renderMetrics() {
   els.metricOffline.textContent = counts.offline;
   els.metricAvailability.textContent = `${state.summary.availability24h ?? 0}%`;
   els.metricAlerts.textContent = `${state.summary.alertsOpen ?? 0} alertas abertos`;
+
+  const offlineCard = els.metricOffline.closest(".metric-card");
+  offlineCard?.classList.toggle("has-alerts", alertsOpen > 0);
+  const availabilityCard = els.metricAvailability.closest(".metric-card");
+  availabilityCard?.classList.remove("availability-success", "availability-warning", "availability-danger", "availability-neutral");
+  availabilityCard?.classList.add(`availability-${availabilityTone(availability)}`);
 
   els.statusDonut.style.background = servers.length
     ? `conic-gradient(
@@ -1657,18 +1688,38 @@ function renderDetail() {
     <p class="detail-meta">${escapeHtml(server.description || "Sem descricao cadastrada.")}</p>
     <div class="tag-list">${tags || `<span class="tag">sem tags</span>`}</div>
 
-    <div class="detail-grid">
-      <div class="detail-stat"><span>Ultima checagem</span><strong>${formatDate(server.lastCheckedAt)}</strong></div>
-      <div class="detail-stat"><span>Latencia</span><strong>${server.lastLatencyMs ?? "-"} ms</strong></div>
-      <div class="detail-stat"><span>Origem</span><strong>${checkSourceLabel(server.checkSource)}</strong></div>
-      <div class="detail-stat"><span>Empresa</span><strong>${escapeHtml(groupLabel(server.groupId))}</strong></div>
-      <div class="detail-stat"><span>Sistema</span><strong>${platformIcon(server.platform)}${platformLabel(server.platform)}</strong></div>
-      <div class="detail-stat"><span>MAC</span><strong>${escapeHtml(mac || "-")}</strong></div>
-      <div class="detail-stat"><span>Intervalo</span><strong>${server.checkInterval}s</strong></div>
-      ${offlineSince}
-      ${dependencyStats}
-      ${probeStats}
-    </div>
+    <section class="detail-section">
+      <h3>Monitoramento</h3>
+      <div class="detail-grid">
+        <div class="detail-stat"><span>Ultima checagem</span><strong>${formatDate(server.lastCheckedAt)}</strong></div>
+        <div class="detail-stat"><span>Latencia</span><strong>${server.lastLatencyMs ?? "-"} ms</strong></div>
+        <div class="detail-stat"><span>Origem</span><strong>${checkSourceLabel(server.checkSource)}</strong></div>
+        <div class="detail-stat"><span>Empresa</span><strong>${escapeHtml(groupLabel(server.groupId))}</strong></div>
+        <div class="detail-stat"><span>Intervalo</span><strong>${server.checkInterval}s</strong></div>
+        ${offlineSince}
+      </div>
+    </section>
+
+    <section class="detail-section">
+      <h3>Inventario</h3>
+      <div class="detail-grid">
+        <div class="detail-stat"><span>Sistema</span><strong>${platformIcon(server.platform)}${platformLabel(server.platform)}</strong></div>
+        <div class="detail-stat"><span>MAC</span><strong>${escapeHtml(mac || "-")}</strong></div>
+      </div>
+    </section>
+
+    <section class="detail-section">
+      <h3>Infraestrutura</h3>
+      <div class="detail-grid">
+        ${dependencyStats}
+      </div>
+    </section>
+
+    ${
+      probeStats
+        ? `<section class="detail-section"><h3>Probe e verificacao</h3><div class="detail-grid">${probeStats}</div></section>`
+        : ""
+    }
 
     ${serverHostMetrics}
 
@@ -1858,9 +1909,9 @@ function renderServerProfile() {
           <span>${formatDate(metrics?.collectedAt || server.probeHostMetricsUpdatedAt)}</span>
         </div>
         <div class="profile-stat-grid metric-profile-grid">
-          <div class="detail-stat"><span>CPU em uso</span><strong>${formatPercent(cpu.usagePercent)}</strong><small>${escapeHtml(cpu.model || "-")}</small></div>
-          <div class="detail-stat"><span>Memoria</span><strong>${formatPercent(memory.usedPercent)}</strong><small>${formatBytes(memory.usedBytes)} / ${formatBytes(memory.totalBytes)}</small></div>
-          <div class="detail-stat"><span>Disco</span><strong>${formatPercent(disk.usedPercent)}</strong><small>${escapeHtml(disk.mount || "-")} · ${formatBytes(disk.usedBytes)} / ${formatBytes(disk.totalBytes)}</small></div>
+          <div class="detail-stat metric-stat"><span>CPU em uso</span><strong>${formatPercent(cpu.usagePercent)}</strong>${metricBar(cpu.usagePercent)}<small>${escapeHtml(cpu.model || "-")}</small></div>
+          <div class="detail-stat metric-stat"><span>Memoria</span><strong>${formatPercent(memory.usedPercent)}</strong>${metricBar(memory.usedPercent)}<small>${formatBytes(memory.usedBytes)} / ${formatBytes(memory.totalBytes)}</small></div>
+          <div class="detail-stat metric-stat"><span>Disco</span><strong>${formatPercent(disk.usedPercent)}</strong>${metricBar(disk.usedPercent)}<small>${escapeHtml(disk.mount || "-")} · ${formatBytes(disk.usedBytes)} / ${formatBytes(disk.totalBytes)}</small></div>
           <div class="detail-stat"><span>Interface principal</span><strong>${escapeHtml(interfacePrimaryAddress(primaryInterface) || "-")}</strong><small>${escapeHtml(primaryInterface?.name || "-")} · ${formatNetworkSpeed(primaryInterface?.speedMbps)}</small></div>
         </div>
         ${metrics ? renderNetworkInterfaces(metrics) : `<div class="empty-list compact-empty">Aguardando metricas do Probe Collector atualizado.</div>`}
@@ -2253,9 +2304,9 @@ function renderServerHostMetrics(server) {
         <span>${formatDate(metrics.collectedAt || server.probeHostMetricsUpdatedAt)}</span>
       </div>
       <div class="server-metric-grid">
-        <div class="detail-stat"><span>CPU</span><strong>${formatPercent(cpu.usagePercent)}</strong><small>${escapeHtml(cpu.model || "-")}</small></div>
-        <div class="detail-stat"><span>Memoria</span><strong>${formatPercent(memory.usedPercent)}</strong><small>${formatBytes(memory.usedBytes)} / ${formatBytes(memory.totalBytes)}</small></div>
-        <div class="detail-stat"><span>Disco</span><strong>${formatPercent(disk.usedPercent)}</strong><small>${escapeHtml(disk.mount || "-")} · ${formatBytes(disk.usedBytes)} / ${formatBytes(disk.totalBytes)}</small></div>
+        <div class="detail-stat metric-stat"><span>CPU</span><strong>${formatPercent(cpu.usagePercent)}</strong>${metricBar(cpu.usagePercent)}<small>${escapeHtml(cpu.model || "-")}</small></div>
+        <div class="detail-stat metric-stat"><span>Memoria</span><strong>${formatPercent(memory.usedPercent)}</strong>${metricBar(memory.usedPercent)}<small>${formatBytes(memory.usedBytes)} / ${formatBytes(memory.totalBytes)}</small></div>
+        <div class="detail-stat metric-stat"><span>Disco</span><strong>${formatPercent(disk.usedPercent)}</strong>${metricBar(disk.usedPercent)}<small>${escapeHtml(disk.mount || "-")} · ${formatBytes(disk.usedBytes)} / ${formatBytes(disk.totalBytes)}</small></div>
         <div class="detail-stat"><span>Uptime</span><strong>${formatUptime(system.uptimeSeconds)}</strong><small>${escapeHtml(server.probeHostName || system.type || "-")}</small></div>
         <div class="detail-stat"><span>Rede</span><strong>${escapeHtml(interfacePrimaryAddress(primaryInterface) || "-")}</strong><small>${escapeHtml(primaryInterface?.name || "-")} · ${formatNetworkSpeed(primaryInterface?.speedMbps)}</small></div>
       </div>
@@ -2438,9 +2489,9 @@ function renderProbeHostMetrics(probe) {
         <span>${formatDate(metrics.collectedAt || probe.hostMetricsUpdatedAt)}</span>
       </div>
       <div class="probe-detail-grid">
-        <div class="detail-stat"><span>CPU</span><strong>${formatPercent(cpu.usagePercent)}</strong><small>${escapeHtml(cpu.cores || "-")} cores</small></div>
-        <div class="detail-stat"><span>Memoria</span><strong>${formatPercent(memory.usedPercent)}</strong><small>${formatBytes(memory.usedBytes)} / ${formatBytes(memory.totalBytes)}</small></div>
-        <div class="detail-stat"><span>Disco ${escapeHtml(disk.mount || "")}</span><strong>${formatPercent(disk.usedPercent)}</strong><small>${formatBytes(disk.usedBytes)} / ${formatBytes(disk.totalBytes)}</small></div>
+        <div class="detail-stat metric-stat"><span>CPU</span><strong>${formatPercent(cpu.usagePercent)}</strong>${metricBar(cpu.usagePercent)}<small>${escapeHtml(cpu.cores || "-")} cores</small></div>
+        <div class="detail-stat metric-stat"><span>Memoria</span><strong>${formatPercent(memory.usedPercent)}</strong>${metricBar(memory.usedPercent)}<small>${formatBytes(memory.usedBytes)} / ${formatBytes(memory.totalBytes)}</small></div>
+        <div class="detail-stat metric-stat"><span>Disco ${escapeHtml(disk.mount || "")}</span><strong>${formatPercent(disk.usedPercent)}</strong>${metricBar(disk.usedPercent)}<small>${formatBytes(disk.usedBytes)} / ${formatBytes(disk.totalBytes)}</small></div>
         <div class="detail-stat"><span>Uptime</span><strong>${formatUptime(system.uptimeSeconds)}</strong><small>${escapeHtml(system.type || "-")} ${escapeHtml(system.release || "")}</small></div>
         <div class="detail-stat"><span>Arquitetura</span><strong>${escapeHtml(system.arch || "-")}</strong><small>${escapeHtml(cpu.model || "-")}</small></div>
         <div class="detail-stat"><span>Carga media</span><strong>${escapeHtml(loadAverage)}</strong><small>1 / 5 / 15 minutos</small></div>
