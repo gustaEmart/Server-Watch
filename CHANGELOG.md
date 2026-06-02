@@ -11,6 +11,7 @@ Resumo das versoes estaveis publicadas do ServerWatch.
 - Adiciona workflow de CI com `npm ci`, `npm run check` e `npm test`.
 - Permite configurar o token do Probe Collector pela variavel de ambiente `PROBE_TOKEN`.
 - Inicia a modularizacao do `server.js` extraindo WebSocket para `ws/handler.js` e alertas/eventos para `services/alert.js`.
+- Move a rota de downloads para `routes/downloads.js`, mantendo as mesmas regras de autenticacao.
 - Resume o README e centraliza o historico de versoes neste arquivo.
 
 ## v1.2.1 - 2026-05-29

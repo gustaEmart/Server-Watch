@@ -1,12 +1,21 @@
 import { createServer } from "node:http";
-import { randomUUID, scryptSync, timingSafeEqual } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
-import { createReadStream } from "node:fs";
-import { readFile, stat } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import { extname, join, resolve } from "node:path";
 import os from "node:os";
+import { createDownloadHandler } from "./routes/downloads.js";
 import { createStorage } from "./storage/index.js";
 import { createAlertService } from "./services/alert.js";
+import {
+  clearSessionCookie,
+  hashPassword,
+  normalizeEmail,
+  parseCookies,
+  publicUser,
+  setSessionCookie,
+  verifyPassword
+} from "./services/auth.js";
 import { applyMonitorResult } from "./services/monitor.js";
 import { createWebSocketHub } from "./ws/handler.js";
 
@@ -393,38 +402,6 @@ function normalizeAlertSettings(payload = {}, existing = {}) {
       staging: normalizeSeverity(incomingSeverity.staging, currentSeverity.staging || "warning"),
       development: normalizeSeverity(incomingSeverity.development, currentSeverity.development || "info")
     }
-  };
-}
-
-function normalizeEmail(value) {
-  return String(value || "").trim().toLowerCase();
-}
-
-function hashPassword(password) {
-  const salt = randomUUID().replaceAll("-", "");
-  const hash = scryptSync(String(password), salt, 32).toString("base64");
-  return `scrypt:${salt}:${hash}`;
-}
-
-function verifyPassword(password, storedHash) {
-  const [scheme, salt, hash] = String(storedHash || "").split(":");
-  if (scheme !== "scrypt" || !salt || !hash) return false;
-  const expected = Buffer.from(hash, "base64");
-  const actual = scryptSync(String(password), salt, expected.length);
-  return expected.length === actual.length && timingSafeEqual(expected, actual);
-}
-
-function publicUser(user) {
-  return {
-    id: user.id,
-    name: user.name,
-    email: user.email,
-    role: user.role,
-    isActive: user.isActive !== false,
-    mustChangePassword: user.mustChangePassword === true,
-    createdAt: user.createdAt,
-    updatedAt: user.updatedAt,
-    lastLoginAt: user.lastLoginAt || null
   };
 }
 
@@ -1764,18 +1741,6 @@ function sendJson(res, statusCode, payload) {
   res.end(body);
 }
 
-function parseCookies(req) {
-  return String(req.headers.cookie || "")
-    .split(";")
-    .map((item) => item.trim())
-    .filter(Boolean)
-    .reduce((cookies, item) => {
-      const index = item.indexOf("=");
-      if (index > 0) cookies[item.slice(0, index)] = decodeURIComponent(item.slice(index + 1));
-      return cookies;
-    }, {});
-}
-
 function getSession(req) {
   const token = parseCookies(req)[SESSION_COOKIE];
   if (!token) return null;
@@ -1790,14 +1755,6 @@ function getSession(req) {
     return null;
   }
   return { token, user };
-}
-
-function setSessionCookie(res, token) {
-  res.setHeader("Set-Cookie", `${SESSION_COOKIE}=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${Math.floor(SESSION_TTL_MS / 1000)}`);
-}
-
-function clearSessionCookie(res) {
-  res.setHeader("Set-Cookie", `${SESSION_COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`);
 }
 
 function requireSession(req, res) {
@@ -1821,32 +1778,6 @@ function requireAdmin(req, res) {
 
 function notFound(res) {
   sendJson(res, 404, { error: "Recurso nao encontrado." });
-}
-
-async function serveDownload(req, res) {
-  const { pathname } = getRouteParts(req);
-  const download = DOWNLOADS[pathname];
-  if (!download) return notFound(res);
-  const session = getSession(req);
-  const hasAdminSession = session?.user?.role === "admin";
-  const hasProbeToken = download.allowProbeToken && authorizeProbe(req);
-  if (!download.public && !hasAdminSession && !hasProbeToken) {
-    sendJson(res, session ? 403 : 401, { error: session ? "Apenas administradores podem baixar este arquivo." : "Autenticacao necessaria." });
-    return;
-  }
-
-  try {
-    const fileStat = await stat(download.path);
-    res.writeHead(200, {
-      "Content-Type": download.contentType,
-      "Content-Length": fileStat.size,
-      "Content-Disposition": `attachment; filename="${download.filename}"`,
-      "Cache-Control": "no-store"
-    });
-    createReadStream(download.path).pipe(res);
-  } catch {
-    notFound(res);
-  }
 }
 
 function getRouteParts(req) {
@@ -1892,7 +1823,7 @@ async function handleApi(req, res) {
         user.lastLoginAt = nowIso();
         user.updatedAt = user.updatedAt || user.lastLoginAt;
         scheduleSave();
-        setSessionCookie(res, token);
+        setSessionCookie(res, SESSION_COOKIE, token, SESSION_TTL_MS);
         return sendJson(res, 200, { user: publicUser(user), requirePasswordChange: user.mustChangePassword === true });
       }
 
@@ -1922,7 +1853,7 @@ async function handleApi(req, res) {
       if (req.method === "POST" && parts[2] === "logout") {
         const session = getSession(req);
         if (session) sessions.delete(session.token);
-        clearSessionCookie(res);
+        clearSessionCookie(res, SESSION_COOKIE);
         return sendJson(res, 200, { ok: true });
       }
     }
@@ -2434,6 +2365,13 @@ async function serveStatic(req, res) {
 
 const webSocketHub = createWebSocketHub({ getSession, snapshot });
 const { broadcast, broadcastSnapshot, handleUpgrade } = webSocketHub;
+const serveDownload = createDownloadHandler({
+  downloads: DOWNLOADS,
+  getSession,
+  authorizeProbe,
+  sendJson,
+  notFound
+});
 const alertService = createAlertService({
   getState: () => state,
   randomId: randomUUID,
