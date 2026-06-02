@@ -60,6 +60,7 @@ const els = {
   overviewScope: document.querySelector("#overviewScope"),
   statusDonut: document.querySelector("#statusDonut"),
   statusLegend: document.querySelector("#statusLegend"),
+  simpleDashboardContent: document.querySelector("#simpleDashboardContent"),
   executiveDashboard: document.querySelector("#executiveDashboard"),
   executiveGrid: document.querySelector("#executiveGrid"),
   serverList: document.querySelector("#serverList"),
@@ -732,7 +733,7 @@ function updateTopbarContext() {
 function updateMetricsVisibility() {
   if (!els.metricsGrid) return;
   const viewName = activeViewName();
-  els.metricsGrid.hidden = !["dashboard", "groups"].includes(viewName);
+  els.metricsGrid.hidden = viewName !== "groups";
   if (els.executiveDashboard) els.executiveDashboard.hidden = viewName !== "dashboard";
 }
 
@@ -1203,6 +1204,125 @@ function availabilityForServers(servers) {
   if (!active.length) return 0;
   const online = active.filter((server) => server.currentStatus === "online").length;
   return Math.round((online / active.length) * 1000) / 10;
+}
+
+function renderSimpleDashboard() {
+  if (!els.simpleDashboardContent) return;
+  const activeServers = state.servers.filter((server) => server.isActive);
+  const counts = statusCounts(activeServers);
+  const openAlerts = state.alerts.filter((alert) => !alert.read && alert.type === "down");
+  const problemServers = activeServers
+    .filter((server) => ["offline", "probe_stale", "dependency_down"].includes(displayStatus(server)))
+    .sort((left, right) => {
+      const order = { offline: 0, dependency_down: 1, probe_stale: 2 };
+      return (order[displayStatus(left)] ?? 3) - (order[displayStatus(right)] ?? 3);
+    })
+    .slice(0, 4);
+  const staleProbes = state.probes.filter((probe) => probe.status === "stale");
+  const availability = Number(state.summary.availability24h ?? availabilityForServers(activeServers));
+  const tone = counts.offline || openAlerts.length ? "danger" : counts.dependency_down || counts.probe_stale || staleProbes.length ? "warning" : "success";
+  const headline = tone === "danger" ? "Atencao necessaria" : tone === "warning" ? "Acompanhar operacao" : "Operacao normal";
+  const message =
+    tone === "danger"
+      ? `${counts.offline} offline e ${openAlerts.length} alerta${openAlerts.length === 1 ? "" : "s"} aberto${openAlerts.length === 1 ? "" : "s"}.`
+      : tone === "warning"
+      ? "Ha itens para acompanhar, mas sem queda critica confirmada."
+      : "Nenhuma queda critica aberta no momento.";
+
+  const attentionList = problemServers.length
+    ? problemServers
+        .map((server) => {
+          const status = displayStatus(server);
+          return `
+            <button class="simple-attention-item ${status}" type="button" data-simple-server-id="${escapeHtml(server.id)}">
+              <span>
+                <strong>${escapeHtml(server.name)}</strong>
+                <small>${escapeHtml(server.hostname)} · ${escapeHtml(groupLabel(server.groupId))}</small>
+              </span>
+              <em>${statusLabel(status)}</em>
+            </button>
+          `;
+        })
+        .join("")
+    : `<div class="simple-empty">Tudo certo nos servidores ativos.</div>`;
+
+  const groupRows = groupedServers(state.servers)
+    .filter((group) => group.servers.some((server) => server.isActive))
+    .map((group) => {
+      const active = group.servers.filter((server) => server.isActive);
+      const groupCounts = statusCounts(active);
+      const serverIds = new Set(group.servers.map((server) => server.id));
+      const alerts = openAlerts.filter((alert) => serverIds.has(alert.serverId)).length;
+      const groupTone = groupCounts.offline || alerts ? "danger" : groupCounts.dependency_down || groupCounts.probe_stale ? "warning" : "success";
+      return {
+        id: group.id,
+        name: group.name,
+        active: active.length,
+        online: groupCounts.online,
+        alerts,
+        tone: groupTone,
+        availability: availabilityForServers(group.servers)
+      };
+    })
+    .sort((left, right) => {
+      const order = { danger: 0, warning: 1, success: 2 };
+      return (order[left.tone] ?? 3) - (order[right.tone] ?? 3) || left.name.localeCompare(right.name, "pt-BR");
+    })
+    .slice(0, 6)
+    .map(
+      (group) => `
+        <button class="simple-client-card ${group.tone}" type="button" data-simple-company-id="${escapeHtml(group.id)}">
+          <strong>${escapeHtml(group.name)}</strong>
+          <span>${group.online}/${group.active} online</span>
+          <small>${group.alerts ? `${group.alerts} alerta${group.alerts === 1 ? "" : "s"}` : `${group.availability}% disponivel`}</small>
+        </button>
+      `
+    )
+    .join("");
+
+  els.simpleDashboardContent.innerHTML = `
+    <div class="simple-hero ${tone}">
+      <div>
+        <span class="simple-kicker">Resumo agora</span>
+        <h2>${headline}</h2>
+        <p>${message}</p>
+      </div>
+      <div class="simple-score">
+        <strong>${Number.isFinite(availability) ? `${availability}%` : "-"}</strong>
+        <span>Disponibilidade 24h</span>
+      </div>
+    </div>
+
+    <div class="simple-kpi-row" aria-label="Resumo principal">
+      <article><span>Total</span><strong>${activeServers.length}</strong><small>monitorados</small></article>
+      <article class="success"><span>Online</span><strong>${counts.online}</strong><small>respondendo</small></article>
+      <article class="${counts.offline ? "danger" : "success"}"><span>Offline</span><strong>${counts.offline}</strong><small>${openAlerts.length} alertas</small></article>
+      <article class="${staleProbes.length ? "warning" : "success"}"><span>Probes</span><strong>${staleProbes.length}</strong><small>sem contato</small></article>
+    </div>
+
+    <div class="simple-dashboard-grid">
+      <section class="simple-panel">
+        <div class="panel-title compact-title">
+          <h2>Precisa de atencao</h2>
+          <span>${problemServers.length ? `${problemServers.length} itens principais` : "Sem acao imediata"}</span>
+        </div>
+        <div class="simple-attention-list">${attentionList}</div>
+      </section>
+
+      <section class="simple-panel">
+        <div class="panel-title compact-title">
+          <h2>Clientes</h2>
+          <span>Saude por empresa</span>
+        </div>
+        <div class="simple-client-grid">${groupRows || `<div class="simple-empty">Nenhuma empresa com servidor ativo.</div>`}</div>
+      </section>
+    </div>
+
+    <div class="simple-actions">
+      <button class="primary-button" type="button" data-simple-view="alerts">Ver alertas</button>
+      <button class="ghost-button" type="button" data-simple-view="servers">Abrir servidores</button>
+    </div>
+  `;
 }
 
 function executiveItem({ title, meta, badge, status = "", serverId = "", companyId = "", alertGroupId = "" }) {
@@ -2690,6 +2810,7 @@ function render() {
   updateMetricsVisibility();
   updateActiveFilterCount();
   renderMetrics();
+  renderSimpleDashboard();
   renderExecutiveDashboard();
   renderCompanyNav();
   renderServers();
@@ -3078,6 +3199,29 @@ function bindEvents() {
     });
   });
 
+  els.simpleDashboardContent?.addEventListener("click", (event) => {
+    const viewButton = eventClosest(event, "[data-simple-view]");
+    if (viewButton?.dataset.simpleView) {
+      setActiveView(viewButton.dataset.simpleView);
+      return;
+    }
+
+    const serverButton = eventClosest(event, "[data-simple-server-id]");
+    if (serverButton?.dataset.simpleServerId) {
+      selectServer(serverButton.dataset.simpleServerId, { view: "servers" });
+      return;
+    }
+
+    const companyButton = eventClosest(event, "[data-simple-company-id]");
+    if (companyButton?.dataset.simpleCompanyId) {
+      state.filters.groupId = companyButton.dataset.simpleCompanyId;
+      if (els.groupFilter) els.groupFilter.value = state.filters.groupId;
+      setActiveView("dashboard");
+      document.querySelector("#dashboardDetails")?.setAttribute("open", "");
+      render();
+    }
+  });
+
   document.querySelectorAll(".segment").forEach((button) => {
     button.addEventListener("click", () => {
       document.querySelectorAll(".segment").forEach((item) => item.classList.remove("active"));
@@ -3417,6 +3561,8 @@ function bindEvents() {
         state.alerts = state.alerts.map((item) => (item.id === updated.id ? updated : item));
         renderAlerts();
         renderMetrics();
+        renderSimpleDashboard();
+        renderExecutiveDashboard();
         showToast("Alerta reconhecido", `${alert.serverName} foi marcado como tratado.`);
       } catch (error) {
         showToast("Falha ao reconhecer alerta", error.message);
@@ -3451,6 +3597,7 @@ function bindEvents() {
     state.alerts = state.alerts.map((alert) => ({ ...alert, read: true }));
     renderAlerts();
     renderMetrics();
+    renderSimpleDashboard();
     renderExecutiveDashboard();
     showToast("Alertas atualizados", "Todos os alertas foram marcados como lidos.");
   });

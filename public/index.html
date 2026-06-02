@@ -126,83 +126,94 @@
         </section>
 
         <section class="view active" id="dashboardView">
-          <section class="executive-dashboard" id="executiveDashboard" aria-label="Dashboard executivo">
-            <div class="panel-title">
-              <div>
-                <h2>Visao executiva</h2>
-                <span>Prioridades operacionais do dia</span>
-              </div>
-            </div>
-            <div class="executive-grid" id="executiveGrid"></div>
+          <section class="simple-dashboard" id="simpleDashboard" aria-label="Resumo simplificado">
+            <div id="simpleDashboardContent"></div>
           </section>
 
-          <div class="toolbar">
-            <details class="filter-menu" id="filterMenu">
-              <summary class="filter-toggle">
-                <span>Filtrar</span>
-                <small id="activeFilterCount">Todos</small>
-              </summary>
-              <div class="filter-panel" aria-label="Filtros de servidores">
-                <div>
-                  <span class="filter-label">Status</span>
-                  <div class="segmented" role="group" aria-label="Filtro de status">
-                    <button class="segment active" data-status="all" type="button">Todos</button>
-                    <button class="segment" data-status="online" type="button">Online</button>
-                    <button class="segment" data-status="offline" type="button">Offline</button>
-                    <button class="segment" data-status="dependency_down" type="button">Afetado pelo host</button>
-                    <button class="segment" data-status="probe_stale" type="button">Probe sem contato</button>
-                    <button class="segment" data-status="unknown" type="button">Sem status</button>
-                    <button class="segment" data-status="paused" type="button">Pausado</button>
-                  </div>
-                </div>
-                <label class="search-field">
-                  <span>Buscar</span>
-                  <input id="searchInput" type="search" placeholder="Nome, IP, tag ou ambiente" />
-                </label>
-                <div class="filter-grid">
-                  <label>
-                    Ambiente
-                    <select id="environmentFilter" aria-label="Filtrar por ambiente">
-                      <option value="all">Todos ambientes</option>
-                      <option value="production">Producao</option>
-                      <option value="staging">Homologacao</option>
-                      <option value="development">Desenvolvimento</option>
-                    </select>
-                  </label>
-                  <label>
-                    Empresa
-                    <select id="groupFilter" aria-label="Filtrar por empresa">
-                      <option value="all">Todas empresas</option>
-                      <option value="none">Sem empresa</option>
-                    </select>
-                  </label>
-                </div>
-                <div class="filter-actions">
-                  <button class="ghost-button compact" id="clearFilters" type="button">Limpar filtros</button>
-                </div>
-              </div>
-            </details>
-          </div>
+          <details class="dashboard-details" id="dashboardDetails">
+            <summary>
+              <span>Visao operacional detalhada</span>
+              <small>Filtros, lista completa e investigacao tecnica</small>
+            </summary>
 
-          <div class="server-layout">
-            <section class="server-panel">
+            <section class="executive-dashboard" id="executiveDashboard" aria-label="Dashboard executivo">
               <div class="panel-title">
-                <h2>Servidores por empresa</h2>
-                <div class="panel-title-actions">
-                  <span id="serverCount">0 itens</span>
-                  <button class="ghost-button compact" id="toggleTopologyAll" type="button" hidden>Expandir todos</button>
+                <div>
+                  <h2>Visao executiva</h2>
+                  <span>Prioridades operacionais do dia</span>
                 </div>
               </div>
-              <div class="server-list" id="serverList"></div>
+              <div class="executive-grid" id="executiveGrid"></div>
             </section>
 
-            <aside class="detail-panel" id="detailPanel">
-              <div class="empty-state">
-                <strong>Nenhum servidor selecionado</strong>
-                <span>Selecione um item para ver latencia, historico recente e acoes.</span>
-              </div>
-            </aside>
-          </div>
+            <div class="toolbar">
+              <details class="filter-menu" id="filterMenu">
+                <summary class="filter-toggle">
+                  <span>Filtrar</span>
+                  <small id="activeFilterCount">Todos</small>
+                </summary>
+                <div class="filter-panel" aria-label="Filtros de servidores">
+                  <div>
+                    <span class="filter-label">Status</span>
+                    <div class="segmented" role="group" aria-label="Filtro de status">
+                      <button class="segment active" data-status="all" type="button">Todos</button>
+                      <button class="segment" data-status="online" type="button">Online</button>
+                      <button class="segment" data-status="offline" type="button">Offline</button>
+                      <button class="segment" data-status="dependency_down" type="button">Afetado pelo host</button>
+                      <button class="segment" data-status="probe_stale" type="button">Probe sem contato</button>
+                      <button class="segment" data-status="unknown" type="button">Sem status</button>
+                      <button class="segment" data-status="paused" type="button">Pausado</button>
+                    </div>
+                  </div>
+                  <label class="search-field">
+                    <span>Buscar</span>
+                    <input id="searchInput" type="search" placeholder="Nome, IP, tag ou ambiente" />
+                  </label>
+                  <div class="filter-grid">
+                    <label>
+                      Ambiente
+                      <select id="environmentFilter" aria-label="Filtrar por ambiente">
+                        <option value="all">Todos ambientes</option>
+                        <option value="production">Producao</option>
+                        <option value="staging">Homologacao</option>
+                        <option value="development">Desenvolvimento</option>
+                      </select>
+                    </label>
+                    <label>
+                      Empresa
+                      <select id="groupFilter" aria-label="Filtrar por empresa">
+                        <option value="all">Todas empresas</option>
+                        <option value="none">Sem empresa</option>
+                      </select>
+                    </label>
+                  </div>
+                  <div class="filter-actions">
+                    <button class="ghost-button compact" id="clearFilters" type="button">Limpar filtros</button>
+                  </div>
+                </div>
+              </details>
+            </div>
+
+            <div class="server-layout">
+              <section class="server-panel">
+                <div class="panel-title">
+                  <h2>Servidores por empresa</h2>
+                  <div class="panel-title-actions">
+                    <span id="serverCount">0 itens</span>
+                    <button class="ghost-button compact" id="toggleTopologyAll" type="button" hidden>Expandir todos</button>
+                  </div>
+                </div>
+                <div class="server-list" id="serverList"></div>
+              </section>
+
+              <aside class="detail-panel" id="detailPanel">
+                <div class="empty-state">
+                  <strong>Nenhum servidor selecionado</strong>
+                  <span>Selecione um item para ver latencia, historico recente e acoes.</span>
+                </div>
+              </aside>
+            </div>
+          </details>
         </section>
 
         <section class="view" id="serversView">
