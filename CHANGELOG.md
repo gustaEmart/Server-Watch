@@ -18,6 +18,8 @@ Resumo das versoes estaveis publicadas do ServerWatch.
 - Move o CRUD administrativo de usuarios para `routes/users.js`.
 - Move o CRUD de empresas/grupos para `routes/groups.js`.
 - Move listagem, reconhecimento e limpeza de alertas para `routes/alerts.js`.
+- Move endpoints de resumo, snapshot e eventos para `routes/meta.js`.
+- Move rotas administrativas de probes para `routes/probes.js`.
 - Resume o README e centraliza o historico de versoes neste arquivo.
 
 ## v1.2.1 - 2026-05-29

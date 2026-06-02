@@ -7,6 +7,8 @@ import { createAlertsHandler } from "./routes/alerts.js";
 import { createDownloadHandler } from "./routes/downloads.js";
 import { createGroupsHandler } from "./routes/groups.js";
 import { createHealthHandler } from "./routes/health.js";
+import { createMetaHandler } from "./routes/meta.js";
+import { createProbesHandler } from "./routes/probes.js";
 import { createSettingsHandler } from "./routes/settings.js";
 import { createStaticHandler } from "./routes/static.js";
 import { createUsersHandler } from "./routes/users.js";
@@ -1935,64 +1937,10 @@ async function handleApi(req, res) {
     const session = requireSession(req, res);
     if (!session) return;
 
-    if (req.method === "GET" && parts[1] === "summary") {
-      return sendJson(res, 200, summary());
-    }
-
-    if (req.method === "GET" && parts[1] === "snapshot") {
-      return sendJson(res, 200, snapshot(session.user));
-    }
+    if (handleMeta(req, res, { parts, session })) return;
 
     if (parts[1] === "probes") {
-      if (!requireAdmin(req, res)) return;
-      if (req.method === "GET" && parts.length === 2) {
-        return sendJson(res, 200, (state.probes || []).filter((probe) => !probe.deletedAt).map(publicProbe));
-      }
-
-      if (req.method === "POST" && parts[2] === "update-outdated") {
-        const requestedBy = session.user.name || session.user.email || "Administrador";
-        const results = (state.probes || [])
-          .filter((probe) => !probe.deletedAt && probeVersionStatus(probe) === "outdated" && probeUpdateSupported(probe))
-          .map((probe) => {
-            const result = createProbeUpdateRequest(probe, requestedBy);
-            return {
-              probe: publicProbe(probe),
-              request: publicProbeUpdateRequest(result.request),
-              created: Boolean(result.created),
-              error: result.error || null
-            };
-          });
-        scheduleSave();
-        broadcastSnapshot();
-        return sendJson(res, 202, { count: results.length, results });
-      }
-
-      const id = parts[2];
-      const probe = (state.probes || []).find((item) => item.id === id && !item.deletedAt);
-      if (!probe) return notFound(res);
-
-      if (req.method === "POST" && parts[3] === "update") {
-        const result = createProbeUpdateRequest(probe, session.user.name || session.user.email || "Administrador");
-        if (result.error) return sendJson(res, result.status || 400, { error: result.error });
-        scheduleSave();
-        broadcastSnapshot();
-        return sendJson(res, result.created ? 202 : 200, {
-          probe: publicProbe(probe),
-          request: publicProbeUpdateRequest(result.request)
-        });
-      }
-
-      if (req.method === "DELETE" && parts.length === 3) {
-        const linkedServers = listedServers().filter((server) => server.checkSource === "probe" && server.probeId === probe.id);
-        if (linkedServers.length) {
-          return sendJson(res, 409, { error: "Reatribua ou remova os servidores vinculados antes de excluir este probe." });
-        }
-        probe.deletedAt = nowIso();
-        probe.updatedAt = probe.deletedAt;
-        scheduleSave();
-        broadcastSnapshot();
-        return sendJson(res, 200, publicProbe(probe));
-      }
+      if (handleProbes(req, res, { parts, session })) return;
     }
 
     if (parts[1] === "settings") {
@@ -2121,10 +2069,6 @@ async function handleApi(req, res) {
       if (await handleAlerts(req, res, { parts, session })) return;
     }
 
-    if (req.method === "GET" && parts[1] === "events") {
-      return sendJson(res, 200, state.events.slice(0, 200));
-    }
-
     notFound(res);
   } catch (error) {
     sendJson(res, error.statusCode || 500, { error: error.message || "Erro interno." });
@@ -2197,6 +2141,27 @@ const handleAlerts = createAlertsHandler({
   setAlerts: (alerts) => {
     state.alerts = alerts;
   },
+  scheduleSave,
+  broadcastSnapshot
+});
+const handleMeta = createMetaHandler({
+  sendJson,
+  summary,
+  snapshot,
+  getEvents: () => state.events
+});
+const handleProbes = createProbesHandler({
+  sendJson,
+  notFound,
+  requireAdmin,
+  getProbes: () => state.probes || [],
+  listedServers,
+  publicProbe,
+  publicProbeUpdateRequest,
+  probeVersionStatus,
+  probeUpdateSupported,
+  createProbeUpdateRequest,
+  nowIso,
   scheduleSave,
   broadcastSnapshot
 });
