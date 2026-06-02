@@ -458,7 +458,7 @@ button {
 }
 
 .topbar h1 {
-  font-size: clamp(1.45rem, 1.7vw, 2.1rem);
+  font-size: 1.3rem;
   line-height: 1.08;
 }
 
@@ -4038,4 +4038,287 @@ textarea::placeholder {
     width: 100%;
     justify-content: stretch;
   }
+}
+
+/* Visual refresh: navigation and executive hierarchy */
+body {
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.topbar {
+  border: 1px solid var(--border-default);
+  border-radius: 8px;
+  background: var(--bg-surface);
+  box-shadow: none;
+}
+
+.topbar h1 {
+  color: var(--text-primary);
+  font-size: 1.3rem;
+  font-weight: 700;
+}
+
+.eyebrow {
+  color: var(--color-accent);
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+}
+
+.topbar-actions .ghost-button,
+.user-chip {
+  border-color: var(--border-default);
+  background: transparent;
+  color: var(--text-secondary);
+}
+
+.topbar-actions .ghost-button:hover,
+.topbar-actions .ghost-button:focus-visible {
+  border-color: var(--border-muted);
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+}
+
+.topbar-actions .primary-button {
+  min-height: 38px;
+  border-radius: 6px;
+  padding: 8px 16px;
+  background: var(--color-accent);
+  color: #ffffff;
+  font-size: 0.85rem;
+  font-weight: 700;
+  transform: none;
+}
+
+.topbar-actions .primary-button:hover,
+.topbar-actions .primary-button:focus-visible {
+  background: var(--color-accent-hover);
+  transform: none;
+}
+
+.panel-title h2,
+.compact-title h2 {
+  color: var(--text-primary);
+  font-size: 1.1rem;
+  font-weight: 700;
+}
+
+.panel-title span,
+.compact-title span {
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+}
+
+.metrics-grid {
+  gap: 16px;
+}
+
+.metric-card {
+  position: relative;
+  min-height: 128px;
+  padding: 20px 24px;
+  border-color: var(--border-default);
+  background: var(--bg-surface);
+  overflow: hidden;
+}
+
+.metric-card::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto;
+  height: 3px;
+  border-radius: 8px 8px 0 0;
+  background: var(--border-default);
+}
+
+.metric-card.online::before {
+  background: var(--color-success);
+}
+
+.metric-card.offline {
+  border-color: color-mix(in srgb, var(--color-danger) 72%, var(--border-default));
+}
+
+.metric-card.offline::before {
+  background: var(--color-danger);
+}
+
+.metric-card span {
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.metric-card strong {
+  color: var(--text-primary);
+  font-size: 2.5rem;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.metric-card small {
+  color: var(--text-muted);
+  font-size: 0.8rem;
+}
+
+.metric-card.online strong {
+  color: var(--color-success);
+}
+
+.metric-card.offline strong {
+  color: var(--color-danger);
+}
+
+.metric-card #metricAvailability {
+  color: var(--color-success);
+}
+
+.donut-card {
+  padding: 18px 20px;
+}
+
+.donut-card strong {
+  font-size: 1.35rem;
+}
+
+.executive-grid {
+  gap: 16px;
+}
+
+.executive-card {
+  position: relative;
+  border-color: var(--border-default);
+  background: var(--bg-surface);
+  box-shadow: none;
+  overflow: hidden;
+}
+
+.executive-card.attention {
+  border-color: color-mix(in srgb, var(--color-danger) 68%, var(--border-default));
+  background: color-mix(in srgb, var(--color-danger-subtle) 24%, var(--bg-surface));
+}
+
+.executive-card.attention::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto;
+  height: 3px;
+  background: var(--color-danger);
+}
+
+.executive-card header span {
+  color: var(--text-secondary);
+  font-size: 0.78rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.executive-card header strong {
+  min-width: 32px;
+  border-radius: 999px;
+  padding: 3px 8px;
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  font-size: 0.95rem;
+  text-align: center;
+}
+
+.executive-card.attention header strong {
+  background: var(--color-danger);
+  color: #ffffff;
+}
+
+.executive-list {
+  gap: 8px;
+}
+
+.executive-item {
+  border-color: var(--border-muted);
+  background: var(--bg-elevated);
+}
+
+.executive-item:has(.mini-badge.offline) {
+  border-left-color: var(--color-danger);
+  background: color-mix(in srgb, var(--color-danger-subtle) 46%, var(--bg-elevated));
+}
+
+.executive-item:has(.mini-badge.online) {
+  border-left-color: var(--color-success);
+  background: color-mix(in srgb, var(--color-success-subtle) 46%, var(--bg-elevated));
+}
+
+.executive-item:has(.mini-badge.probe_stale),
+.executive-item:has(.mini-badge.dependency_down) {
+  border-left-color: var(--color-warning);
+  background: color-mix(in srgb, var(--color-warning-subtle) 42%, var(--bg-elevated));
+}
+
+.executive-item strong {
+  color: var(--text-primary);
+  font-weight: 700;
+}
+
+.executive-item small {
+  color: var(--text-secondary);
+}
+
+.executive-item .mini-badge,
+.executive-item-badge {
+  border-radius: 4px;
+  font-size: 0.7rem;
+  font-weight: 800;
+}
+
+.executive-item .mini-badge.offline {
+  background: var(--color-danger);
+  color: #ffffff;
+}
+
+.executive-item .mini-badge.online {
+  background: var(--color-success);
+  color: #ffffff;
+}
+
+.executive-empty {
+  position: relative;
+  color: var(--text-secondary);
+  padding-left: 32px;
+}
+
+.executive-empty::before {
+  content: "✓";
+  position: absolute;
+  left: 12px;
+  color: var(--color-success);
+  font-weight: 900;
+}
+
+.environment-row i {
+  background: var(--bg-overlay);
+}
+
+.environment-row i b {
+  background: linear-gradient(90deg, var(--color-success), var(--color-accent));
+}
+
+.sidebar {
+  border-right: 1px solid var(--sidebar-line);
+}
+
+.nav-tab,
+.company-nav-button {
+  border-radius: 6px;
+}
+
+.nav-tab:hover,
+.company-nav-button:hover {
+  background: var(--sidebar-panel);
+}
+
+.company-nav-button.active {
+  border-color: rgba(218, 54, 51, 0.55);
+  background: rgba(218, 54, 51, 0.16);
 }
