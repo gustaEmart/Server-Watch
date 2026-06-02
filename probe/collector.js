@@ -52,9 +52,12 @@ async function loadConfig() {
   const configPath = argValue("--config") || process.env.SERVERWATCH_PROBE_CONFIG || DEFAULT_CONFIG;
   const raw = (await readFile(configPath, "utf8")).replace(/^\uFEFF/, "");
   const config = JSON.parse(raw);
+  config.token = String(process.env.PROBE_TOKEN || config.token || "").trim();
   const required = ["serverUrl", "probeId", "token"];
   for (const key of required) {
-    if (!config[key]) throw new Error(`Missing required config field: ${key}`);
+    if (!config[key]) {
+      throw new Error(key === "token" ? "Missing probe token. Set PROBE_TOKEN or config.token." : `Missing required config field: ${key}`);
+    }
   }
   return {
     intervalSeconds: 10,
