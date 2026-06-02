@@ -14,6 +14,8 @@ Resumo das versoes estaveis publicadas do ServerWatch.
 - Move a rota de downloads para `routes/downloads.js`, mantendo as mesmas regras de autenticacao.
 - Extrai helpers HTTP para `services/http.js` e o payload de health check para `routes/health.js`.
 - Move a entrega de arquivos estaticos para `routes/static.js`, preservando o tema inicial aplicado no HTML.
+- Move as rotas de configuracao para `routes/settings.js`, preservando permissoes de tema, alertas e branding.
+- Move o CRUD administrativo de usuarios para `routes/users.js`.
 - Resume o README e centraliza o historico de versoes neste arquivo.
 
 ## v1.2.1 - 2026-05-29

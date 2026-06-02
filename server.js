@@ -5,7 +5,9 @@ import { join, resolve } from "node:path";
 import os from "node:os";
 import { createDownloadHandler } from "./routes/downloads.js";
 import { createHealthHandler } from "./routes/health.js";
+import { createSettingsHandler } from "./routes/settings.js";
 import { createStaticHandler } from "./routes/static.js";
+import { createUsersHandler } from "./routes/users.js";
 import { createStorage } from "./storage/index.js";
 import { createAlertService } from "./services/alert.js";
 import {
@@ -1992,90 +1994,11 @@ async function handleApi(req, res) {
     }
 
     if (parts[1] === "settings") {
-      if (req.method === "PUT" && parts[2] === "theme") {
-        const payload = await readBody(req);
-        state.settings = normalizeBranding(
-          {
-            brandName: state.settings.brandName,
-            brandSubtitle: state.settings.brandSubtitle,
-            logoDataUrl: state.settings.logoDataUrl,
-            theme: payload.theme
-          },
-          state.settings
-        );
-        scheduleSave();
-        broadcastSnapshot();
-        return sendJson(res, 200, publicSettings(session.user));
-      }
-
-      if (req.method === "PUT" && parts[2] === "alerts") {
-        const payload = await readBody(req);
-        state.settings = normalizeAlertSettings(payload, state.settings);
-        scheduleSave();
-        broadcastSnapshot();
-        return sendJson(res, 200, publicSettings(session.user));
-      }
-
-      if (!requireAdmin(req, res)) return;
-
-      if (req.method === "PUT" && parts[2] === "branding") {
-        const payload = await readBody(req);
-        state.settings = normalizeBranding(payload, state.settings);
-        scheduleSave();
-        broadcastSnapshot();
-        return sendJson(res, 200, publicSettings(session.user));
-      }
+      if (await handleSettings(req, res, { parts, session })) return;
     }
 
     if (parts[1] === "users") {
-      if (!requireAdmin(req, res)) return;
-
-      if (req.method === "GET" && parts.length === 2) {
-        return sendJson(res, 200, listedUsers().map(publicUser));
-      }
-
-      if (req.method === "POST" && parts.length === 2) {
-        const payload = await readBody(req);
-        const createdAt = nowIso();
-        const user = {
-          id: randomUUID(),
-          createdAt,
-          lastLoginAt: null,
-          ...normalizeUser(payload)
-        };
-        state.users.unshift(user);
-        scheduleSave();
-        return sendJson(res, 201, publicUser(user));
-      }
-
-      const id = parts[2];
-      const user = listedUsers().find((item) => item.id === id);
-      if (!user) return notFound(res);
-
-      if (req.method === "PUT" && parts.length === 3) {
-        const payload = await readBody(req);
-        const nextRole = String(payload.role || user.role);
-        const nextActive = Boolean(payload.isActive ?? user.isActive ?? true);
-        if (user.role === "admin" && (!nextActive || nextRole !== "admin") && activeAdminCount() <= 1) {
-          return sendJson(res, 409, { error: "Mantenha pelo menos um administrador ativo." });
-        }
-        Object.assign(user, normalizeUser(payload, user));
-        scheduleSave();
-        return sendJson(res, 200, publicUser(user));
-      }
-
-      if (req.method === "DELETE" && parts.length === 3) {
-        if (user.id === session.user.id) {
-          return sendJson(res, 409, { error: "Voce nao pode excluir o proprio usuario logado." });
-        }
-        if (user.role === "admin" && activeAdminCount() <= 1) {
-          return sendJson(res, 409, { error: "Mantenha pelo menos um administrador ativo." });
-        }
-        user.deletedAt = nowIso();
-        user.updatedAt = user.deletedAt;
-        scheduleSave();
-        return sendJson(res, 200, publicUser(user));
-      }
+      if (await handleUsers(req, res, { parts, session })) return;
     }
 
     if (parts[1] === "groups") {
@@ -2300,6 +2223,34 @@ const serveDownload = createDownloadHandler({
   authorizeProbe,
   sendJson,
   notFound
+});
+const handleSettings = createSettingsHandler({
+  readBody,
+  sendJson,
+  requireAdmin,
+  getSettings: () => state.settings,
+  setSettings: (settings) => {
+    state.settings = settings;
+  },
+  normalizeBranding,
+  normalizeAlertSettings,
+  publicSettings,
+  scheduleSave,
+  broadcastSnapshot
+});
+const handleUsers = createUsersHandler({
+  randomId: randomUUID,
+  nowIso,
+  readBody,
+  sendJson,
+  notFound,
+  requireAdmin,
+  listedUsers: () => state.users.filter((user) => !user.deletedAt),
+  addUser: (user) => state.users.unshift(user),
+  publicUser,
+  normalizeUser,
+  activeAdminCount,
+  scheduleSave
 });
 const serveStatic = createStaticHandler({
   publicDir: PUBLIC_DIR,
