@@ -1973,6 +1973,10 @@ async function handleApi(req, res) {
 
     notFound(res);
   } catch (error) {
+    if (res.headersSent) {
+      console.error(error);
+      return;
+    }
     sendJson(res, error.statusCode || 500, { error: error.message || "Erro interno." });
   }
 }

@@ -14,10 +14,11 @@ export function sendJson(res, statusCode, payload) {
     "Cache-Control": "no-store"
   });
   res.end(body);
+  return true;
 }
 
 export function notFound(res) {
-  sendJson(res, 404, { error: "Recurso nao encontrado." });
+  return sendJson(res, 404, { error: "Recurso nao encontrado." });
 }
 
 export function getRouteParts(req) {
