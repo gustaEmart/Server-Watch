@@ -12,6 +12,8 @@ Resumo das versoes estaveis publicadas do ServerWatch.
 - Permite configurar o token do Probe Collector pela variavel de ambiente `PROBE_TOKEN`.
 - Inicia a modularizacao do `server.js` extraindo WebSocket para `ws/handler.js` e alertas/eventos para `services/alert.js`.
 - Move a rota de downloads para `routes/downloads.js`, mantendo as mesmas regras de autenticacao.
+- Extrai helpers HTTP para `services/http.js` e o payload de health check para `routes/health.js`.
+- Move a entrega de arquivos estaticos para `routes/static.js`, preservando o tema inicial aplicado no HTML.
 - Resume o README e centraliza o historico de versoes neste arquivo.
 
 ## v1.2.1 - 2026-05-29

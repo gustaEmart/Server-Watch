@@ -1,10 +1,11 @@
 import { createServer } from "node:http";
 import { randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
-import { readFile } from "node:fs/promises";
-import { extname, join, resolve } from "node:path";
+import { join, resolve } from "node:path";
 import os from "node:os";
 import { createDownloadHandler } from "./routes/downloads.js";
+import { createHealthHandler } from "./routes/health.js";
+import { createStaticHandler } from "./routes/static.js";
 import { createStorage } from "./storage/index.js";
 import { createAlertService } from "./services/alert.js";
 import {
@@ -16,6 +17,7 @@ import {
   setSessionCookie,
   verifyPassword
 } from "./services/auth.js";
+import { getRouteParts, notFound, readBody, sendJson } from "./services/http.js";
 import { applyMonitorResult } from "./services/monitor.js";
 import { createWebSocketHub } from "./ws/handler.js";
 
@@ -119,15 +121,6 @@ const storage = createStorage({
   mongoUri: process.env.MONGODB_URI,
   mongoDb: process.env.MONGODB_DB || "serverwatch"
 });
-
-const mimeTypes = {
-  ".html": "text/html; charset=utf-8",
-  ".css": "text/css; charset=utf-8",
-  ".js": "text/javascript; charset=utf-8",
-  ".json": "application/json; charset=utf-8",
-  ".svg": "image/svg+xml",
-  ".ico": "image/x-icon"
-};
 
 function nowIso() {
   return new Date().toISOString();
@@ -1723,24 +1716,6 @@ function applyProbeResult(server, result, probeId, options = {}) {
   }
 }
 
-async function readBody(req) {
-  const chunks = [];
-  for await (const chunk of req) chunks.push(chunk);
-  if (!chunks.length) return {};
-  const raw = Buffer.concat(chunks).toString("utf8");
-  return raw ? JSON.parse(raw) : {};
-}
-
-function sendJson(res, statusCode, payload) {
-  const body = JSON.stringify(payload);
-  res.writeHead(statusCode, {
-    "Content-Type": "application/json; charset=utf-8",
-    "Content-Length": Buffer.byteLength(body),
-    "Cache-Control": "no-store"
-  });
-  res.end(body);
-}
-
 function getSession(req) {
   const token = parseCookies(req)[SESSION_COOKIE];
   if (!token) return null;
@@ -1776,29 +1751,11 @@ function requireAdmin(req, res) {
   return session;
 }
 
-function notFound(res) {
-  sendJson(res, 404, { error: "Recurso nao encontrado." });
-}
-
-function getRouteParts(req) {
-  const url = new URL(req.url, `http://${req.headers.host}`);
-  return {
-    url,
-    pathname: decodeURIComponent(url.pathname),
-    parts: url.pathname.split("/").filter(Boolean)
-  };
-}
-
 async function handleApi(req, res) {
   const { parts, url } = getRouteParts(req);
   try {
     if (req.method === "GET" && parts.length === 1 && parts[0] === "health") {
-      return sendJson(res, 200, {
-        status: "ok",
-        service: "serverwatch",
-        timestamp: nowIso(),
-        uptimeSeconds: Math.round(process.uptime())
-      });
+      return sendJson(res, 200, healthPayload());
     }
 
     if (parts[1] === "auth") {
@@ -2331,45 +2288,22 @@ async function handleApi(req, res) {
   }
 }
 
-function withInitialTheme(content) {
-  const theme = state.settings.theme === "dark" ? "dark" : "light";
-  return String(content).replace(
-    '<html lang="pt-BR">',
-    `<html lang="pt-BR" data-theme="${theme}" style="color-scheme: ${theme};">`
-  );
-}
-
-async function serveStatic(req, res) {
-  const { pathname } = getRouteParts(req);
-  const safePath = pathname === "/" ? "/index.html" : pathname;
-  const filePath = resolve(PUBLIC_DIR, `.${safePath}`);
-  if (!filePath.startsWith(PUBLIC_DIR)) return notFound(res);
-
-  try {
-    const content = await readFile(filePath);
-    const ext = extname(filePath);
-    const body = ext === ".html" ? withInitialTheme(content) : content;
-    res.writeHead(200, {
-      "Content-Type": mimeTypes[ext] || "application/octet-stream",
-      "Cache-Control": "no-store"
-    });
-    res.end(body);
-  } catch {
-    if (!extname(filePath)) {
-      req.url = "/";
-      return serveStatic(req, res);
-    }
-    notFound(res);
-  }
-}
-
 const webSocketHub = createWebSocketHub({ getSession, snapshot });
 const { broadcast, broadcastSnapshot, handleUpgrade } = webSocketHub;
+const healthPayload = createHealthHandler({
+  nowIso,
+  uptimeSeconds: () => Math.round(process.uptime())
+});
 const serveDownload = createDownloadHandler({
   downloads: DOWNLOADS,
   getSession,
   authorizeProbe,
   sendJson,
+  notFound
+});
+const serveStatic = createStaticHandler({
+  publicDir: PUBLIC_DIR,
+  getTheme: () => (state.settings.theme === "dark" ? "dark" : "light"),
   notFound
 });
 const alertService = createAlertService({
