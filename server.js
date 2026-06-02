@@ -8,6 +8,7 @@ import { createDownloadHandler } from "./routes/downloads.js";
 import { createGroupsHandler } from "./routes/groups.js";
 import { createHealthHandler } from "./routes/health.js";
 import { createMetaHandler } from "./routes/meta.js";
+import { createProbeCollectorHandler } from "./routes/probe-collector.js";
 import { createProbesHandler } from "./routes/probes.js";
 import { createServerCheckHandler, createServerCreateHandler, createServerMutationHandler, createServerReadHandler } from "./routes/servers.js";
 import { createSettingsHandler } from "./routes/settings.js";
@@ -1823,116 +1824,7 @@ async function handleApi(req, res) {
     }
 
     if (parts[1] === "probe") {
-      if (!authorizeProbe(req)) {
-        return sendJson(res, 401, { error: "Token do probe invalido." });
-      }
-
-      if (req.method === "GET" && parts[2] === "validate") {
-        return sendJson(res, 200, {
-          ok: true,
-          service: "serverwatch",
-          latestVersion: PROBE_COLLECTOR_VERSION,
-          timestamp: nowIso(),
-          probeId: String(url.searchParams.get("probeId") || "").trim() || null
-        });
-      }
-
-      if (req.method === "GET" && parts[2] === "targets") {
-        const probeId = String(url.searchParams.get("probeId") || "").trim();
-        const registered = upsertProbe({
-          probeId,
-          name: url.searchParams.get("name") || probeId,
-          version: url.searchParams.get("version") || null,
-          hostName: url.searchParams.get("hostName") || null,
-          primaryAddress: url.searchParams.get("primaryAddress") || null,
-          addresses: url.searchParams.get("addresses") || [],
-          platform: url.searchParams.get("platform") || null,
-          primaryMac: url.searchParams.get("primaryMac") || null,
-          macAddresses: url.searchParams.get("macAddresses") || [],
-          hostMetrics: url.searchParams.get("hostMetrics") || null,
-          remoteAddress: req.socket.remoteAddress
-        });
-        if (!registered) return sendJson(res, 400, { error: "Informe probeId." });
-        const ensuredServer = ensureProbeServer(registered.probe);
-        scheduleSave();
-        if (registered.changed || ensuredServer.changed) broadcastSnapshot();
-        const probeWork = probeTargets(registered.probe.id);
-        return sendJson(res, 200, {
-          probe: publicProbe(registered.probe),
-          targets: probeWork.targets,
-          updateRequest: probeWork.updateRequest
-        });
-      }
-
-      if (req.method === "POST" && parts[2] === "results") {
-        const payload = await readBody(req);
-        const registered = upsertProbe({
-          probeId: payload.probeId,
-          name: payload.name || payload.probeId,
-          version: payload.version || null,
-          hostName: payload.hostName || null,
-          primaryAddress: payload.primaryAddress || null,
-          addresses: payload.addresses || [],
-          platform: payload.platform || null,
-          primaryMac: payload.primaryMac || null,
-          macAddresses: payload.macAddresses || [],
-          hostMetrics: payload.hostMetrics || null,
-          remoteAddress: req.socket.remoteAddress
-        });
-        if (!registered) return sendJson(res, 400, { error: "Informe probeId." });
-        const probe = registered.probe;
-        const ensuredServer = ensureProbeServer(probe);
-        const results = Array.isArray(payload.results) ? payload.results : [];
-        let accepted = 0;
-        for (const result of results) {
-          const server = state.servers.find(
-            (item) =>
-              item.id === result.serverId &&
-              !item.deletedAt &&
-              item.checkSource === "probe"
-          );
-          if (!server) continue;
-          const ownsTarget = server.probeId === probe.id;
-          const verifiesPeer = !ownsTarget && canProbeVerifyServer(probe, server);
-          if (!ownsTarget && !verifiesPeer) continue;
-          applyProbeResult(server, result, probe.id, { verification: verifiesPeer });
-          accepted += 1;
-        }
-        scheduleSave();
-        if (registered.changed || ensuredServer.changed || accepted > 0) broadcastSnapshot();
-        return sendJson(res, 200, { ok: true, accepted });
-      }
-
-      if (req.method === "POST" && parts[2] === "update-status") {
-        const payload = await readBody(req);
-        const probeId = String(payload.probeId || "").trim();
-        const requestId = String(payload.requestId || "").trim();
-        const status = String(payload.status || "").trim();
-        const request = (state.probeUpdateRequests || []).find(
-          (item) => item.id === requestId && item.probeId === probeId
-        );
-        if (!request) return sendJson(res, 404, { error: "Solicitacao de atualizacao nao encontrada." });
-        if (!["running", "failed", "unsupported", "succeeded"].includes(status)) {
-          return sendJson(res, 400, { error: "Status de atualizacao invalido." });
-        }
-        request.status = status;
-        request.error = payload.error ? String(payload.error).slice(0, 500) : null;
-        if (status === "running") request.startedAt = request.startedAt || nowIso();
-        if (["failed", "unsupported", "succeeded"].includes(status)) request.finishedAt = nowIso();
-        const server = linkedServerForProbe(probeId);
-        if (server && status !== "running") {
-          addProbeEvent(
-            server,
-            `probe_update_${status}`,
-            status === "succeeded"
-              ? `Atualizacao do probe concluida em ${request.targetVersion}.`
-              : `Atualizacao do probe nao foi concluida: ${request.error || status}.`
-          );
-        }
-        scheduleSave();
-        broadcastSnapshot();
-        return sendJson(res, 200, { ok: true, request: publicProbeUpdateRequest(request) });
-      }
+      if (await handleProbeCollector(req, res, { parts, url })) return;
     }
 
     const session = requireSession(req, res);
@@ -2066,6 +1958,26 @@ const handleProbes = createProbesHandler({
   nowIso,
   scheduleSave,
   broadcastSnapshot
+});
+const handleProbeCollector = createProbeCollectorHandler({
+  authorizeProbe,
+  sendJson,
+  readBody,
+  nowIso,
+  latestVersion: PROBE_COLLECTOR_VERSION,
+  upsertProbe,
+  ensureProbeServer,
+  scheduleSave,
+  broadcastSnapshot,
+  probeTargets,
+  publicProbe,
+  getServers: () => state.servers,
+  applyProbeResult,
+  canProbeVerifyServer,
+  getProbeUpdateRequests: () => state.probeUpdateRequests || [],
+  linkedServerForProbe,
+  addProbeEvent,
+  publicProbeUpdateRequest
 });
 const handleServerRead = createServerReadHandler({
   sendJson,
