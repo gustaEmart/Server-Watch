@@ -3746,3 +3746,296 @@ label {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
+
+/* Visual refresh: operations and administration */
+.history-filters,
+.alert-filters,
+.filter-panel {
+  border: 1px solid var(--border-default);
+  border-radius: 8px;
+  background: var(--bg-surface);
+}
+
+.history-filters,
+.alert-filters {
+  padding: 12px;
+}
+
+.filter-panel {
+  box-shadow: var(--shadow);
+}
+
+.filter-panel .segmented {
+  padding: 4px;
+  border: 1px solid var(--border-muted);
+  border-radius: 8px;
+  background: var(--bg-elevated);
+}
+
+.segment {
+  border-radius: 6px;
+  color: var(--text-secondary);
+}
+
+.segment.active,
+.segment[aria-pressed="true"] {
+  background: var(--selected-bg);
+  color: var(--text-primary);
+  box-shadow: inset 0 0 0 1px var(--color-accent);
+}
+
+label {
+  color: var(--text-secondary);
+}
+
+input,
+select,
+textarea {
+  min-height: 40px;
+  border-color: var(--border-default);
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+}
+
+textarea {
+  line-height: 1.45;
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: var(--text-muted);
+}
+
+.field-hint,
+.dialog-note {
+  color: var(--text-secondary);
+}
+
+.timeline-item,
+.alert-card,
+.group-card,
+.user-card,
+.admin-card {
+  border-color: var(--border-muted);
+  background: var(--bg-surface);
+}
+
+.timeline-item,
+.alert-card {
+  position: relative;
+  overflow: hidden;
+}
+
+.timeline-item::before,
+.alert-card::before {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 3px;
+  background: var(--border-default);
+}
+
+.timeline-item.administrative::before {
+  background: var(--color-accent);
+}
+
+.timeline-item.technical::before {
+  background: var(--text-muted);
+}
+
+.timeline-marker {
+  box-shadow: 0 0 0 4px var(--bg-elevated);
+}
+
+.timeline strong,
+.alert-card strong,
+.group-card strong,
+.user-card strong,
+.admin-card strong {
+  color: var(--text-primary);
+}
+
+.timeline small,
+.alert-card small,
+.group-card span,
+.user-card span,
+.admin-card small,
+.admin-card span {
+  color: var(--text-secondary);
+}
+
+.alert-card {
+  min-height: 72px;
+}
+
+.alert-card.critical::before {
+  background: var(--color-danger);
+}
+
+.alert-card.warning::before {
+  background: var(--color-warning);
+}
+
+.alert-card.info::before {
+  background: var(--color-accent);
+}
+
+.alert-card.critical {
+  background: color-mix(in srgb, var(--color-danger-subtle) 34%, var(--bg-surface));
+}
+
+.alert-card.warning {
+  background: color-mix(in srgb, var(--color-warning-subtle) 34%, var(--bg-surface));
+}
+
+.alert-card.info {
+  background: color-mix(in srgb, var(--accent-soft) 28%, var(--bg-surface));
+}
+
+.alert-card.read {
+  opacity: 0.76;
+  filter: saturate(0.82);
+}
+
+.alert-actions {
+  align-items: center;
+}
+
+.admin-card {
+  box-shadow: none;
+}
+
+.admin-card:hover,
+.admin-card:focus-visible,
+.group-card:hover,
+.user-card:hover {
+  border-color: var(--color-accent);
+  background: var(--bg-elevated);
+  box-shadow: inset 3px 0 0 var(--color-accent);
+}
+
+.group-card,
+.user-card {
+  min-height: 70px;
+}
+
+.group-stats,
+.user-role,
+.user-status {
+  border-color: var(--border-muted);
+  background: var(--chip-bg);
+  color: var(--text-secondary);
+}
+
+.user-card.inactive {
+  border-color: var(--border-muted);
+  background: var(--inactive-bg);
+}
+
+.settings-block,
+.settings-form,
+.brand-preview,
+.theme-option,
+.toggle-row {
+  border-color: var(--border-muted);
+}
+
+.brand-preview,
+.theme-option,
+.toggle-row {
+  background: var(--bg-elevated);
+}
+
+.theme-option:hover,
+.toggle-row:hover {
+  border-color: var(--color-accent);
+}
+
+.theme-option:has(input:checked) {
+  border-color: var(--color-accent);
+  background: var(--selected-bg);
+  box-shadow: 0 0 0 3px var(--accent-ring);
+}
+
+.theme-option small,
+.toggle-row span,
+.brand-preview span {
+  color: var(--text-secondary);
+}
+
+.server-dialog {
+  border: 1px solid var(--border-default);
+  background: var(--bg-surface);
+  box-shadow: var(--shadow);
+}
+
+.server-dialog::backdrop {
+  background: rgba(7, 14, 20, 0.58);
+  backdrop-filter: blur(5px);
+}
+
+.dialog-header {
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border-muted);
+}
+
+.dialog-header h2 {
+  color: var(--text-primary);
+}
+
+.server-dialog form {
+  gap: 16px;
+}
+
+.virtualizer-children-options {
+  border-color: var(--border-muted);
+  background: var(--bg-elevated);
+}
+
+.virtualizer-child-list {
+  scrollbar-width: thin;
+}
+
+.virtualizer-child-option {
+  border-color: var(--border-muted);
+  background: var(--bg-surface);
+}
+
+.virtualizer-child-option:hover,
+.virtualizer-child-option:has(input:checked) {
+  border-color: var(--color-accent);
+  background: var(--selected-bg);
+}
+
+.virtualizer-child-option small,
+.virtualizer-children-header span {
+  color: var(--text-secondary);
+}
+
+.empty-list {
+  border-color: var(--border-default);
+  background: var(--bg-elevated);
+  color: var(--text-secondary);
+}
+
+.toast {
+  border: 1px solid var(--border-default);
+  background: var(--bg-overlay);
+  color: var(--text-primary);
+}
+
+.toast span {
+  color: var(--text-secondary);
+}
+
+@media (max-width: 680px) {
+  .history-filters,
+  .alert-filters {
+    padding: 10px;
+  }
+
+  .alert-actions {
+    width: 100%;
+    justify-content: stretch;
+  }
+}
