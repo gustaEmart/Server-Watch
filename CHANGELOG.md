@@ -23,6 +23,7 @@ Resumo das versoes estaveis publicadas do ServerWatch.
 - Move leituras, historico, criacao, edicao, exclusao e pausa/reativacao de servidores para `routes/servers.js`.
 - Corrige retorno dos helpers HTTP para evitar respostas duplicadas e reinicios do backend.
 - Refina o visual do frontend com hierarquia mais clara para KPIs, dashboard executivo, lista e detalhes de servidores.
+- Melhora a leitura da pagina de servidores com secoes de inventario, perfil e dados coletados mais segmentadas.
 - Resume o README e centraliza o historico de versoes neste arquivo.
 
 ## v1.2.1 - 2026-05-29
