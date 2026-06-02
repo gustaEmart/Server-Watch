@@ -4231,6 +4231,59 @@ body {
   color: #ffffff;
 }
 
+.executive-card.warning {
+  border-color: color-mix(in srgb, var(--color-warning) 62%, var(--border-default));
+  background: color-mix(in srgb, var(--color-warning-subtle) 22%, var(--bg-surface));
+}
+
+.executive-card.warning::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto;
+  height: 3px;
+  background: var(--color-warning);
+}
+
+.executive-card.warning header strong {
+  background: var(--color-warning);
+  color: #ffffff;
+}
+
+.executive-card.healthy {
+  border-color: color-mix(in srgb, var(--color-success) 32%, var(--border-default));
+}
+
+.executive-card.healthy::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto;
+  height: 3px;
+  background: var(--color-success);
+}
+
+.executive-card.healthy header strong {
+  background: var(--color-success-subtle);
+  color: var(--color-success);
+}
+
+.executive-card.positive {
+  border-color: color-mix(in srgb, var(--color-success) 42%, var(--border-default));
+  background: color-mix(in srgb, var(--color-success-subtle) 16%, var(--bg-surface));
+}
+
+.executive-card.positive::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto;
+  height: 3px;
+  background: var(--color-success);
+}
+
+.executive-card.positive header strong {
+  background: var(--color-success);
+  color: #ffffff;
+}
+
 .executive-list {
   gap: 8px;
 }
@@ -4319,6 +4372,16 @@ body {
   left: 12px;
   color: var(--color-success);
   font-weight: 900;
+}
+
+.executive-empty.neutral::before {
+  content: "–";
+  color: var(--text-muted);
+}
+
+.executive-empty.warning::before {
+  content: "!";
+  color: var(--color-warning);
 }
 
 .environment-row i {

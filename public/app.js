@@ -1217,8 +1217,8 @@ function executiveItem({ title, meta, badge, status = "", serverId = "", company
   `;
 }
 
-function executiveEmpty(message) {
-  return `<div class="executive-empty">${escapeHtml(message)}</div>`;
+function executiveEmpty(message, tone = "success") {
+  return `<div class="executive-empty ${escapeHtml(tone)}">${escapeHtml(message)}</div>`;
 }
 
 function renderExecutiveDashboard() {
@@ -1268,7 +1268,7 @@ function renderExecutiveDashboard() {
   });
 
   els.executiveGrid.innerHTML = `
-    <article class="executive-card attention">
+    <article class="executive-card ${clientsWithAlerts.length ? "attention" : "healthy"}">
       <header><span>Clientes com alerta</span><strong>${clientsWithAlerts.length}</strong></header>
       <div class="executive-list">
         ${
@@ -1289,7 +1289,7 @@ function renderExecutiveDashboard() {
       </div>
     </article>
 
-    <article class="executive-card">
+    <article class="executive-card ${staleProbes.length ? "warning" : "healthy"}">
       <header><span>Probes sem contato</span><strong>${staleProbes.length}</strong></header>
       <div class="executive-list">
         ${
@@ -1310,7 +1310,7 @@ function renderExecutiveDashboard() {
       </div>
     </article>
 
-    <article class="executive-card attention">
+    <article class="executive-card ${criticalOffline.length ? "attention" : "healthy"}">
       <header><span>Criticos offline</span><strong>${criticalOffline.length}</strong></header>
       <div class="executive-list">
         ${
@@ -1331,7 +1331,7 @@ function renderExecutiveDashboard() {
       </div>
     </article>
 
-    <article class="executive-card">
+    <article class="executive-card ${recentDrops.length ? "attention" : "healthy"}">
       <header><span>Ultimas quedas</span><strong>${recentDrops.length}</strong></header>
       <div class="executive-list">
         ${
@@ -1353,7 +1353,7 @@ function renderExecutiveDashboard() {
       </div>
     </article>
 
-    <article class="executive-card">
+    <article class="executive-card ${recentRecoveries.length ? "positive" : ""}">
       <header><span>Recuperacoes recentes</span><strong>${recentRecoveries.length}</strong></header>
       <div class="executive-list">
         ${
@@ -1370,7 +1370,7 @@ function renderExecutiveDashboard() {
                   });
                 })
                 .join("")
-            : executiveEmpty("Sem recuperacoes recentes.")
+            : executiveEmpty("Sem recuperacoes recentes.", "neutral")
         }
       </div>
     </article>
@@ -1391,7 +1391,7 @@ function renderExecutiveDashboard() {
                   })
                 )
                 .join("")
-            : executiveEmpty("Sem latencias registradas.")
+            : executiveEmpty("Sem latencias registradas.", "neutral")
         }
       </div>
     </article>
