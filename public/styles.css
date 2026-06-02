@@ -4282,6 +4282,31 @@ body {
   color: #ffffff;
 }
 
+.executive-item .mini-badge.success {
+  background: var(--color-success-subtle);
+  color: var(--color-success);
+}
+
+.executive-item .mini-badge.warning {
+  background: var(--color-warning-subtle);
+  color: var(--color-warning);
+}
+
+.executive-item .mini-badge.danger {
+  background: var(--color-danger);
+  color: #ffffff;
+}
+
+.executive-item:has(.mini-badge.warning) {
+  border-left-color: var(--color-warning);
+  background: color-mix(in srgb, var(--color-warning-subtle) 42%, var(--bg-elevated));
+}
+
+.executive-item:has(.mini-badge.danger) {
+  border-left-color: var(--color-danger);
+  background: color-mix(in srgb, var(--color-danger-subtle) 46%, var(--bg-elevated));
+}
+
 .executive-empty {
   position: relative;
   color: var(--text-secondary);
@@ -4430,6 +4455,72 @@ body {
 
 .metric-bar.danger span {
   background: var(--color-danger);
+}
+
+.latency-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-width: 58px;
+  border: 1px solid var(--border-muted);
+  border-radius: 999px;
+  padding: 3px 8px;
+  background: var(--bg-surface);
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 0.74rem;
+  font-weight: 700;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.latency-pill i {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: var(--color-neutral);
+}
+
+.latency-pill.success {
+  border-color: color-mix(in srgb, var(--color-success) 44%, var(--border-muted));
+  color: var(--color-success);
+}
+
+.latency-pill.success i {
+  background: var(--color-success);
+  box-shadow: 0 0 6px color-mix(in srgb, var(--color-success) 70%, transparent);
+}
+
+.latency-pill.warning {
+  border-color: color-mix(in srgb, var(--color-warning) 54%, var(--border-muted));
+  color: var(--color-warning);
+}
+
+.latency-pill.warning i {
+  background: var(--color-warning);
+}
+
+.latency-pill.danger {
+  border-color: color-mix(in srgb, var(--color-danger) 58%, var(--border-muted));
+  color: var(--color-danger);
+}
+
+.latency-pill.danger i {
+  background: var(--color-danger);
+}
+
+.detail-stat.latency-stat strong {
+  align-items: flex-start;
+}
+
+.detail-stat.watch-limit-stat {
+  border-color: color-mix(in srgb, var(--color-warning) 42%, var(--border-muted));
+  background: color-mix(in srgb, var(--color-warning-subtle) 28%, var(--bg-elevated));
+}
+
+.detail-stat.watch-limit-stat strong {
+  color: var(--color-warning);
 }
 
 .server-group-items > .server-row:nth-of-type(odd),

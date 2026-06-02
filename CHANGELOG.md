@@ -27,6 +27,7 @@ Resumo das versoes estaveis publicadas do ServerWatch.
 - Refina telas administrativas, alertas, historico, configuracoes e formularios para maior consistencia visual.
 - Ajusta hierarquia visual de topbar, acoes principais, KPIs e cards da visao executiva.
 - Conclui pontos pendentes do redesign com KPIs dinamicos, secoes de detalhe, barras de metricas e listas com linhas alternadas.
+- Adiciona indicadores visuais de latencia e destaca campos de tolerancia operacional nos detalhes dos servidores.
 - Resume o README e centraliza o historico de versoes neste arquivo.
 
 ## v1.2.1 - 2026-05-29

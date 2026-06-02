@@ -578,6 +578,19 @@ function metricBar(value) {
   return `<div class="metric-bar ${metricTone(number)}" aria-hidden="true"><span style="width:${percent}%"></span></div>`;
 }
 
+function latencyTone(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return "neutral";
+  if (number >= 250) return "danger";
+  if (number >= 100) return "warning";
+  return "success";
+}
+
+function latencyPill(value) {
+  const label = value === null || value === undefined ? "-" : `${value} ms`;
+  return `<span class="latency-pill ${latencyTone(value)}"><i aria-hidden="true"></i>${escapeHtml(label)}</span>`;
+}
+
 function formatUptime(seconds) {
   const totalSeconds = Number(seconds);
   if (!Number.isFinite(totalSeconds) || totalSeconds < 0) return "-";
@@ -1373,7 +1386,7 @@ function renderExecutiveDashboard() {
                     title: server.name,
                     meta: `${server.hostname} · ${groupLabel(server.groupId)}`,
                     badge: `${server.lastLatencyMs} ms`,
-                    status: "unknown",
+                    status: latencyTone(server.lastLatencyMs),
                     serverId: server.id
                   })
                 )
@@ -1430,7 +1443,7 @@ function renderServerRow(server, options = {}) {
   const selected = state.selectedServerId === server.id ? "selected" : "";
   const inactive = server.isActive ? "" : "inactive";
   const expanded = state.topologyExpanded.has(server.id);
-  const latency = server.lastLatencyMs === null || server.lastLatencyMs === undefined ? "-" : `${server.lastLatencyMs} ms`;
+  const latency = latencyPill(server.lastLatencyMs);
   const offlineFor =
     server.dependencyStatus === "affected"
       ? `<span>Afetado por ${escapeHtml(server.parentName || "host pai")}</span>`
@@ -1470,7 +1483,7 @@ function renderServerRow(server, options = {}) {
       <span class="server-meta">
         ${probeBadge}
         <span class="status-badge ${visibleStatus}">${statusLabel(visibleStatus)}</span>
-        <span>${server.isActive ? latency : "pausado"}</span>
+        ${server.isActive ? latency : `<span class="latency-pill neutral"><i aria-hidden="true"></i>pausado</span>`}
       </span>
     </button>
   `;
@@ -1656,7 +1669,7 @@ function renderDetail() {
         <div class="detail-stat"><span>Probe</span><strong>${escapeHtml(server.probeId || "-")}</strong></div>
         <div class="detail-stat"><span>Status do probe</span><strong><span class="status-badge ${server.probeStatus === "stale" ? "probe_stale" : server.probeStatus || "unknown"}">${probeStatusLabel(server.probeStatus)}</span></strong></div>
         <div class="detail-stat"><span>Ultimo envio do probe</span><strong>${formatDate(server.lastProbeSeenAt)}</strong></div>
-        <div class="detail-stat"><span>Limite sem contato</span><strong>${server.probeStaleAfterSeconds ? `${server.probeStaleAfterSeconds}s` : "-"}</strong></div>
+        <div class="detail-stat watch-limit-stat"><span>Limite sem contato</span><strong>${server.probeStaleAfterSeconds ? `${server.probeStaleAfterSeconds}s` : "-"}</strong></div>
         ${server.probeStatus === "stale" ? `<div class="detail-stat"><span>Verificacao alternativa</span><strong>${probeFallbackLabel(server.probeFallbackStatus)}</strong><small>${server.probeFallbackCheckedAt ? formatDate(server.probeFallbackCheckedAt) : ""}</small></div>` : ""}
         ${
           server.probeCheckRequestedAt
@@ -1692,7 +1705,7 @@ function renderDetail() {
       <h3>Monitoramento</h3>
       <div class="detail-grid">
         <div class="detail-stat"><span>Ultima checagem</span><strong>${formatDate(server.lastCheckedAt)}</strong></div>
-        <div class="detail-stat"><span>Latencia</span><strong>${server.lastLatencyMs ?? "-"} ms</strong></div>
+        <div class="detail-stat latency-stat"><span>Latencia</span><strong>${latencyPill(server.lastLatencyMs)}</strong></div>
         <div class="detail-stat"><span>Origem</span><strong>${checkSourceLabel(server.checkSource)}</strong></div>
         <div class="detail-stat"><span>Empresa</span><strong>${escapeHtml(groupLabel(server.groupId))}</strong></div>
         <div class="detail-stat"><span>Intervalo</span><strong>${server.checkInterval}s</strong></div>
@@ -1846,9 +1859,9 @@ function renderServerProfile() {
           <div class="detail-stat"><span>IP ou hostname</span><strong>${escapeHtml(server.hostname)}</strong></div>
           <div class="detail-stat"><span>Origem da checagem</span><strong>${checkSourceLabel(server.checkSource)}</strong></div>
           <div class="detail-stat"><span>Ultima checagem</span><strong>${formatDate(server.lastCheckedAt)}</strong></div>
-          <div class="detail-stat"><span>Latencia</span><strong>${server.lastLatencyMs ?? "-"} ms</strong></div>
+          <div class="detail-stat latency-stat"><span>Latencia</span><strong>${latencyPill(server.lastLatencyMs)}</strong></div>
           <div class="detail-stat"><span>Intervalo</span><strong>${server.checkInterval}s</strong></div>
-          <div class="detail-stat"><span>Falhas para offline</span><strong>${server.failureThreshold || "-"}</strong></div>
+          <div class="detail-stat watch-limit-stat"><span>Falhas para offline</span><strong>${server.failureThreshold || "-"}</strong></div>
         </div>
         ${server.lastError ? `<div class="profile-note"><strong>Ultima observacao</strong><span>${escapeHtml(server.lastError)}</span></div>` : ""}
       </article>
@@ -1877,7 +1890,7 @@ function renderServerProfile() {
           <div class="detail-stat"><span>Probe</span><strong>${escapeHtml(server.probeId || "-")}</strong></div>
           <div class="detail-stat"><span>Status do probe</span><strong><span class="status-badge ${server.probeStatus === "stale" ? "probe_stale" : server.probeStatus || "unknown"}">${probeStatusLabel(server.probeStatus)}</span></strong></div>
           <div class="detail-stat"><span>Ultimo envio</span><strong>${formatDate(server.lastProbeSeenAt)}</strong></div>
-          <div class="detail-stat"><span>Limite sem contato</span><strong>${server.probeStaleAfterSeconds ? `${server.probeStaleAfterSeconds}s` : "-"}</strong></div>
+          <div class="detail-stat watch-limit-stat"><span>Limite sem contato</span><strong>${server.probeStaleAfterSeconds ? `${server.probeStaleAfterSeconds}s` : "-"}</strong></div>
           <div class="detail-stat"><span>Verificacao alternativa</span><strong>${probeFallbackLabel(server.probeFallbackStatus)}</strong><small>${server.probeFallbackCheckedAt ? formatDate(server.probeFallbackCheckedAt) : ""}</small></div>
           <div class="detail-stat"><span>Checagem solicitada</span><strong>${formatDate(server.probeCheckRequestedAt)}</strong></div>
         </div>
