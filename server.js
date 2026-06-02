@@ -1,12 +1,14 @@
 import { createServer } from "node:http";
-import { createHash, randomUUID, scryptSync, timingSafeEqual } from "node:crypto";
+import { randomUUID, scryptSync, timingSafeEqual } from "node:crypto";
 import { spawn } from "node:child_process";
 import { createReadStream } from "node:fs";
 import { readFile, stat } from "node:fs/promises";
 import { extname, join, resolve } from "node:path";
 import os from "node:os";
 import { createStorage } from "./storage/index.js";
+import { createAlertService } from "./services/alert.js";
 import { applyMonitorResult } from "./services/monitor.js";
+import { createWebSocketHub } from "./ws/handler.js";
 
 const PORT = Number(process.env.PORT || 3000);
 const HOST = process.env.HOST || "0.0.0.0";
@@ -70,7 +72,6 @@ const DEFAULT_ADMIN_PASSWORD = process.env.SERVERWATCH_ADMIN_PASSWORD || "admin1
 const PROBE_COLLECTOR_VERSION = "0.6.4";
 const PROBE_UPDATE_SUPPORTED_PLATFORMS = new Set(["linux"]);
 
-const sockets = new Set();
 const sessions = new Map();
 let state = {
   servers: [],
@@ -100,6 +101,9 @@ let state = {
 };
 let saveTimer = null;
 let probeStalenessCheckRunning = false;
+let addEvent;
+let addAdministrativeEvent;
+let addProbeEvent;
 const storage = createStorage({
   type: STORAGE_TYPE,
   dataFile: DATA_FILE,
@@ -611,110 +615,6 @@ function scheduleSave() {
   saveTimer = setTimeout(() => {
     persistState().catch((error) => console.error("Falha ao salvar estado", error));
   }, 250);
-}
-
-function downtimeDurationMs(serverId, recoveredAt) {
-  const recoveredMs = new Date(recoveredAt || nowIso()).getTime();
-  const lastOffline = state.events.find(
-    (event) =>
-      event.serverId === serverId &&
-      event.category === "technical" &&
-      event.kind === "server_offline" &&
-      new Date(event.createdAt).getTime() <= recoveredMs
-  );
-  if (!lastOffline) return null;
-  const startedMs = new Date(lastOffline.createdAt).getTime();
-  return Number.isFinite(startedMs) && Number.isFinite(recoveredMs) ? Math.max(0, recoveredMs - startedMs) : null;
-}
-
-function recordEvent(event) {
-  const payload = {
-    id: randomUUID(),
-    category: event.category || "technical",
-    kind: event.kind || "status_changed",
-    serverId: event.serverId || null,
-    serverName: event.serverName || null,
-    previousStatus: event.previousStatus || null,
-    currentStatus: event.currentStatus || null,
-    latencyMs: event.latencyMs ?? null,
-    durationMs: event.durationMs ?? null,
-    actorName: event.actorName || null,
-    message: event.message || null,
-    createdAt: event.createdAt || nowIso()
-  };
-  state.events.unshift(payload);
-  state.events = trimEvents(state.events);
-  broadcast({ type: "event_created", event: payload, summary: summary() });
-  return payload;
-}
-
-function alertSeverityForServer(server, currentStatus) {
-  if (currentStatus !== "offline") return "info";
-  const byEnvironment = state.settings.alertSeverityByEnvironment || {};
-  return byEnvironment[server.environment] || byEnvironment.production || "critical";
-}
-
-function addEvent(server, previousStatus, currentStatus, latencyMs, message) {
-  const createdAt = nowIso();
-  const event = recordEvent({
-    category: "technical",
-    kind: currentStatus === "offline" ? "server_offline" : currentStatus === "online" ? "server_recovered" : "status_changed",
-    serverId: server.id,
-    serverName: server.name,
-    previousStatus,
-    currentStatus,
-    latencyMs,
-    durationMs: currentStatus === "online" && previousStatus === "offline" ? downtimeDurationMs(server.id, createdAt) : null,
-    message: message || null,
-    createdAt
-  });
-
-  if (previousStatus !== currentStatus && currentStatus !== "unknown" && previousStatus !== "unknown") {
-    const alert = {
-      id: randomUUID(),
-      serverId: server.id,
-      serverName: server.name,
-      type: currentStatus === "offline" ? "down" : "recovery",
-      severity: alertSeverityForServer(server, currentStatus),
-      message:
-        currentStatus === "offline"
-          ? `${server.name} parou de responder em ${server.hostname}.`
-          : `${server.name} voltou a responder em ${server.hostname}.`,
-      createdAt,
-      read: false,
-      acknowledgedAt: null,
-      acknowledgedBy: null,
-      acknowledgmentNote: ""
-    };
-    state.alerts.unshift(alert);
-    state.alerts = state.alerts.slice(0, 200);
-    broadcast({ type: "alert", alert });
-  }
-
-  broadcast({ type: "status_changed", event, server: publicServer(server) });
-}
-
-function addAdministrativeEvent(server, kind, message, actorName = null) {
-  return recordEvent({
-    category: "administrative",
-    kind,
-    serverId: server.id,
-    serverName: server.name,
-    currentStatus: server.currentStatus || "unknown",
-    actorName,
-    message
-  });
-}
-
-function addProbeEvent(server, kind, message) {
-  return recordEvent({
-    category: "technical",
-    kind,
-    serverId: server.id,
-    serverName: server.name,
-    currentStatus: server.currentStatus || "unknown",
-    message
-  });
 }
 
 function probeStaleAfterMs(server) {
@@ -2532,78 +2432,18 @@ async function serveStatic(req, res) {
   }
 }
 
-function encodeWebSocketFrame(payload) {
-  const data = Buffer.from(JSON.stringify(payload));
-  if (data.length < 126) {
-    return Buffer.concat([Buffer.from([0x81, data.length]), data]);
-  }
-  if (data.length < 65536) {
-    const header = Buffer.alloc(4);
-    header[0] = 0x81;
-    header[1] = 126;
-    header.writeUInt16BE(data.length, 2);
-    return Buffer.concat([header, data]);
-  }
-  const header = Buffer.alloc(10);
-  header[0] = 0x81;
-  header[1] = 127;
-  header.writeBigUInt64BE(BigInt(data.length), 2);
-  return Buffer.concat([header, data]);
-}
-
-function broadcast(payload) {
-  const frame = encodeWebSocketFrame(payload);
-  for (const client of sockets) {
-    const socket = client.socket || client;
-    if (!socket.destroyed) socket.write(frame);
-  }
-}
-
-function broadcastSnapshot() {
-  for (const client of sockets) {
-    const socket = client.socket || client;
-    if (!socket.destroyed) socket.write(encodeWebSocketFrame(snapshot(client.user || null)));
-  }
-}
-
-function handleUpgrade(req, socket) {
-  if (req.url !== "/ws") {
-    socket.destroy();
-    return;
-  }
-  const session = getSession(req);
-  if (!session) {
-    socket.destroy();
-    return;
-  }
-
-  const key = req.headers["sec-websocket-key"];
-  if (!key) {
-    socket.destroy();
-    return;
-  }
-
-  const accept = createHash("sha1")
-    .update(`${key}258EAFA5-E914-47DA-95CA-C5AB0DC85B11`)
-    .digest("base64");
-
-  socket.write(
-    [
-      "HTTP/1.1 101 Switching Protocols",
-      "Upgrade: websocket",
-      "Connection: Upgrade",
-      `Sec-WebSocket-Accept: ${accept}`,
-      "",
-      ""
-    ].join("\r\n")
-  );
-
-  const client = { socket, user: session.user };
-  sockets.add(client);
-  socket.write(encodeWebSocketFrame(snapshot(session.user)));
-  socket.on("close", () => sockets.delete(client));
-  socket.on("error", () => sockets.delete(client));
-}
+const webSocketHub = createWebSocketHub({ getSession, snapshot });
+const { broadcast, broadcastSnapshot, handleUpgrade } = webSocketHub;
+const alertService = createAlertService({
+  getState: () => state,
+  randomId: randomUUID,
+  nowIso,
+  trimEvents,
+  broadcast,
+  summary,
+  publicServer
+});
+({ addEvent, addAdministrativeEvent, addProbeEvent } = alertService);
 
 function printStartup() {
   const interfaces = os.networkInterfaces();
