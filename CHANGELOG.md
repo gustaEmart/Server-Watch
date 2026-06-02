@@ -16,6 +16,8 @@ Resumo das versoes estaveis publicadas do ServerWatch.
 - Move a entrega de arquivos estaticos para `routes/static.js`, preservando o tema inicial aplicado no HTML.
 - Move as rotas de configuracao para `routes/settings.js`, preservando permissoes de tema, alertas e branding.
 - Move o CRUD administrativo de usuarios para `routes/users.js`.
+- Move o CRUD de empresas/grupos para `routes/groups.js`.
+- Move listagem, reconhecimento e limpeza de alertas para `routes/alerts.js`.
 - Resume o README e centraliza o historico de versoes neste arquivo.
 
 ## v1.2.1 - 2026-05-29

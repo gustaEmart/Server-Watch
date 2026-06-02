@@ -3,7 +3,9 @@ import { randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
 import { join, resolve } from "node:path";
 import os from "node:os";
+import { createAlertsHandler } from "./routes/alerts.js";
 import { createDownloadHandler } from "./routes/downloads.js";
+import { createGroupsHandler } from "./routes/groups.js";
 import { createHealthHandler } from "./routes/health.js";
 import { createSettingsHandler } from "./routes/settings.js";
 import { createStaticHandler } from "./routes/static.js";
@@ -2002,55 +2004,7 @@ async function handleApi(req, res) {
     }
 
     if (parts[1] === "groups") {
-      if (req.method === "GET" && parts.length === 2) {
-        return sendJson(res, 200, listedGroups().map(publicGroup));
-      }
-
-      if (req.method !== "GET" && !requireAdmin(req, res)) return;
-
-      if (req.method === "POST" && parts.length === 2) {
-        const payload = await readBody(req);
-        const createdAt = nowIso();
-        const group = {
-          id: randomUUID(),
-          createdAt,
-          ...normalizeGroup(payload)
-        };
-        state.groups.unshift(group);
-        scheduleSave();
-        broadcastSnapshot();
-        return sendJson(res, 201, publicGroup(group));
-      }
-
-      const id = parts[2];
-      const group = state.groups.find((item) => item.id === id && !item.deletedAt);
-      if (!group) return notFound(res);
-
-      if (req.method === "GET" && parts.length === 3) {
-        return sendJson(res, 200, publicGroup(group));
-      }
-
-      if (req.method === "PUT" && parts.length === 3) {
-        const payload = await readBody(req);
-        Object.assign(group, normalizeGroup(payload, group));
-        scheduleSave();
-        broadcastSnapshot();
-        return sendJson(res, 200, publicGroup(group));
-      }
-
-      if (req.method === "DELETE" && parts.length === 3) {
-        const hasServers = listedServers().some((server) => server.groupId === group.id);
-        if (hasServers) {
-          const error = new Error("Remova ou reatribua os servidores antes de excluir esta empresa/grupo.");
-          error.statusCode = 409;
-          throw error;
-        }
-        group.deletedAt = nowIso();
-        group.updatedAt = nowIso();
-        scheduleSave();
-        broadcastSnapshot();
-        return sendJson(res, 200, publicGroup(group));
-      }
+      if (await handleGroups(req, res, { parts, session })) return;
     }
 
     if (parts[1] === "servers") {
@@ -2163,42 +2117,8 @@ async function handleApi(req, res) {
       }
     }
 
-    if (req.method === "GET" && parts[1] === "alerts") {
-      return sendJson(res, 200, state.alerts.slice(0, 100));
-    }
-
-    if (req.method === "DELETE" && parts[1] === "alerts" && parts.length === 2) {
-      if (!requireAdmin(req, res)) return;
-      state.alerts = [];
-      scheduleSave();
-      broadcastSnapshot();
-      return sendJson(res, 200, { ok: true });
-    }
-
-    if (req.method === "POST" && parts[1] === "alerts" && parts[3] === "ack") {
-      const alert = state.alerts.find((item) => item.id === parts[2]);
-      if (!alert) return notFound(res);
-      const payload = await readBody(req);
-      alert.read = true;
-      alert.acknowledgedAt = nowIso();
-      alert.acknowledgedBy = session.user.name;
-      alert.acknowledgmentNote = String(payload.note || "").trim().slice(0, 500);
-      scheduleSave();
-      broadcastSnapshot();
-      return sendJson(res, 200, alert);
-    }
-
-    if (req.method === "POST" && parts[1] === "alerts" && parts[2] === "read") {
-      const acknowledgedAt = nowIso();
-      state.alerts = state.alerts.map((alert) => ({
-        ...alert,
-        read: true,
-        acknowledgedAt: alert.acknowledgedAt || acknowledgedAt,
-        acknowledgedBy: alert.acknowledgedBy || session.user.name
-      }));
-      scheduleSave();
-      broadcastSnapshot();
-      return sendJson(res, 200, { ok: true });
+    if (parts[1] === "alerts") {
+      if (await handleAlerts(req, res, { parts, session })) return;
     }
 
     if (req.method === "GET" && parts[1] === "events") {
@@ -2251,6 +2171,34 @@ const handleUsers = createUsersHandler({
   normalizeUser,
   activeAdminCount,
   scheduleSave
+});
+const handleGroups = createGroupsHandler({
+  randomId: randomUUID,
+  nowIso,
+  readBody,
+  sendJson,
+  notFound,
+  requireAdmin,
+  listedGroups,
+  listedServers,
+  publicGroup,
+  normalizeGroup,
+  addGroup: (group) => state.groups.unshift(group),
+  scheduleSave,
+  broadcastSnapshot
+});
+const handleAlerts = createAlertsHandler({
+  nowIso,
+  readBody,
+  sendJson,
+  notFound,
+  requireAdmin,
+  getAlerts: () => state.alerts,
+  setAlerts: (alerts) => {
+    state.alerts = alerts;
+  },
+  scheduleSave,
+  broadcastSnapshot
 });
 const serveStatic = createStaticHandler({
   publicDir: PUBLIC_DIR,
