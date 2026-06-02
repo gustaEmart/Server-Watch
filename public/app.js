@@ -41,6 +41,12 @@ const els = {
   loginEmail: document.querySelector("#loginEmail"),
   loginPassword: document.querySelector("#loginPassword"),
   loginError: document.querySelector("#loginError"),
+  passwordChangeDialog: document.querySelector("#passwordChangeDialog"),
+  passwordChangeForm: document.querySelector("#passwordChangeForm"),
+  currentPassword: document.querySelector("#currentPassword"),
+  newPassword: document.querySelector("#newPassword"),
+  confirmNewPassword: document.querySelector("#confirmNewPassword"),
+  passwordChangeError: document.querySelector("#passwordChangeError"),
   currentUserName: document.querySelector("#currentUserName"),
   logoutButton: document.querySelector("#logoutButton"),
   topbarEyebrow: document.querySelector("#topbarEyebrow"),
@@ -268,6 +274,46 @@ function showApp(user) {
     item.hidden = !isAdmin();
   });
   syncViewFromLocation({ replace: true });
+}
+
+function requirePasswordChange() {
+  if (!els.passwordChangeDialog || els.passwordChangeDialog.open) return;
+  els.passwordChangeError.textContent = "";
+  els.currentPassword.value = "";
+  els.newPassword.value = "";
+  els.confirmNewPassword.value = "";
+  els.passwordChangeDialog.showModal();
+  els.currentPassword.focus();
+}
+
+async function submitPasswordChange(event) {
+  event.preventDefault();
+  els.passwordChangeError.textContent = "";
+  const currentPassword = els.currentPassword.value;
+  const newPassword = els.newPassword.value;
+  const confirmPassword = els.confirmNewPassword.value;
+
+  if (newPassword.length < 8) {
+    els.passwordChangeError.textContent = "A nova senha deve ter pelo menos 8 caracteres.";
+    return;
+  }
+  if (newPassword !== confirmPassword) {
+    els.passwordChangeError.textContent = "A confirmacao da senha nao confere.";
+    return;
+  }
+
+  try {
+    const result = await api("/api/auth/password", {
+      method: "POST",
+      body: JSON.stringify({ currentPassword, newPassword })
+    });
+    state.currentUser = result.user;
+    els.passwordChangeDialog.close();
+    showApp(result.user);
+    showToast("Senha atualizada", "O acesso ao dashboard foi liberado.");
+  } catch (error) {
+    els.passwordChangeError.textContent = error.message;
+  }
 }
 
 function statusLabel(status) {
@@ -2937,10 +2983,19 @@ function bindEvents() {
       showApp(result.user);
       await loadInitialData();
       connectSocket();
+      if (result.requirePasswordChange || result.user?.mustChangePassword) {
+        requirePasswordChange();
+      }
     } catch (error) {
       els.loginError.textContent = error.message;
     }
   });
+
+  els.passwordChangeDialog?.addEventListener("cancel", (event) => {
+    event.preventDefault();
+  });
+
+  els.passwordChangeForm?.addEventListener("submit", submitPasswordChange);
 
   document.querySelectorAll(".nav-tab").forEach((button) => {
     button.addEventListener("click", (event) => {
@@ -3366,6 +3421,9 @@ api("/api/auth/session")
     showApp(user);
     await loadInitialData();
     connectSocket();
+    if (user.mustChangePassword) {
+      requirePasswordChange();
+    }
   })
   .catch(() => showLogin());
 setInterval(() => {

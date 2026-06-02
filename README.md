@@ -22,6 +22,8 @@ Senha: admin123
 
 Para trocar esses valores antes da primeira execucao, defina `SERVERWATCH_ADMIN_EMAIL` e `SERVERWATCH_ADMIN_PASSWORD`.
 
+Importante: quando o administrador inicial for criado automaticamente, o primeiro login exigira a troca imediata da senha antes de liberar o dashboard.
+
 Para requisitos de implantacao, ambiente recomendado, portas, firewall e proximos passos de producao, veja `IMPLEMENTACAO.md`.
 
 Para monitorar clientes em redes diferentes sem VPN, veja `docs/PROBE_COLLECTOR.md`.
@@ -98,25 +100,9 @@ Resposta esperada:
 }
 ```
 
-## O que esta implementado
+## Versoes e historico
 
-- Cadastro, edicao, ativacao e desativacao de servidores
-- Exclusao logica de servidores, removendo o item do monitoramento sem apagar o historico interno
-- Cadastro de empresas/grupos e associacao de servidores a uma empresa
-- Dashboard geral com servidores agrupados por empresa e grafico de rosca por status
-- Atalhos laterais para visualizar todos os servidores ou filtrar por empresa
-- Monitoramento automatico via ping com intervalo por servidor
-- Monitoramento direto pelo ServerWatch central ou por Probe Collector instalado na rede do cliente
-- UI local para configurar o Probe Collector em `http://localhost:8777/setup`
-- Instalador Windows `.exe` com UI para o Probe Collector
-- Tela de login e cadastro de usuarios por administrador
-- Tolerancia a falhas consecutivas antes de marcar offline
-- Dashboard com filtros por status, ambiente e busca
-- Atualizacao em tempo real via WebSocket
-- Historico de transicoes online/offline
-- Alertas internos e notificacoes do navegador para queda abrupta
-- Persistencia local em `data/serverwatch.json` ou no caminho definido por `DATA_DIR`
-- Dockerfile e Docker Compose para execucao em container
+O historico de recursos, correcoes e versoes estaveis fica centralizado em `CHANGELOG.md`.
 
 ## Observacoes
 

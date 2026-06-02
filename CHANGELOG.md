@@ -2,6 +2,15 @@
 
 Resumo das versoes estaveis publicadas do ServerWatch.
 
+## Unreleased
+
+- Forca a troca da senha do administrador criado automaticamente no primeiro login.
+- Adiciona endpoint autenticado para troca de senha com validacao minima de 8 caracteres.
+- Extrai a logica de transicao de monitoramento para `services/monitor.js`.
+- Adiciona testes unitarios nativos com `node:test` para tolerancia de falhas e recuperacao online.
+- Adiciona workflow de CI com `npm ci`, `npm run check` e `npm test`.
+- Resume o README e centraliza o historico de versoes neste arquivo.
+
 ## v1.2.1 - 2026-05-29
 
 - Corrige a selecao de VMs no editor de virtualizador.

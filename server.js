@@ -6,6 +6,7 @@ import { readFile, stat } from "node:fs/promises";
 import { extname, join, resolve } from "node:path";
 import os from "node:os";
 import { createStorage } from "./storage/index.js";
+import { applyMonitorResult } from "./services/monitor.js";
 
 const PORT = Number(process.env.PORT || 3000);
 const HOST = process.env.HOST || "0.0.0.0";
@@ -416,6 +417,7 @@ function publicUser(user) {
     email: user.email,
     role: user.role,
     isActive: user.isActive !== false,
+    mustChangePassword: user.mustChangePassword === true,
     createdAt: user.createdAt,
     updatedAt: user.updatedAt,
     lastLoginAt: user.lastLoginAt || null
@@ -440,6 +442,7 @@ function ensureDefaultAdmin() {
     email: normalizeEmail(DEFAULT_ADMIN_EMAIL),
     role: "admin",
     passwordHash: hashPassword(DEFAULT_ADMIN_PASSWORD),
+    mustChangePassword: true,
     isActive: true,
     createdAt: now,
     updatedAt: now,
@@ -493,6 +496,7 @@ function normalizeUser(payload, existing = {}) {
     role,
     isActive: Boolean(payload.isActive ?? existing.isActive ?? true),
     passwordHash: password ? hashPassword(password) : existing.passwordHash,
+    mustChangePassword: Boolean(payload.mustChangePassword ?? existing.mustChangePassword ?? false),
     updatedAt: nowIso()
   };
 }
@@ -586,6 +590,10 @@ async function loadState() {
     groupId: server.groupId || null,
     nextCheckAt: now + Math.floor(Math.random() * 1500),
     consecutiveFailures: server.consecutiveFailures || 0
+  }));
+  state.users = state.users.map((user) => ({
+    ...user,
+    mustChangePassword: user.mustChangePassword === true
   }));
   if (needsSave) await persistState();
 }
@@ -1070,26 +1078,13 @@ function pingHost(hostname, timeoutMs = 2500) {
 async function checkServer(server) {
   if (!server.isActive) return;
   if (server.checkSource === "probe") return;
-  const previousStatus = server.currentStatus || "unknown";
   const result = await pingHost(server.hostname);
-  server.lastCheckedAt = nowIso();
-  server.lastLatencyMs = result.latencyMs;
-  server.lastError = result.error;
+  const transition = applyMonitorResult(server, result, { checkedAt: nowIso() });
 
-  if (result.online) {
-    server.consecutiveFailures = 0;
-    server.currentStatus = "online";
-  } else {
-    server.consecutiveFailures = (server.consecutiveFailures || 0) + 1;
-    if (server.consecutiveFailures >= server.failureThreshold) {
-      server.currentStatus = "offline";
-    }
-  }
-
-  if (server.currentStatus !== previousStatus) {
-    server.previousStatus = previousStatus;
+  if (transition.statusChanged) {
+    server.previousStatus = transition.previousStatus;
     server.statusChangedAt = server.lastCheckedAt;
-    addEvent(server, previousStatus, server.currentStatus, result.latencyMs, result.error);
+    addEvent(server, transition.previousStatus, server.currentStatus, result.latencyMs, result.error);
   } else {
     broadcast({ type: "server_checked", server: publicServer(server), summary: summary() });
   }
@@ -1813,10 +1808,8 @@ function probeTargets(probeId) {
 }
 
 function applyProbeResult(server, result, probeId, options = {}) {
-  const previousStatus = server.currentStatus || "unknown";
   const verification = Boolean(options.verification);
   const wasProbeStale = !verification && server.probeEventStatus === "stale";
-  server.lastCheckedAt = result.checkedAt || nowIso();
   if (!verification) {
     server.lastProbeSeenAt = nowIso();
     server.probeEventStatus = "online";
@@ -1827,29 +1820,19 @@ function applyProbeResult(server, result, probeId, options = {}) {
     server.probeFallbackCheckedAt = result.checkedAt || nowIso();
   }
   server.probeCheckRequestedAt = null;
-  server.lastLatencyMs = result.latencyMs ?? null;
-  server.lastError = verification
+  const resultError = verification
     ? result.online
       ? `Probe local sem contato; servidor respondeu via probe ${probeId}.`
       : `Probe local sem contato; servidor nao respondeu via probe ${probeId}. ${result.error || "Sem resposta ao ping."}`
     : result.error || null;
+  const transition = applyMonitorResult(server, { ...result, error: resultError }, { checkedAt: result.checkedAt || nowIso() });
 
-  if (result.online) {
-    server.consecutiveFailures = 0;
-    server.currentStatus = "online";
-  } else {
-    server.consecutiveFailures = (server.consecutiveFailures || 0) + 1;
-    if (server.consecutiveFailures >= server.failureThreshold) {
-      server.currentStatus = "offline";
-    }
-  }
-
-  if (server.currentStatus !== previousStatus) {
-    server.previousStatus = previousStatus;
+  if (transition.statusChanged) {
+    server.previousStatus = transition.previousStatus;
     server.statusChangedAt = server.lastCheckedAt;
     addEvent(
       server,
-      previousStatus,
+      transition.previousStatus,
       server.currentStatus,
       server.lastLatencyMs,
       server.lastError || `Resultado recebido do probe ${probeId}.`
@@ -2010,7 +1993,30 @@ async function handleApi(req, res) {
         user.updatedAt = user.updatedAt || user.lastLoginAt;
         scheduleSave();
         setSessionCookie(res, token);
-        return sendJson(res, 200, { user: publicUser(user) });
+        return sendJson(res, 200, { user: publicUser(user), requirePasswordChange: user.mustChangePassword === true });
+      }
+
+      if (req.method === "POST" && parts[2] === "password") {
+        const session = requireSession(req, res);
+        if (!session) return;
+        const payload = await readBody(req);
+        const currentPassword = String(payload.currentPassword || "");
+        const newPassword = String(payload.newPassword || "");
+        if (!verifyPassword(currentPassword, session.user.passwordHash)) {
+          return sendJson(res, 401, { error: "Senha atual invalida." });
+        }
+        if (newPassword.length < 8) {
+          return sendJson(res, 400, { error: "A nova senha deve ter pelo menos 8 caracteres." });
+        }
+        if (verifyPassword(newPassword, session.user.passwordHash)) {
+          return sendJson(res, 400, { error: "A nova senha deve ser diferente da senha atual." });
+        }
+        session.user.passwordHash = hashPassword(newPassword);
+        session.user.mustChangePassword = false;
+        session.user.updatedAt = nowIso();
+        scheduleSave();
+        broadcastSnapshot();
+        return sendJson(res, 200, { user: publicUser(session.user), requirePasswordChange: false });
       }
 
       if (req.method === "POST" && parts[2] === "logout") {

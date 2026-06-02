@@ -2550,6 +2550,16 @@ textarea:focus {
   gap: 14px;
 }
 
+.forced-password-dialog {
+  width: min(520px, calc(100vw - 24px));
+}
+
+.dialog-note {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.45;
+}
+
 .dialog-header {
   display: flex;
   justify-content: space-between;
