@@ -20,6 +20,7 @@ Resumo das versoes estaveis publicadas do ServerWatch.
 - Move listagem, reconhecimento e limpeza de alertas para `routes/alerts.js`.
 - Move endpoints de resumo, snapshot e eventos para `routes/meta.js`.
 - Move rotas administrativas de probes para `routes/probes.js`.
+- Move leituras, historico, criacao, edicao, exclusao e pausa/reativacao de servidores para `routes/servers.js`.
 - Resume o README e centraliza o historico de versoes neste arquivo.
 
 ## v1.2.1 - 2026-05-29

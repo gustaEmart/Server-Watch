@@ -9,6 +9,7 @@ import { createGroupsHandler } from "./routes/groups.js";
 import { createHealthHandler } from "./routes/health.js";
 import { createMetaHandler } from "./routes/meta.js";
 import { createProbesHandler } from "./routes/probes.js";
+import { createServerCheckHandler, createServerCreateHandler, createServerMutationHandler, createServerReadHandler } from "./routes/servers.js";
 import { createSettingsHandler } from "./routes/settings.js";
 import { createStaticHandler } from "./routes/static.js";
 import { createUsersHandler } from "./routes/users.js";
@@ -1956,113 +1957,14 @@ async function handleApi(req, res) {
     }
 
     if (parts[1] === "servers") {
-      if (req.method === "GET" && parts.length === 2) {
-        return sendJson(res, 200, listedServers().map(publicServer));
-      }
-
-      if (req.method === "GET" && parts.length === 3) {
-        const id = parts[2];
-        const server = state.servers.find((item) => item.id === id && !item.deletedAt);
-        if (!server) return notFound(res);
-        return sendJson(res, 200, publicServer(server));
-      }
-
-      if (req.method === "GET" && parts[3] === "history") {
-        const id = parts[2];
-        const server = state.servers.find((item) => item.id === id && !item.deletedAt);
-        if (!server) return notFound(res);
-        const limit = Number(url.searchParams.get("limit") || 100);
-        const events = state.events.filter((event) => event.serverId === id).slice(0, Math.min(limit, 500));
-        return sendJson(res, 200, events);
-      }
+      if (handleServerRead(req, res, { parts, url })) return;
 
       if (!requireAdmin(req, res)) return;
 
-      if (req.method === "POST" && parts.length === 2) {
-        const payload = await readBody(req);
-        const createdAt = nowIso();
-        const server = {
-          id: randomUUID(),
-          currentStatus: "unknown",
-          previousStatus: "unknown",
-          statusChangedAt: createdAt,
-          lastCheckedAt: null,
-          lastLatencyMs: null,
-          lastError: null,
-          consecutiveFailures: 0,
-          createdAt,
-          nextCheckAt: Date.now() + 300,
-          ...normalizeServer(payload)
-        };
-        state.servers.unshift(server);
-        addAdministrativeEvent(server, "server_created", "Servidor cadastrado.", session.user.name);
-        const childUpdates = "childIds" in payload ? syncVirtualizerChildren(server, payload.childIds, session.user.name) : 0;
-        scheduleSave();
-        broadcastSnapshot();
-        return sendJson(res, 201, { ...publicServer(server), childUpdates });
-      }
-
-      const id = parts[2];
-      const server = state.servers.find((item) => item.id === id && !item.deletedAt);
-      if (!server) return notFound(res);
-
-      if (req.method === "PUT" && parts.length === 3) {
-        const payload = await readBody(req);
-        const manuallyRenamedAutoServer =
-          server.autoCreatedByProbe &&
-          (String(payload.name || "").trim() !== String(server.name || "").trim() ||
-            String(payload.hostname || "").trim() !== String(server.hostname || "").trim());
-        Object.assign(server, normalizeServer(payload, server));
-        if (manuallyRenamedAutoServer) {
-          server.autoCreatedByProbe = false;
-        }
-        addAdministrativeEvent(server, "server_edited", "Cadastro do servidor editado.", session.user.name);
-        const childUpdates = "childIds" in payload ? syncVirtualizerChildren(server, payload.childIds, session.user.name) : 0;
-        scheduleSave();
-        broadcastSnapshot();
-        return sendJson(res, 200, { ...publicServer(server), childUpdates });
-      }
-
-      if (req.method === "DELETE" && parts.length === 3) {
-        server.isActive = false;
-        server.deletedAt = nowIso();
-        server.updatedAt = nowIso();
-        addAdministrativeEvent(server, "server_deleted", "Servidor removido do monitoramento.", session.user.name);
-        scheduleSave();
-        broadcastSnapshot();
-        return sendJson(res, 200, publicServer(server));
-      }
-
-      if (req.method === "POST" && parts[3] === "toggle") {
-        server.isActive = !server.isActive;
-        server.updatedAt = nowIso();
-        server.nextCheckAt = Date.now() + 300;
-        addAdministrativeEvent(
-          server,
-          server.isActive ? "server_reactivated" : "server_paused",
-          server.isActive ? "Monitoramento reativado." : "Monitoramento pausado.",
-          session.user.name
-        );
-        scheduleSave();
-        broadcastSnapshot();
-        return sendJson(res, 200, publicServer(server));
-      }
-
-      if (req.method === "POST" && parts[3] === "check") {
-        if (!server.isActive) {
-          return sendJson(res, 409, { error: "Reative o servidor antes de solicitar uma checagem." });
-        }
-        addAdministrativeEvent(server, "manual_check_requested", "Checagem manual solicitada.", session.user.name);
-        if (server.checkSource === "probe") {
-          server.probeCheckRequestedAt = nowIso();
-          scheduleSave();
-          broadcast({ type: "server_checked", server: publicServer(server), summary: summary() });
-          return sendJson(res, 202, { status: "probe_queued", server: publicServer(server) });
-        }
-        server.nextCheckAt = Date.now();
-        await checkServer(server);
-        return sendJson(res, 200, { status: "checked", server: publicServer(server) });
-      }
+      if (await handleServerCreate(req, res, { parts, session })) return;
+      if (await handleServerMutation(req, res, { parts, session })) return;
+      if (await handleServerCheck(req, res, { parts, session })) return;
+      return notFound(res);
     }
 
     if (parts[1] === "alerts") {
@@ -2164,6 +2066,54 @@ const handleProbes = createProbesHandler({
   nowIso,
   scheduleSave,
   broadcastSnapshot
+});
+const handleServerRead = createServerReadHandler({
+  sendJson,
+  notFound,
+  listedServers,
+  publicServer,
+  getEvents: () => state.events
+});
+const handleServerCreate = createServerCreateHandler({
+  randomId: randomUUID,
+  nowIso,
+  nowMs: Date.now,
+  readBody,
+  sendJson,
+  normalizeServer,
+  addServer: (server) => state.servers.unshift(server),
+  addAdministrativeEvent,
+  syncVirtualizerChildren,
+  scheduleSave,
+  broadcastSnapshot,
+  publicServer
+});
+const handleServerMutation = createServerMutationHandler({
+  nowIso,
+  nowMs: Date.now,
+  readBody,
+  sendJson,
+  notFound,
+  getServer: (id) => state.servers.find((item) => item.id === id && !item.deletedAt),
+  normalizeServer,
+  addAdministrativeEvent,
+  syncVirtualizerChildren,
+  scheduleSave,
+  broadcastSnapshot,
+  publicServer
+});
+const handleServerCheck = createServerCheckHandler({
+  nowIso,
+  nowMs: Date.now,
+  sendJson,
+  notFound,
+  getServer: (id) => state.servers.find((item) => item.id === id && !item.deletedAt),
+  publicServer,
+  addAdministrativeEvent,
+  scheduleSave,
+  broadcast,
+  summary,
+  checkServer
 });
 const serveStatic = createStaticHandler({
   publicDir: PUBLIC_DIR,
