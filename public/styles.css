@@ -5273,6 +5273,8 @@ body {
 
 .network-target-card {
   border-width: 1px;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
 }
 
 .network-target-card.online {
@@ -5285,13 +5287,47 @@ body {
   color: color-mix(in srgb, var(--color-success) 74%, var(--text-primary));
 }
 
+.network-target-card strong {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.network-target-card strong em {
+  border-radius: 999px;
+  background: var(--color-success);
+  color: #ffffff;
+  font-size: 0.68rem;
+  font-style: normal;
+  font-weight: 900;
+  letter-spacing: 0.04em;
+  line-height: 1;
+  padding: 5px 8px;
+}
+
+.network-target-state,
+.network-target-latency {
+  justify-self: end;
+  text-align: right;
+}
+
+.network-target-state {
+  font-weight: 900;
+}
+
 .network-target-card.offline {
   border-color: color-mix(in srgb, var(--color-danger) 40%, var(--border-muted));
   background: color-mix(in srgb, var(--color-danger) 12%, var(--bg-surface));
 }
 
 .network-target-card.active {
-  box-shadow: inset 3px 0 0 var(--color-success);
+  border-color: color-mix(in srgb, var(--color-success) 78%, var(--border-muted));
+  background: color-mix(in srgb, var(--color-success) 28%, var(--bg-surface));
+  box-shadow: inset 5px 0 0 var(--color-success), 0 0 0 1px color-mix(in srgb, var(--color-success) 24%, transparent);
+}
+
+.network-target-card.active strong {
+  color: color-mix(in srgb, var(--color-success) 48%, #ffffff);
 }
 
 .network-detail-header {
@@ -5344,6 +5380,10 @@ body {
   background: color-mix(in srgb, var(--color-success) 18%, var(--bg-surface));
 }
 
+.network-target-list > .network-target-card.active {
+  background: color-mix(in srgb, var(--color-success) 28%, var(--bg-surface));
+}
+
 .network-target-list > .network-target-card.offline {
   background: color-mix(in srgb, var(--color-danger) 12%, var(--bg-surface));
 }
@@ -5360,5 +5400,15 @@ body {
 
   .network-target-remove {
     width: 100%;
+  }
+
+  .network-target-card {
+    grid-template-columns: 1fr;
+  }
+
+  .network-target-state,
+  .network-target-latency {
+    justify-self: start;
+    text-align: left;
   }
 }

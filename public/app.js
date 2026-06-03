@@ -3226,6 +3226,16 @@ function activeTargetTitle(link) {
   return ["egress_ip", "egress_subnet", "single_reachable"].includes(link?.activeDetection) ? "Link ativo" : "Melhor resposta";
 }
 
+function networkTargetReason(target) {
+  if (target.egressActive) return "IP de saida";
+  if (target.egressSubnetActive) return `mesma /${target.egressSubnetPrefix || target.prefixLength || "?"}`;
+  return "";
+}
+
+function networkTargetLatencyLabel(target) {
+  return `${target.latencyMs ?? "-"} ms`;
+}
+
 function networkEventsForLink(linkId) {
   return state.networkEvents.filter((event) => event.linkId === linkId).slice(0, 8);
 }
@@ -3278,13 +3288,20 @@ function renderNetworkDetail(link) {
             </div>
             <div class="network-target-list">
               ${link.targetResults
-                .map((target) => `
-                  <div class="profile-data-row network-target-card ${target.online ? "online" : "offline"} ${target.targetHost === link.activeTargetHost ? "active" : ""}">
-                    <strong>${escapeHtml(networkTargetLabel(target))}${target.targetHost === link.activeTargetHost ? " · ativo" : ""}</strong>
-                    <span>${target.online ? "Respondendo" : escapeHtml(target.error || "Sem resposta")}</span>
-                    <small>${target.egressActive ? "IP de saida" : target.egressSubnetActive ? `mesma /${target.egressSubnetPrefix}` : `${target.latencyMs ?? "-"} ms`}</small>
-                  </div>
-                `)
+                .map((target) => {
+                  const active = target.targetHost === link.activeTargetHost;
+                  const reason = networkTargetReason(target);
+                  return `
+                    <div class="profile-data-row network-target-card ${target.online ? "online" : "offline"} ${active ? "active" : ""}">
+                      <div>
+                        <strong>${escapeHtml(networkTargetLabel(target))}${active ? `<em>ATIVO</em>` : ""}</strong>
+                        <small>${escapeHtml(reason || "Monitorado por ping")}</small>
+                      </div>
+                      <span class="network-target-state">${target.online ? "Respondendo" : escapeHtml(target.error || "Sem resposta")}</span>
+                      <small class="network-target-latency">${escapeHtml(networkTargetLatencyLabel(target))}</small>
+                    </div>
+                  `;
+                })
                 .join("")}
             </div>
           </section>`
