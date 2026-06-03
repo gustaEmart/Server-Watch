@@ -3084,6 +3084,28 @@ function networkLinkTypeLabel(type) {
   }[type] || "Internet";
 }
 
+function networkTargetLabel(target) {
+  if (!target) return "-";
+  const name = target.targetName || target.name || target.label || "";
+  const host = target.targetHost || target.host || "";
+  return name ? `${name} (${host})` : host || "-";
+}
+
+function networkTargetsForLink(link) {
+  if (Array.isArray(link?.targets) && link.targets.length) return link.targets;
+  return (link?.targetHosts || [link?.targetHost]).filter(Boolean).map((host) => ({ name: "", host }));
+}
+
+function activeNetworkTargetLabel(link) {
+  if (!link?.activeTargetHost) return "-";
+  const target = networkTargetsForLink(link).find((item) => item.host === link.activeTargetHost || item.targetHost === link.activeTargetHost);
+  return networkTargetLabel(target || { host: link.activeTargetHost, name: link.activeTargetName || "" });
+}
+
+function activeDetectionLabel(value) {
+  return value === "egress_ip" ? "IP publico de saida" : "melhor resposta ao ping";
+}
+
 function networkEventsForLink(linkId) {
   return state.networkEvents.filter((event) => event.linkId === linkId).slice(0, 8);
 }
@@ -3101,6 +3123,7 @@ function renderNetworkDetail(link) {
   }
   const events = networkEventsForLink(link.id);
   const status = link.displayStatus || link.currentStatus || "unknown";
+  const targetLabels = networkTargetsForLink(link).map(networkTargetLabel);
   els.networkDetailPanel.innerHTML = `
     <div class="network-detail-header">
       <div>
@@ -3110,8 +3133,10 @@ function renderNetworkDetail(link) {
       <span class="status-badge ${networkStatusClass(status)}">${networkStatusLabel(status)}</span>
     </div>
     <div class="profile-data-grid">
-      <div><span>IP ativo</span><strong>${escapeHtml(link.activeTargetHost || "-")}</strong></div>
-      <div><span>Alvos</span><strong>${escapeHtml((link.targetHosts || [link.targetHost]).filter(Boolean).join(", "))}</strong></div>
+      <div><span>Link ativo</span><strong>${escapeHtml(activeNetworkTargetLabel(link))}</strong></div>
+      <div><span>Metodo do ativo</span><strong>${escapeHtml(link.activeTargetHost ? activeDetectionLabel(link.activeDetection) : "-")}</strong></div>
+      <div><span>IP publico observado</span><strong>${escapeHtml(link.observedPublicIp || "-")}</strong></div>
+      <div><span>Alvos</span><strong>${escapeHtml(targetLabels.join(", ") || "-")}</strong></div>
       <div><span>Probe</span><strong>${escapeHtml(link.probeName || link.probeId || "-")}</strong></div>
       <div><span>Latencia</span><strong>${link.lastLatencyMs ?? "-"} ms</strong></div>
       <div><span>Perda</span><strong>${link.lastPacketLossPercent ?? "-"}%</strong></div>
@@ -3135,9 +3160,9 @@ function renderNetworkDetail(link) {
               ${link.targetResults
                 .map((target) => `
                   <div class="profile-data-row">
-                    <strong>${escapeHtml(target.targetHost)}${target.targetHost === link.activeTargetHost ? " · ativo" : ""}</strong>
+                    <strong>${escapeHtml(networkTargetLabel(target))}${target.targetHost === link.activeTargetHost ? " · ativo" : ""}</strong>
                     <span>${target.online ? "Respondendo" : escapeHtml(target.error || "Sem resposta")}</span>
-                    <small>${target.latencyMs ?? "-"} ms</small>
+                    <small>${target.egressActive ? "IP de saida" : `${target.latencyMs ?? "-"} ms`}</small>
                   </div>
                 `)
                 .join("")}
@@ -3200,7 +3225,7 @@ function renderNetworks() {
             link.groupName || "Sem empresa",
             link.provider || "Sem operadora",
             link.networkDeviceName || "Sem dispositivo",
-            link.activeTargetHost ? `ativo ${link.activeTargetHost}` : (link.targetHosts || [link.targetHost]).filter(Boolean).join(", ")
+            link.activeTargetHost ? `ativo ${activeNetworkTargetLabel(link)}` : networkTargetsForLink(link).map(networkTargetLabel).join(", ")
           ].filter(Boolean).join(" · ");
           return `
             <button class="network-link-row ${selected}" type="button" data-network-link-id="${escapeHtml(link.id)}">
@@ -3394,7 +3419,11 @@ function openNetworkLinkDialog(link = null) {
   els.networkLinkProvider.value = link?.provider || "";
   els.networkLinkDevice.value = link?.networkDeviceId || "";
   els.networkLinkType.value = link?.linkType || "internet";
-  els.networkLinkTarget.value = (link?.targetHosts?.length ? link.targetHosts : [link?.targetHost].filter(Boolean)).join("\n");
+  els.networkLinkTarget.value = networkTargetsForLink(link).map((target) => {
+    const name = target.name || target.targetName || "";
+    const host = target.host || target.targetHost || "";
+    return name ? `${name} | ${host}` : host;
+  }).filter(Boolean).join("\n");
   els.networkLinkInterface.value = link?.interfaceName || "";
   els.networkLinkGroup.value = link?.groupId || "";
   if (link?.probeId && state.probes.some((probe) => probe.id === link.probeId)) {
@@ -3486,7 +3515,7 @@ async function submitNetworkLink(event) {
     provider: els.networkLinkProvider.value,
     networkDeviceId: els.networkLinkDevice.value || null,
     linkType: els.networkLinkType.value,
-    targetHosts: els.networkLinkTarget.value,
+    targets: els.networkLinkTarget.value,
     interfaceName: els.networkLinkInterface.value,
     groupId: els.networkLinkGroup.value || null,
     probeId: els.networkLinkProbe.value || null,

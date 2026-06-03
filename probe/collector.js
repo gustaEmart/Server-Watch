@@ -5,11 +5,16 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const DEFAULT_CONFIG = new URL("./config.json", import.meta.url);
-const VERSION = "0.6.5";
+const VERSION = "0.6.6";
 const DEFAULT_QUEUE_MAX_BATCHES = 1000;
 const HOST_METRICS_CACHE_MS = 60 * 1000;
 const HOST_METRICS_TIMEOUT_MS = 7000;
 const REQUEST_TIMEOUT_MS = 15000;
+const PUBLIC_IP_ENDPOINTS = [
+  "https://api.ipify.org",
+  "https://ifconfig.me/ip",
+  "https://icanhazip.com"
+];
 const handledUpdateRequests = new Set();
 const CRITICAL_SERVICE_NAMES = [
   "apache2",
@@ -748,13 +753,29 @@ function pingHost(hostname, timeoutMs) {
 
 async function pingNetworkLink(target, timeoutMs) {
   const sampleCount = Math.max(1, Math.min(10, Number(target.sampleCount || 1)));
-  const targetHosts = [...new Set(
-    (Array.isArray(target.targetHosts) && target.targetHosts.length ? target.targetHosts : [target.targetHost])
-      .map((host) => String(host || "").trim())
-      .filter(Boolean)
-  )];
+  const rawTargets = Array.isArray(target.targets) && target.targets.length
+    ? target.targets
+    : (Array.isArray(target.targetHosts) && target.targetHosts.length ? target.targetHosts : [target.targetHost]);
+  const targets = [];
+  const seen = new Set();
+  for (const item of rawTargets) {
+    const parsed = typeof item === "object" && item !== null
+      ? {
+          targetName: String(item.name || item.label || "").trim(),
+          targetHost: String(item.host || item.targetHost || "").trim()
+        }
+      : {
+          targetName: "",
+          targetHost: String(item || "").trim()
+        };
+    if (!parsed.targetHost || seen.has(parsed.targetHost)) continue;
+    seen.add(parsed.targetHost);
+    targets.push(parsed);
+  }
+  const targetHosts = targets.map((item) => item.targetHost);
+  const observedPublicIp = String(target.observedPublicIp || "").trim();
   const targetResults = [];
-  for (const targetHost of targetHosts) {
+  for (const { targetHost, targetName } of targets) {
     const samples = [];
     for (let index = 0; index < sampleCount; index += 1) {
       samples.push(await pingHost(targetHost, timeoutMs));
@@ -769,7 +790,9 @@ async function pingNetworkLink(target, timeoutMs) {
       : null;
     targetResults.push({
       targetHost,
+      targetName,
       online: successful.length > 0,
+      egressActive: Boolean(observedPublicIp && observedPublicIp === targetHost),
       latencyMs: averageLatency,
       packetLossPercent: Math.round(((sampleCount - successful.length) / sampleCount) * 1000) / 10,
       error: successful.length > 0 ? null : samples.find((sample) => sample.error)?.error || "Sem resposta ao ping."
@@ -777,7 +800,8 @@ async function pingNetworkLink(target, timeoutMs) {
   }
   const successful = targetResults.filter((sample) => sample.online);
   successful.sort((left, right) => Number(left.latencyMs ?? 999999) - Number(right.latencyMs ?? 999999));
-  const active = successful[0] || null;
+  const egressActive = targetResults.find((sample) => sample.egressActive) || null;
+  const active = egressActive || successful[0] || null;
   const latencies = successful
     .map((sample) => sample.latencyMs)
     .filter((value) => Number.isFinite(Number(value)))
@@ -795,7 +819,11 @@ async function pingNetworkLink(target, timeoutMs) {
     linkId: target.id,
     targetHost: target.targetHost,
     targetHosts,
+    targets,
     activeTargetHost: active?.targetHost || null,
+    activeTargetName: active?.targetName || "",
+    activeDetection: egressActive ? "egress_ip" : "ping",
+    observedPublicIp: observedPublicIp || null,
     targetResults,
     online: successful.length > 0,
     latencyMs: active?.latencyMs ?? null,
@@ -804,6 +832,29 @@ async function pingNetworkLink(target, timeoutMs) {
     error: successful.length > 0 ? null : firstError || "Sem resposta ao ping.",
     checkedAt: new Date().toISOString()
   };
+}
+
+async function detectPublicIp(timeoutMs) {
+  const timeout = Math.max(1500, Math.min(5000, Number(timeoutMs || 2500)));
+  for (const endpoint of PUBLIC_IP_ENDPOINTS) {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), timeout);
+    try {
+      const response = await fetch(endpoint, {
+        signal: controller.signal,
+        headers: { "User-Agent": `ServerWatchProbe/${VERSION}` }
+      });
+      if (!response.ok) continue;
+      const body = (await response.text()).trim();
+      const match = body.match(/[a-fA-F0-9:.]+/);
+      if (match?.[0]) return match[0];
+    } catch {
+      // Try the next endpoint; link monitoring can still fall back to ping.
+    } finally {
+      clearTimeout(timeoutId);
+    }
+  }
+  return null;
 }
 
 async function requestJson(config, path, options = {}) {
@@ -1048,8 +1099,9 @@ async function runLoop(config) {
         return target.forceCheck || dueAt <= now;
       });
       const networkResults = [];
+      const observedPublicIp = dueNetworkLinks.length ? await detectPublicIp(Math.min(config.timeoutMs, 3000)) : null;
       for (const target of dueNetworkLinks) {
-        networkResults.push(await pingNetworkLink(target, config.timeoutMs));
+        networkResults.push(await pingNetworkLink({ ...target, observedPublicIp }, config.timeoutMs));
         nextNetworkChecks.set(target.id, Date.now() + Math.max(10, target.checkInterval || 10) * 1000);
       }
       try {
@@ -1087,8 +1139,9 @@ async function runLoop(config) {
           return target.forceCheck || dueAt <= now;
         });
         const networkResults = [];
+        const observedPublicIp = dueNetworkLinks.length ? await detectPublicIp(Math.min(config.timeoutMs, 3000)) : null;
         for (const target of dueNetworkLinks) {
-          networkResults.push(await pingNetworkLink(target, config.timeoutMs));
+          networkResults.push(await pingNetworkLink({ ...target, observedPublicIp }, config.timeoutMs));
           nextNetworkChecks.set(target.id, Date.now() + Math.max(10, target.checkInterval || 10) * 1000);
         }
         await queueResults(config, results, error.message, networkResults);

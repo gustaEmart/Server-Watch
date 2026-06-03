@@ -91,7 +91,7 @@ const SESSION_COOKIE = "sw_session";
 const SESSION_TTL_MS = 8 * 60 * 60 * 1000;
 const DEFAULT_ADMIN_EMAIL = process.env.SERVERWATCH_ADMIN_EMAIL || "admin@serverwatch.local";
 const DEFAULT_ADMIN_PASSWORD = process.env.SERVERWATCH_ADMIN_PASSWORD || "admin123";
-const PROBE_COLLECTOR_VERSION = "0.6.5";
+const PROBE_COLLECTOR_VERSION = "0.6.6";
 const PROBE_UPDATE_SUPPORTED_PLATFORMS = new Set(["linux"]);
 
 const sessions = new Map();
@@ -319,6 +319,49 @@ function normalizeHostList(value, fallback = []) {
   )];
 }
 
+function parseNetworkTargetLine(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return null;
+  const namedMatch = raw.match(/^(.+?)\s*(?:\||=>|=)\s*([a-zA-Z0-9._:-]+)$/);
+  if (namedMatch) {
+    return {
+      name: namedMatch[1].trim(),
+      host: normalizeOptionalHost(namedMatch[2], "Alvo do link")
+    };
+  }
+  return {
+    name: "",
+    host: normalizeOptionalHost(raw, "Alvo do link")
+  };
+}
+
+function normalizeNetworkTargets(value, fallback = []) {
+  const rawItems = Array.isArray(value)
+    ? value
+    : String(value || "")
+        .split(/[\n,;]+/)
+        .map((item) => item.trim())
+        .filter(Boolean);
+  const fallbackItems = Array.isArray(fallback) ? fallback : [fallback];
+  const items = rawItems.length ? rawItems : fallbackItems;
+  const targets = [];
+  const seen = new Set();
+
+  for (const item of items) {
+    const parsed = typeof item === "object" && item !== null
+      ? {
+          name: String(item.name || item.label || "").trim(),
+          host: normalizeOptionalHost(item.host || item.targetHost || item.target_host, "Alvo do link")
+        }
+      : parseNetworkTargetLine(item);
+    if (!parsed?.host || seen.has(parsed.host)) continue;
+    seen.add(parsed.host);
+    targets.push(parsed);
+  }
+
+  return targets;
+}
+
 function normalizeNetworkDevice(payload, existing = {}) {
   const name = String(payload.name || existing.name || "").trim();
   if (!name) {
@@ -396,10 +439,14 @@ function normalizeNetworkLink(payload, existing = {}) {
     throw error;
   }
 
-  const targetHosts = normalizeHostList(
-    payload.targetHosts ?? payload.target_hosts ?? payload.targetHost ?? payload.target_host,
-    existing.targetHosts?.length ? existing.targetHosts : [existing.targetHost]
+  const fallbackTargets = existing.targets?.length
+    ? existing.targets
+    : (existing.targetHosts?.length ? existing.targetHosts : [existing.targetHost]);
+  const targets = normalizeNetworkTargets(
+    payload.targets ?? payload.targetTargets ?? payload.target_hosts ?? payload.targetHosts ?? payload.targetHost ?? payload.target_host,
+    fallbackTargets
   );
+  const targetHosts = targets.map((target) => target.host);
   if (!targetHosts.length) {
     const error = new Error("Informe o alvo de monitoramento do link.");
     error.statusCode = 400;
@@ -424,6 +471,7 @@ function normalizeNetworkLink(payload, existing = {}) {
     interfaceName: String(payload.interfaceName ?? payload.interface_name ?? existing.interfaceName ?? "").trim(),
     targetHost,
     targetHosts,
+    targets,
     expectedPublicIp: normalizeOptionalHost(payload.expectedPublicIp ?? payload.expected_public_ip ?? existing.expectedPublicIp, "IP publico esperado"),
     contractedDownloadMbps: Math.max(0, Number(payload.contractedDownloadMbps ?? payload.contracted_download_mbps ?? existing.contractedDownloadMbps ?? 0) || 0),
     contractedUploadMbps: Math.max(0, Number(payload.contractedUploadMbps ?? payload.contracted_upload_mbps ?? existing.contractedUploadMbps ?? 0) || 0),
@@ -752,22 +800,26 @@ async function loadState() {
     probeId: device.probeId || null,
     isActive: device.isActive !== false
   }));
-  state.networkLinks = (state.networkLinks || []).map((link) => ({
-    ...link,
-    networkDeviceId: link.networkDeviceId || null,
-    groupId: link.groupId || null,
-    probeId: link.probeId || null,
-    targetHost: normalizeHostList(link.targetHosts?.length ? link.targetHosts : [link.targetHost])[0] || link.targetHost,
-    targetHosts: normalizeHostList(link.targetHosts?.length ? link.targetHosts : [link.targetHost]),
-    linkType: normalizeNetworkLinkType(link.linkType),
-    currentStatus: NETWORK_LINK_STATUSES.has(link.currentStatus) ? link.currentStatus : "unknown",
-    previousStatus: NETWORK_LINK_STATUSES.has(link.previousStatus) ? link.previousStatus : "unknown",
-    consecutiveFailures: link.consecutiveFailures || 0,
-    checkInterval: Math.max(10, Number(link.checkInterval || 10)),
-    failureThreshold: Math.max(3, Number(link.failureThreshold || 3)),
-    sampleCount: Math.max(1, Number(link.sampleCount || 1)),
-    isActive: link.isActive !== false
-  }));
+  state.networkLinks = (state.networkLinks || []).map((link) => {
+    const targets = normalizeNetworkTargets(link.targets?.length ? link.targets : (link.targetHosts?.length ? link.targetHosts : [link.targetHost]));
+    return {
+      ...link,
+      networkDeviceId: link.networkDeviceId || null,
+      groupId: link.groupId || null,
+      probeId: link.probeId || null,
+      targetHost: targets[0]?.host || link.targetHost,
+      targetHosts: targets.map((target) => target.host),
+      targets,
+      linkType: normalizeNetworkLinkType(link.linkType),
+      currentStatus: NETWORK_LINK_STATUSES.has(link.currentStatus) ? link.currentStatus : "unknown",
+      previousStatus: NETWORK_LINK_STATUSES.has(link.previousStatus) ? link.previousStatus : "unknown",
+      consecutiveFailures: link.consecutiveFailures || 0,
+      checkInterval: Math.max(10, Number(link.checkInterval || 10)),
+      failureThreshold: Math.max(3, Number(link.failureThreshold || 3)),
+      sampleCount: Math.max(1, Number(link.sampleCount || 1)),
+      isActive: link.isActive !== false
+    };
+  });
   if (needsSave) await persistState();
 }
 
@@ -1023,7 +1075,13 @@ function publicNetworkLink(link) {
     interfaceName: link.interfaceName || "",
     targetHost: link.targetHost,
     targetHosts: Array.isArray(link.targetHosts) && link.targetHosts.length ? link.targetHosts : [link.targetHost].filter(Boolean),
+    targets: Array.isArray(link.targets) && link.targets.length
+      ? link.targets
+      : (Array.isArray(link.targetHosts) && link.targetHosts.length ? link.targetHosts : [link.targetHost].filter(Boolean)).map((host) => ({ name: "", host })),
     activeTargetHost: link.activeTargetHost || null,
+    activeTargetName: link.activeTargetName || "",
+    activeDetection: link.activeDetection || "",
+    observedPublicIp: link.observedPublicIp || null,
     expectedPublicIp: link.expectedPublicIp || "",
     contractedDownloadMbps: link.contractedDownloadMbps || 0,
     contractedUploadMbps: link.contractedUploadMbps || 0,
@@ -1126,6 +1184,9 @@ function applyNetworkLinkResult(link, result, probeId) {
   link.lastJitterMs = result.jitterMs ?? null;
   link.lastError = result.error || null;
   link.activeTargetHost = result.activeTargetHost || null;
+  link.activeTargetName = result.activeTargetName || "";
+  link.activeDetection = result.activeDetection || "";
+  link.observedPublicIp = result.observedPublicIp || null;
   link.targetResults = Array.isArray(result.targetResults) ? result.targetResults.slice(0, 20) : [];
   link.forceCheckAt = null;
 
@@ -2078,6 +2139,9 @@ function probeTargets(probeId) {
       name: link.name,
       targetHost: link.targetHost,
       targetHosts: Array.isArray(link.targetHosts) && link.targetHosts.length ? link.targetHosts : [link.targetHost].filter(Boolean),
+      targets: Array.isArray(link.targets) && link.targets.length
+        ? link.targets
+        : (Array.isArray(link.targetHosts) && link.targetHosts.length ? link.targetHosts : [link.targetHost].filter(Boolean)).map((host) => ({ name: "", host })),
       checkMethod: "ping",
       checkInterval: link.checkInterval,
       failureThreshold: link.failureThreshold,

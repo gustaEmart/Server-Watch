@@ -171,8 +171,19 @@ Regra inicial:
 
 - o probe ou o ServerWatch testa todos os IPs cadastrados;
 - se qualquer IP responder, o link fica `online`;
-- o IP com melhor resposta no ciclo vira `activeTargetHost`;
+- o probe tenta descobrir o IP publico de saida da rede;
+- se o IP publico observado bater com um alvo cadastrado, este alvo vira `activeTargetHost` com `activeDetection = egress_ip`;
+- se nao houver correspondencia com o IP publico de saida, o alvo com melhor resposta ao ping vira `activeTargetHost` com `activeDetection = ping`;
 - se nenhum IP responder em 3 ciclos consecutivos, o link vira `offline`.
+
+Formato recomendado no cadastro:
+
+```text
+Vivo | 187.91.174.154
+BR Digital | 200.0.40.218
+```
+
+Linhas somente com IP continuam validas para compatibilidade.
 
 ### Probe sem contato
 
