@@ -3110,7 +3110,8 @@ function renderNetworkDetail(link) {
       <span class="status-badge ${networkStatusClass(status)}">${networkStatusLabel(status)}</span>
     </div>
     <div class="profile-data-grid">
-      <div><span>Alvo</span><strong>${escapeHtml(link.targetHost)}</strong></div>
+      <div><span>IP ativo</span><strong>${escapeHtml(link.activeTargetHost || "-")}</strong></div>
+      <div><span>Alvos</span><strong>${escapeHtml((link.targetHosts || [link.targetHost]).filter(Boolean).join(", "))}</strong></div>
       <div><span>Probe</span><strong>${escapeHtml(link.probeName || link.probeId || "-")}</strong></div>
       <div><span>Latencia</span><strong>${link.lastLatencyMs ?? "-"} ms</strong></div>
       <div><span>Perda</span><strong>${link.lastPacketLossPercent ?? "-"}%</strong></div>
@@ -3123,6 +3124,27 @@ function renderNetworkDetail(link) {
       <div><span>Limite latencia</span><strong>${link.degradedLatencyMs || 120} ms</strong></div>
       <div><span>Limite perda</span><strong>${link.degradedPacketLossPercent ?? 10}%</strong></div>
     </div>
+    ${
+      Array.isArray(link.targetResults) && link.targetResults.length
+        ? `<section class="profile-section">
+            <div class="panel-title compact-title">
+              <h3>IPs testados</h3>
+              <span>${link.targetResults.length} alvos</span>
+            </div>
+            <div class="network-target-list">
+              ${link.targetResults
+                .map((target) => `
+                  <div class="profile-data-row">
+                    <strong>${escapeHtml(target.targetHost)}${target.targetHost === link.activeTargetHost ? " · ativo" : ""}</strong>
+                    <span>${target.online ? "Respondendo" : escapeHtml(target.error || "Sem resposta")}</span>
+                    <small>${target.latencyMs ?? "-"} ms</small>
+                  </div>
+                `)
+                .join("")}
+            </div>
+          </section>`
+        : ""
+    }
     ${
       isAdmin()
         ? `<div class="network-actions">
@@ -3178,7 +3200,7 @@ function renderNetworks() {
             link.groupName || "Sem empresa",
             link.provider || "Sem operadora",
             link.networkDeviceName || "Sem dispositivo",
-            link.targetHost
+            link.activeTargetHost ? `ativo ${link.activeTargetHost}` : (link.targetHosts || [link.targetHost]).filter(Boolean).join(", ")
           ].filter(Boolean).join(" · ");
           return `
             <button class="network-link-row ${selected}" type="button" data-network-link-id="${escapeHtml(link.id)}">
@@ -3372,7 +3394,7 @@ function openNetworkLinkDialog(link = null) {
   els.networkLinkProvider.value = link?.provider || "";
   els.networkLinkDevice.value = link?.networkDeviceId || "";
   els.networkLinkType.value = link?.linkType || "internet";
-  els.networkLinkTarget.value = link?.targetHost || "";
+  els.networkLinkTarget.value = (link?.targetHosts?.length ? link.targetHosts : [link?.targetHost].filter(Boolean)).join("\n");
   els.networkLinkInterface.value = link?.interfaceName || "";
   els.networkLinkGroup.value = link?.groupId || "";
   if (link?.probeId && state.probes.some((probe) => probe.id === link.probeId)) {
@@ -3464,7 +3486,7 @@ async function submitNetworkLink(event) {
     provider: els.networkLinkProvider.value,
     networkDeviceId: els.networkLinkDevice.value || null,
     linkType: els.networkLinkType.value,
-    targetHost: els.networkLinkTarget.value,
+    targetHosts: els.networkLinkTarget.value,
     interfaceName: els.networkLinkInterface.value,
     groupId: els.networkLinkGroup.value || null,
     probeId: els.networkLinkProbe.value || null,

@@ -304,6 +304,21 @@ function normalizeOptionalHost(value, fieldName = "host") {
   return host;
 }
 
+function normalizeHostList(value, fallback = []) {
+  const rawItems = Array.isArray(value)
+    ? value
+    : String(value || "")
+        .split(/[\n,;]+/)
+        .map((item) => item.trim());
+  const fallbackItems = Array.isArray(fallback) ? fallback : [fallback];
+  const items = rawItems.length ? rawItems : fallbackItems;
+  return [...new Set(
+    items
+      .map((item) => normalizeOptionalHost(item, "Alvo do link"))
+      .filter(Boolean)
+  )];
+}
+
 function normalizeNetworkDevice(payload, existing = {}) {
   const name = String(payload.name || existing.name || "").trim();
   if (!name) {
@@ -381,12 +396,16 @@ function normalizeNetworkLink(payload, existing = {}) {
     throw error;
   }
 
-  const targetHost = normalizeOptionalHost(payload.targetHost ?? payload.target_host ?? existing.targetHost, "Alvo do link");
-  if (!targetHost) {
+  const targetHosts = normalizeHostList(
+    payload.targetHosts ?? payload.target_hosts ?? payload.targetHost ?? payload.target_host,
+    existing.targetHosts?.length ? existing.targetHosts : [existing.targetHost]
+  );
+  if (!targetHosts.length) {
     const error = new Error("Informe o alvo de monitoramento do link.");
     error.statusCode = 400;
     throw error;
   }
+  const targetHost = targetHosts[0];
 
   const interval = Number(payload.checkInterval ?? payload.check_interval ?? existing.checkInterval ?? state.settings.defaultInterval);
   const threshold = Number(payload.failureThreshold ?? payload.failure_threshold ?? existing.failureThreshold ?? state.settings.defaultFailureThreshold);
@@ -404,6 +423,7 @@ function normalizeNetworkLink(payload, existing = {}) {
     linkType: normalizeNetworkLinkType(payload.linkType ?? payload.link_type, existing.linkType),
     interfaceName: String(payload.interfaceName ?? payload.interface_name ?? existing.interfaceName ?? "").trim(),
     targetHost,
+    targetHosts,
     expectedPublicIp: normalizeOptionalHost(payload.expectedPublicIp ?? payload.expected_public_ip ?? existing.expectedPublicIp, "IP publico esperado"),
     contractedDownloadMbps: Math.max(0, Number(payload.contractedDownloadMbps ?? payload.contracted_download_mbps ?? existing.contractedDownloadMbps ?? 0) || 0),
     contractedUploadMbps: Math.max(0, Number(payload.contractedUploadMbps ?? payload.contracted_upload_mbps ?? existing.contractedUploadMbps ?? 0) || 0),
@@ -737,6 +757,8 @@ async function loadState() {
     networkDeviceId: link.networkDeviceId || null,
     groupId: link.groupId || null,
     probeId: link.probeId || null,
+    targetHost: normalizeHostList(link.targetHosts?.length ? link.targetHosts : [link.targetHost])[0] || link.targetHost,
+    targetHosts: normalizeHostList(link.targetHosts?.length ? link.targetHosts : [link.targetHost]),
     linkType: normalizeNetworkLinkType(link.linkType),
     currentStatus: NETWORK_LINK_STATUSES.has(link.currentStatus) ? link.currentStatus : "unknown",
     previousStatus: NETWORK_LINK_STATUSES.has(link.previousStatus) ? link.previousStatus : "unknown",
@@ -1000,6 +1022,8 @@ function publicNetworkLink(link) {
     linkType: link.linkType || "internet",
     interfaceName: link.interfaceName || "",
     targetHost: link.targetHost,
+    targetHosts: Array.isArray(link.targetHosts) && link.targetHosts.length ? link.targetHosts : [link.targetHost].filter(Boolean),
+    activeTargetHost: link.activeTargetHost || null,
     expectedPublicIp: link.expectedPublicIp || "",
     contractedDownloadMbps: link.contractedDownloadMbps || 0,
     contractedUploadMbps: link.contractedUploadMbps || 0,
@@ -1021,6 +1045,7 @@ function publicNetworkLink(link) {
     lastLatencyMs: link.lastLatencyMs ?? null,
     lastPacketLossPercent: link.lastPacketLossPercent ?? null,
     lastJitterMs: link.lastJitterMs ?? null,
+    targetResults: Array.isArray(link.targetResults) ? link.targetResults : [],
     lastError: link.lastError || null,
     lastProbeSeenAt: link.lastProbeSeenAt || null,
     consecutiveFailures: link.consecutiveFailures || 0,
@@ -1100,6 +1125,8 @@ function applyNetworkLinkResult(link, result, probeId) {
   link.lastPacketLossPercent = result.packetLossPercent ?? (result.online ? 0 : 100);
   link.lastJitterMs = result.jitterMs ?? null;
   link.lastError = result.error || null;
+  link.activeTargetHost = result.activeTargetHost || null;
+  link.targetResults = Array.isArray(result.targetResults) ? result.targetResults.slice(0, 20) : [];
   link.forceCheckAt = null;
 
   if (candidate === "offline") {
@@ -2050,6 +2077,7 @@ function probeTargets(probeId) {
       id: link.id,
       name: link.name,
       targetHost: link.targetHost,
+      targetHosts: Array.isArray(link.targetHosts) && link.targetHosts.length ? link.targetHosts : [link.targetHost].filter(Boolean),
       checkMethod: "ping",
       checkInterval: link.checkInterval,
       failureThreshold: link.failureThreshold,

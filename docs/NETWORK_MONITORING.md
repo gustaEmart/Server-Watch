@@ -79,6 +79,7 @@ provider
 link_type
 interface_name
 target_host
+target_hosts
 expected_public_ip
 contracted_download_mbps
 contracted_upload_mbps
@@ -139,7 +140,7 @@ probe_unreachable
 
 ### Online
 
-- alvo respondeu;
+- pelo menos um alvo respondeu;
 - perda abaixo do limite;
 - latencia abaixo do limite.
 
@@ -151,9 +152,27 @@ probe_unreachable
 
 ### Offline
 
-- alvo nao respondeu apos 3 pings consecutivos.
+- nenhum alvo respondeu apos 3 ciclos consecutivos.
 - o padrao inicial para links deve ser uma checagem a cada 10 segundos.
 - com o padrao `10s x 3 falhas`, um link cai para `offline` apos aproximadamente 30 segundos sem resposta.
+
+## Multiplos IPs por link
+
+Um link pode ter mais de um IP/alvo configurado.
+
+Uso esperado:
+
+- cliente com dois IPs publicos possiveis;
+- failover onde apenas um IP responde no momento;
+- roteador/firewall com mais de um endpoint publico;
+- identificacao rapida de qual IP esta ativo.
+
+Regra inicial:
+
+- o probe ou o ServerWatch testa todos os IPs cadastrados;
+- se qualquer IP responder, o link fica `online`;
+- o IP com melhor resposta no ciclo vira `activeTargetHost`;
+- se nenhum IP responder em 3 ciclos consecutivos, o link vira `offline`.
 
 ### Probe sem contato
 

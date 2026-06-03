@@ -5186,7 +5186,8 @@ body {
 }
 
 .network-link-list,
-.network-event-list {
+.network-event-list,
+.network-target-list {
   display: grid;
   gap: 8px;
 }
@@ -5260,12 +5261,14 @@ body {
 }
 
 .network-link-list > .network-link-row:nth-child(odd),
-.network-event-list > .profile-data-row:nth-child(odd) {
+.network-event-list > .profile-data-row:nth-child(odd),
+.network-target-list > .profile-data-row:nth-child(odd) {
   background: color-mix(in srgb, var(--bg-elevated) 72%, var(--bg-surface));
 }
 
 .network-link-list > .network-link-row:nth-child(even),
-.network-event-list > .profile-data-row:nth-child(even) {
+.network-event-list > .profile-data-row:nth-child(even),
+.network-target-list > .profile-data-row:nth-child(even) {
   background: color-mix(in srgb, var(--bg-surface) 82%, var(--bg-elevated));
 }
 

@@ -748,18 +748,40 @@ function pingHost(hostname, timeoutMs) {
 
 async function pingNetworkLink(target, timeoutMs) {
   const sampleCount = Math.max(1, Math.min(10, Number(target.sampleCount || 1)));
-  const samples = [];
-  for (let index = 0; index < sampleCount; index += 1) {
-    samples.push(await pingHost(target.targetHost, timeoutMs));
+  const targetHosts = [...new Set(
+    (Array.isArray(target.targetHosts) && target.targetHosts.length ? target.targetHosts : [target.targetHost])
+      .map((host) => String(host || "").trim())
+      .filter(Boolean)
+  )];
+  const targetResults = [];
+  for (const targetHost of targetHosts) {
+    const samples = [];
+    for (let index = 0; index < sampleCount; index += 1) {
+      samples.push(await pingHost(targetHost, timeoutMs));
+    }
+    const successful = samples.filter((sample) => sample.online);
+    const latencies = successful
+      .map((sample) => sample.latencyMs)
+      .filter((value) => Number.isFinite(Number(value)))
+      .map(Number);
+    const averageLatency = latencies.length
+      ? Math.round(latencies.reduce((sum, value) => sum + value, 0) / latencies.length)
+      : null;
+    targetResults.push({
+      targetHost,
+      online: successful.length > 0,
+      latencyMs: averageLatency,
+      packetLossPercent: Math.round(((sampleCount - successful.length) / sampleCount) * 1000) / 10,
+      error: successful.length > 0 ? null : samples.find((sample) => sample.error)?.error || "Sem resposta ao ping."
+    });
   }
-  const successful = samples.filter((sample) => sample.online);
+  const successful = targetResults.filter((sample) => sample.online);
+  successful.sort((left, right) => Number(left.latencyMs ?? 999999) - Number(right.latencyMs ?? 999999));
+  const active = successful[0] || null;
   const latencies = successful
     .map((sample) => sample.latencyMs)
     .filter((value) => Number.isFinite(Number(value)))
     .map(Number);
-  const averageLatency = latencies.length
-    ? Math.round(latencies.reduce((sum, value) => sum + value, 0) / latencies.length)
-    : null;
   const jitter = latencies.length > 1
     ? Math.round(
         latencies
@@ -768,14 +790,16 @@ async function pingNetworkLink(target, timeoutMs) {
           (latencies.length - 1)
       )
     : null;
-  const packetLossPercent = Math.round(((sampleCount - successful.length) / sampleCount) * 1000) / 10;
-  const firstError = samples.find((sample) => sample.error)?.error || null;
+  const firstError = targetResults.find((sample) => sample.error)?.error || null;
   return {
     linkId: target.id,
     targetHost: target.targetHost,
+    targetHosts,
+    activeTargetHost: active?.targetHost || null,
+    targetResults,
     online: successful.length > 0,
-    latencyMs: averageLatency,
-    packetLossPercent,
+    latencyMs: active?.latencyMs ?? null,
+    packetLossPercent: successful.length > 0 ? 0 : 100,
     jitterMs: jitter,
     error: successful.length > 0 ? null : firstError || "Sem resposta ao ping.",
     checkedAt: new Date().toISOString()
