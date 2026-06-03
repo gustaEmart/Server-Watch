@@ -91,7 +91,7 @@ const SESSION_COOKIE = "sw_session";
 const SESSION_TTL_MS = 8 * 60 * 60 * 1000;
 const DEFAULT_ADMIN_EMAIL = process.env.SERVERWATCH_ADMIN_EMAIL || "admin@serverwatch.local";
 const DEFAULT_ADMIN_PASSWORD = process.env.SERVERWATCH_ADMIN_PASSWORD || "admin123";
-const PROBE_COLLECTOR_VERSION = "0.6.6";
+const PROBE_COLLECTOR_VERSION = "0.6.7";
 const PROBE_UPDATE_SUPPORTED_PLATFORMS = new Set(["linux"]);
 
 const sessions = new Map();
@@ -351,7 +351,8 @@ function normalizeNetworkTargets(value, fallback = []) {
     const parsed = typeof item === "object" && item !== null
       ? {
           name: String(item.name || item.label || "").trim(),
-          host: normalizeOptionalHost(item.host || item.targetHost || item.target_host, "Alvo do link")
+          host: normalizeOptionalHost(item.host || item.targetHost || item.target_host, "Alvo do link"),
+          prefixLength: normalizeNetworkPrefixLength(item.prefixLength ?? item.prefix_length ?? item.subnetPrefix ?? item.subnet_prefix)
         }
       : parseNetworkTargetLine(item);
     if (!parsed?.host || seen.has(parsed.host)) continue;
@@ -360,6 +361,18 @@ function normalizeNetworkTargets(value, fallback = []) {
   }
 
   return targets;
+}
+
+function normalizeNetworkPrefixLength(value) {
+  const raw = String(value ?? "").trim().replace(/^\//, "");
+  if (!raw) return null;
+  const prefixLength = Number(raw);
+  if (!Number.isInteger(prefixLength) || prefixLength < 1 || prefixLength > 32) {
+    const error = new Error("Mascara do alvo invalida. Use valores como /30, /29 ou /28.");
+    error.statusCode = 400;
+    throw error;
+  }
+  return prefixLength;
 }
 
 function normalizeNetworkDevice(payload, existing = {}) {

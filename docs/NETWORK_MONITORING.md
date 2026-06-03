@@ -173,7 +173,9 @@ Regra inicial:
 - se qualquer IP responder, o link fica `online`;
 - o probe tenta descobrir o IP publico de saida da rede;
 - se o IP publico observado bater com um alvo cadastrado, este alvo vira `activeTargetHost` com `activeDetection = egress_ip`;
-- se nao houver correspondencia com o IP publico de saida, o alvo com melhor resposta ao ping vira `activeTargetHost` com `activeDetection = ping`;
+- se o alvo tiver mascara configurada, por exemplo `/30`, o probe compara o IP publico observado com o gateway dentro desta sub-rede;
+- se apenas um gateway/alvo responder, este alvo vira `activeTargetHost` com `activeDetection = single_reachable`;
+- se mais de um alvo responder e nao houver correspondencia com o IP publico de saida, o alvo com menor latencia vira `activeTargetHost` com `activeDetection = ping_best`;
 - se nenhum IP responder em 3 ciclos consecutivos, o link vira `offline`.
 
 Observacao operacional:
@@ -184,6 +186,7 @@ Observacao operacional:
 Formato do cadastro na UI:
 
 - cada alvo possui campos separados de `Nome do link` e `IP monitorado`;
+- cada alvo pode receber uma mascara opcional, como `/30`, `/29` ou `/28`, para associar o IP publico de saida ao gateway do link;
 - o botao `+` adiciona novos alvos ate o limite de 10;
 - o botao `-` remove apenas o alvo daquela linha;
 - o primeiro alvo permanece obrigatorio e nao pode ser removido;

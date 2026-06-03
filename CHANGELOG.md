@@ -4,6 +4,10 @@ Resumo das versoes estaveis publicadas do ServerWatch.
 
 ## Unreleased
 
+- Ajusta a deteccao de link ativo para cenarios com gateways de operadora: quando apenas um alvo responde ele e marcado como ativo; quando mais de um responde, a UI mostra melhor resposta ao ping em vez de indicar certeza operacional.
+- Adiciona mascara por alvo de link, como `/30`, `/29` ou `/28`, para associar o IP publico de saida ao gateway correto.
+- Atualiza o Probe Collector para `0.6.7`.
+
 ## v2.0.0 - 2026-06-03
 
 - Adiciona monitoramento de redes e links em pagina dedicada.

@@ -5,7 +5,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const DEFAULT_CONFIG = new URL("./config.json", import.meta.url);
-const VERSION = "0.6.6";
+const VERSION = "0.6.7";
 const DEFAULT_QUEUE_MAX_BATCHES = 1000;
 const HOST_METRICS_CACHE_MS = 60 * 1000;
 const HOST_METRICS_TIMEOUT_MS = 7000;
@@ -751,6 +751,34 @@ function pingHost(hostname, timeoutMs) {
   });
 }
 
+function ipv4ToNumber(value) {
+  const parts = String(value || "").trim().split(".");
+  if (parts.length !== 4) return null;
+  const octets = parts.map((part) => Number(part));
+  if (octets.some((octet) => !Number.isInteger(octet) || octet < 0 || octet > 255)) return null;
+  return octets.reduce((acc, octet) => ((acc << 8) | octet) >>> 0, 0);
+}
+
+function sameIpv4Subnet(left, right, prefixLength) {
+  const leftNumber = ipv4ToNumber(left);
+  const rightNumber = ipv4ToNumber(right);
+  if (leftNumber === null || rightNumber === null) return false;
+  const mask = prefixLength === 0 ? 0 : (0xffffffff << (32 - prefixLength)) >>> 0;
+  return (leftNumber & mask) === (rightNumber & mask);
+}
+
+function egressSubnetMatch(observedPublicIp, targetHost, configuredPrefixLength = null) {
+  if (!observedPublicIp || !targetHost) return null;
+  const prefixLength = Number(configuredPrefixLength);
+  if (Number.isInteger(prefixLength) && prefixLength >= 1 && prefixLength <= 32) {
+    return sameIpv4Subnet(observedPublicIp, targetHost, prefixLength) ? prefixLength : null;
+  }
+  for (const prefixLength of [30, 29, 28]) {
+    if (sameIpv4Subnet(observedPublicIp, targetHost, prefixLength)) return prefixLength;
+  }
+  return null;
+}
+
 async function pingNetworkLink(target, timeoutMs) {
   const sampleCount = Math.max(1, Math.min(10, Number(target.sampleCount || 1)));
   const rawTargets = Array.isArray(target.targets) && target.targets.length
@@ -762,11 +790,13 @@ async function pingNetworkLink(target, timeoutMs) {
     const parsed = typeof item === "object" && item !== null
       ? {
           targetName: String(item.name || item.label || "").trim(),
-          targetHost: String(item.host || item.targetHost || "").trim()
+          targetHost: String(item.host || item.targetHost || "").trim(),
+          prefixLength: item.prefixLength ?? item.prefix_length ?? null
         }
       : {
           targetName: "",
-          targetHost: String(item || "").trim()
+          targetHost: String(item || "").trim(),
+          prefixLength: null
         };
     if (!parsed.targetHost || seen.has(parsed.targetHost)) continue;
     seen.add(parsed.targetHost);
@@ -775,7 +805,8 @@ async function pingNetworkLink(target, timeoutMs) {
   const targetHosts = targets.map((item) => item.targetHost);
   const observedPublicIp = String(target.observedPublicIp || "").trim();
   const targetResults = [];
-  for (const { targetHost, targetName } of targets) {
+  for (const { targetHost, targetName, prefixLength } of targets) {
+    const egressSubnetPrefix = egressSubnetMatch(observedPublicIp, targetHost, prefixLength);
     const samples = [];
     for (let index = 0; index < sampleCount; index += 1) {
       samples.push(await pingHost(targetHost, timeoutMs));
@@ -791,8 +822,11 @@ async function pingNetworkLink(target, timeoutMs) {
     targetResults.push({
       targetHost,
       targetName,
+      prefixLength: prefixLength || null,
       online: successful.length > 0,
       egressActive: Boolean(observedPublicIp && observedPublicIp === targetHost),
+      egressSubnetActive: Boolean(egressSubnetPrefix),
+      egressSubnetPrefix,
       latencyMs: averageLatency,
       packetLossPercent: Math.round(((sampleCount - successful.length) / sampleCount) * 1000) / 10,
       error: successful.length > 0 ? null : samples.find((sample) => sample.error)?.error || "Sem resposta ao ping."
@@ -801,7 +835,17 @@ async function pingNetworkLink(target, timeoutMs) {
   const successful = targetResults.filter((sample) => sample.online);
   successful.sort((left, right) => Number(left.latencyMs ?? 999999) - Number(right.latencyMs ?? 999999));
   const egressActive = targetResults.find((sample) => sample.egressActive) || null;
-  const active = egressActive || successful[0] || null;
+  const egressSubnetActive = targetResults.find((sample) => sample.egressSubnetActive) || null;
+  const active = egressActive || egressSubnetActive || successful[0] || null;
+  const activeDetection = egressActive
+    ? "egress_ip"
+    : egressSubnetActive
+    ? "egress_subnet"
+    : successful.length === 1
+    ? "single_reachable"
+    : successful.length > 1
+    ? "ping_best"
+    : "";
   const latencies = successful
     .map((sample) => sample.latencyMs)
     .filter((value) => Number.isFinite(Number(value)))
@@ -822,7 +866,7 @@ async function pingNetworkLink(target, timeoutMs) {
     targets,
     activeTargetHost: active?.targetHost || null,
     activeTargetName: active?.targetName || "",
-    activeDetection: egressActive ? "egress_ip" : "ping",
+    activeDetection,
     observedPublicIp: observedPublicIp || null,
     targetResults,
     online: successful.length > 0,

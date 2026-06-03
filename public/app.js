@@ -3134,7 +3134,9 @@ function networkTargetLabel(target) {
   if (!target) return "-";
   const name = target.targetName || target.name || target.label || "";
   const host = target.targetHost || target.host || "";
-  return name ? `${name} (${host})` : host || "-";
+  const prefixLength = target.prefixLength || target.prefix_length || "";
+  const hostLabel = `${host}${prefixLength ? `/${String(prefixLength).replace(/^\//, "")}` : ""}`;
+  return name ? `${name} (${hostLabel})` : hostLabel || "-";
 }
 
 function networkTargetsForLink(link) {
@@ -3145,7 +3147,8 @@ function networkTargetsForLink(link) {
 function normalizeNetworkTargetInput(target) {
   return {
     name: String(target?.name || target?.targetName || "").trim(),
-    host: String(target?.host || target?.targetHost || "").trim()
+    host: String(target?.host || target?.targetHost || "").trim(),
+    prefixLength: String(target?.prefixLength || target?.prefix_length || "").replace(/^\//, "").trim()
   };
 }
 
@@ -3163,6 +3166,10 @@ function renderNetworkTargetInputs(targets = [{ name: "", host: "" }]) {
           IP monitorado
           <input data-network-target-host value="${escapeHtml(target.host)}" required placeholder="187.91.174.154" />
         </label>
+        <label>
+          Mascara
+          <input data-network-target-prefix value="${escapeHtml(target.prefixLength)}" inputmode="numeric" placeholder="/30" />
+        </label>
         <button class="icon-button network-target-remove" type="button" data-remove-network-target title="Remover link" ${index === 0 ? "disabled" : ""}>-</button>
       </div>
     `)
@@ -3178,7 +3185,8 @@ function readNetworkTargetInputs() {
   return [...els.networkLinkTarget.querySelectorAll("[data-network-target-row]")]
     .map((row) => ({
       name: row.querySelector("[data-network-target-name]")?.value.trim() || "",
-      host: row.querySelector("[data-network-target-host]")?.value.trim() || ""
+      host: row.querySelector("[data-network-target-host]")?.value.trim() || "",
+      prefixLength: row.querySelector("[data-network-target-prefix]")?.value.trim().replace(/^\//, "") || null
     }))
     .filter((target) => target.name || target.host);
 }
@@ -3205,7 +3213,17 @@ function activeNetworkTargetLabel(link) {
 }
 
 function activeDetectionLabel(value) {
-  return value === "egress_ip" ? "IP publico de saida" : "melhor resposta ao ping";
+  return {
+    egress_ip: "IP publico de saida",
+    egress_subnet: "mesma sub-rede WAN",
+    single_reachable: "unico gateway respondendo",
+    ping_best: "melhor resposta ao ping",
+    ping: "melhor resposta ao ping"
+  }[value] || "-";
+}
+
+function activeTargetTitle(link) {
+  return ["egress_ip", "egress_subnet", "single_reachable"].includes(link?.activeDetection) ? "Link ativo" : "Melhor resposta";
 }
 
 function networkEventsForLink(linkId) {
@@ -3235,7 +3253,7 @@ function renderNetworkDetail(link) {
       <span class="status-badge ${networkStatusClass(status)}">${networkStatusLabel(status)}</span>
     </div>
     <div class="profile-data-grid">
-      <div><span>Link ativo</span><strong>${escapeHtml(activeNetworkTargetLabel(link))}</strong></div>
+      <div><span>${escapeHtml(activeTargetTitle(link))}</span><strong>${escapeHtml(activeNetworkTargetLabel(link))}</strong></div>
       <div><span>Metodo do ativo</span><strong>${escapeHtml(link.activeTargetHost ? activeDetectionLabel(link.activeDetection) : "-")}</strong></div>
       <div><span>IP publico observado</span><strong>${escapeHtml(link.observedPublicIp || "-")}</strong></div>
       <div><span>Alvos</span><strong>${escapeHtml(targetLabels.join(", ") || "-")}</strong></div>
@@ -3264,7 +3282,7 @@ function renderNetworkDetail(link) {
                   <div class="profile-data-row network-target-card ${target.online ? "online" : "offline"} ${target.targetHost === link.activeTargetHost ? "active" : ""}">
                     <strong>${escapeHtml(networkTargetLabel(target))}${target.targetHost === link.activeTargetHost ? " · ativo" : ""}</strong>
                     <span>${target.online ? "Respondendo" : escapeHtml(target.error || "Sem resposta")}</span>
-                    <small>${target.egressActive ? "IP de saida" : `${target.latencyMs ?? "-"} ms`}</small>
+                    <small>${target.egressActive ? "IP de saida" : target.egressSubnetActive ? `mesma /${target.egressSubnetPrefix}` : `${target.latencyMs ?? "-"} ms`}</small>
                   </div>
                 `)
                 .join("")}
@@ -3611,6 +3629,15 @@ async function submitNetworkLink(event) {
   const targets = readNetworkTargetInputs();
   if (!targets.length || targets.some((target) => !target.host)) {
     showToast("Informe os IPs", "Cada link cadastrado precisa ter um IP monitorado.");
+    return;
+  }
+  const invalidPrefix = targets.find((target) => {
+    if (!target.prefixLength) return false;
+    const prefixLength = Number(target.prefixLength);
+    return !Number.isInteger(prefixLength) || prefixLength < 1 || prefixLength > 32;
+  });
+  if (invalidPrefix) {
+    showToast("Mascara invalida", "Use valores como /30, /29 ou /28 nos links monitorados.");
     return;
   }
   const payload = {
