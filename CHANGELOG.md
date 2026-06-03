@@ -30,6 +30,7 @@ Resumo das versoes estaveis publicadas do ServerWatch.
 - Adiciona indicadores visuais de latencia e destaca campos de tolerancia operacional nos detalhes dos servidores.
 - Faz os cards da visao executiva reagirem ao estado real, diferenciando vazio saudavel, alerta, atencao e recuperacao.
 - Adiciona dashboard inicial simplificado e recolhe a visao operacional detalhada para reduzir poluicao visual.
+- Adiciona graficos rapidos ao dashboard inicial com falhas 24h, distribuicao de status e saude por empresa.
 - Resume o README e centraliza o historico de versoes neste arquivo.
 
 ## v1.2.1 - 2026-05-29

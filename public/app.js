@@ -1206,10 +1206,35 @@ function availabilityForServers(servers) {
   return Math.round((online / active.length) * 1000) / 10;
 }
 
+function eventTimestamp(event) {
+  const timestamp = new Date(event.createdAt || event.timestamp || 0).getTime();
+  return Number.isFinite(timestamp) ? timestamp : 0;
+}
+
+function isFailureEvent(event) {
+  return (event.kind || "") === "server_offline" || event.currentStatus === "offline" || event.type === "down";
+}
+
+function isRecoveryEvent(event) {
+  return (
+    (event.kind || "") === "server_recovered" ||
+    (event.currentStatus === "online" && event.previousStatus === "offline") ||
+    event.type === "up"
+  );
+}
+
 function renderSimpleDashboard() {
   if (!els.simpleDashboardContent) return;
   const activeServers = state.servers.filter((server) => server.isActive);
   const counts = statusCounts(activeServers);
+  const simpleStatusCounts = activeServers.reduce(
+    (acc, server) => {
+      const status = displayStatus(server);
+      acc[status] = (acc[status] || 0) + 1;
+      return acc;
+    },
+    { online: 0, offline: 0, dependency_down: 0, probe_stale: 0, unknown: 0, paused: 0 }
+  );
   const openAlerts = state.alerts.filter((alert) => !alert.read && alert.type === "down");
   const problemServers = activeServers
     .filter((server) => ["offline", "probe_stale", "dependency_down"].includes(displayStatus(server)))
@@ -1228,6 +1253,86 @@ function renderSimpleDashboard() {
       : tone === "warning"
       ? "Ha itens para acompanhar, mas sem queda critica confirmada."
       : "Nenhuma queda critica aberta no momento.";
+
+  const now = Date.now();
+  const recentWindowStart = now - 24 * 60 * 60 * 1000;
+  const recentFailures = state.events.filter((event) => eventTimestamp(event) >= recentWindowStart && isFailureEvent(event));
+  const recentRecoveries = state.events.filter((event) => eventTimestamp(event) >= recentWindowStart && isRecoveryEvent(event));
+  const failureBuckets = Array.from({ length: 12 }, (_, index) => {
+    const start = now - (12 - index) * 2 * 60 * 60 * 1000;
+    const end = start + 2 * 60 * 60 * 1000;
+    return recentFailures.filter((event) => {
+      const timestamp = eventTimestamp(event);
+      return timestamp >= start && timestamp < end;
+    }).length;
+  });
+  const maxFailures = Math.max(1, ...failureBuckets);
+  const failureBars = failureBuckets
+    .map((count, index) => {
+      const startHour = new Date(now - (12 - index) * 2 * 60 * 60 * 1000).getHours().toString().padStart(2, "0");
+      const height = Math.max(count ? 12 : 3, Math.round((count / maxFailures) * 100));
+      return `<span class="${count ? "active" : ""}" style="--bar-height:${height}%" title="${count} falha${count === 1 ? "" : "s"} entre ${startHour}h e ${String((Number(startHour) + 2) % 24).padStart(2, "0")}h"><i></i></span>`;
+    })
+    .join("");
+  const statusTotal = Math.max(
+    1,
+    simpleStatusCounts.online +
+      simpleStatusCounts.offline +
+      simpleStatusCounts.dependency_down +
+      simpleStatusCounts.probe_stale +
+      simpleStatusCounts.unknown +
+      simpleStatusCounts.paused
+  );
+  const onlineDegrees = (simpleStatusCounts.online / statusTotal) * 360;
+  const offlineDegrees = (simpleStatusCounts.offline / statusTotal) * 360;
+  const attentionDegrees = ((simpleStatusCounts.dependency_down + simpleStatusCounts.probe_stale) / statusTotal) * 360;
+  const statusChartStyle = `--online-deg:${onlineDegrees}deg; --offline-deg:${offlineDegrees}deg; --attention-deg:${attentionDegrees}deg;`;
+
+  const groupHealth = groupedServers(state.servers)
+    .filter((group) => group.servers.some((server) => server.isActive))
+    .map((group) => {
+      const active = group.servers.filter((server) => server.isActive);
+      const currentCounts = active.reduce(
+        (acc, server) => {
+          const status = displayStatus(server);
+          acc[status] = (acc[status] || 0) + 1;
+          return acc;
+        },
+        { online: 0, offline: 0, dependency_down: 0, probe_stale: 0, unknown: 0, paused: 0 }
+      );
+      const serverIds = new Set(group.servers.map((server) => server.id));
+      const alerts = openAlerts.filter((alert) => serverIds.has(alert.serverId)).length;
+      const health = availabilityForServers(group.servers);
+      const attention = currentCounts.offline + currentCounts.dependency_down + currentCounts.probe_stale + alerts;
+      const groupTone = currentCounts.offline || alerts ? "danger" : currentCounts.dependency_down || currentCounts.probe_stale ? "warning" : "success";
+      return {
+        id: group.id,
+        name: group.name,
+        active: active.length,
+        online: currentCounts.online,
+        alerts,
+        attention,
+        tone: groupTone,
+        availability: health
+      };
+    })
+    .sort((left, right) => right.attention - left.attention || left.availability - right.availability || left.name.localeCompare(right.name, "pt-BR"));
+
+  const groupHealthBars = groupHealth
+    .slice(0, 5)
+    .map(
+      (group) => `
+        <button class="simple-health-row ${group.tone}" type="button" data-simple-company-id="${escapeHtml(group.id)}">
+          <span>
+            <strong>${escapeHtml(group.name)}</strong>
+            <small>${group.online}/${group.active} online${group.alerts ? ` · ${group.alerts} alerta${group.alerts === 1 ? "" : "s"}` : ""}</small>
+          </span>
+          <em>${group.availability}%</em>
+          <i aria-hidden="true"><b style="width:${Math.max(0, Math.min(100, group.availability))}%"></b></i>
+        </button>
+      `
+    )
+    .join("");
 
   const attentionList = problemServers.length
     ? problemServers
@@ -1298,6 +1403,51 @@ function renderSimpleDashboard() {
       <article class="success"><span>Online</span><strong>${counts.online}</strong><small>respondendo</small></article>
       <article class="${counts.offline ? "danger" : "success"}"><span>Offline</span><strong>${counts.offline}</strong><small>${openAlerts.length} alertas</small></article>
       <article class="${staleProbes.length ? "warning" : "success"}"><span>Probes</span><strong>${staleProbes.length}</strong><small>sem contato</small></article>
+    </div>
+
+    <div class="simple-chart-grid" aria-label="Graficos rapidos">
+      <section class="simple-panel simple-chart-card simple-chart-wide">
+        <div class="panel-title compact-title">
+          <h2>Falhas nas ultimas 24h</h2>
+          <span>${recentFailures.length} queda${recentFailures.length === 1 ? "" : "s"} · ${recentRecoveries.length} recuperacao${recentRecoveries.length === 1 ? "" : "es"}</span>
+        </div>
+        <div class="simple-failure-chart" aria-label="${recentFailures.length} falhas nas ultimas 24 horas">
+          ${failureBars}
+        </div>
+        <div class="simple-chart-foot">
+          <span>24h atras</span>
+          <strong>${recentFailures.length ? `${recentFailures.length} evento${recentFailures.length === 1 ? "" : "s"}` : "Sem falhas registradas"}</strong>
+          <span>agora</span>
+        </div>
+      </section>
+
+      <section class="simple-panel simple-chart-card">
+        <div class="panel-title compact-title">
+          <h2>Estado atual</h2>
+          <span>${activeServers.length} ativos</span>
+        </div>
+        <div class="simple-status-chart">
+          <div class="simple-status-donut" style="${statusChartStyle}" aria-hidden="true">
+            <strong>${Math.round((simpleStatusCounts.online / statusTotal) * 100)}%</strong>
+          </div>
+          <div class="simple-status-legend">
+            <span><i class="success"></i>${simpleStatusCounts.online} online</span>
+            <span><i class="danger"></i>${simpleStatusCounts.offline} offline</span>
+            <span><i class="warning"></i>${simpleStatusCounts.dependency_down + simpleStatusCounts.probe_stale} atencao</span>
+            <span><i class="neutral"></i>${simpleStatusCounts.unknown + simpleStatusCounts.paused} sem status/pausado</span>
+          </div>
+        </div>
+      </section>
+
+      <section class="simple-panel simple-chart-card">
+        <div class="panel-title compact-title">
+          <h2>Saude por empresa</h2>
+          <span>Prioridade visual</span>
+        </div>
+        <div class="simple-health-list">
+          ${groupHealthBars || `<div class="simple-empty">Nenhuma empresa com servidor ativo.</div>`}
+        </div>
+      </section>
     </div>
 
     <div class="simple-dashboard-grid">
