@@ -10,6 +10,7 @@ Resumo das versoes estaveis publicadas do ServerWatch.
 - Melhora o destaque visual do link ativo e passa a exibir motivo de deteccao e latencia simultaneamente nos cards de IP.
 - Reorganiza o dashboard inicial com colunas mais simetricas, painel de redes monitoradas e rolagem interna para listas longas.
 - Padroniza espacamentos, padding e altura dos paineis do dashboard inicial para reduzir assimetria visual.
+- Adiciona cache-buster nos assets principais para garantir que alteracoes visuais cheguem ao navegador apos deploy.
 - Atualiza o Probe Collector para `0.6.7`.
 
 ## v2.0.0 - 2026-06-03
