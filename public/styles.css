@@ -2215,6 +2215,13 @@ textarea:focus {
   font-weight: 800;
 }
 
+.group-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
 .probe-grid {
   display: grid;
   grid-template-columns: minmax(300px, 0.85fr) minmax(340px, 1fr) minmax(380px, 1.15fr);

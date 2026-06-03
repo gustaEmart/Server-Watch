@@ -2506,6 +2506,8 @@ function renderGroups() {
   els.groupsList.innerHTML = state.groups
     .map((group) => {
       const servers = state.servers.filter((server) => server.groupId === group.id);
+      const links = state.networkLinks.filter((link) => link.groupId === group.id);
+      const devices = state.networkDevices.filter((device) => device.groupId === group.id);
       const activeServers = servers.filter((server) => server.isActive);
       const offline = activeServers.filter((server) => server.currentStatus === "offline").length;
       return `
@@ -2516,10 +2518,19 @@ function renderGroups() {
           </div>
           <div class="group-stats">
             <span>${servers.length} servidores</span>
+            <span>${links.length} links</span>
+            <span>${devices.length} dispositivos</span>
             <span>${activeServers.length} ativos</span>
             <span>${offline} offline</span>
           </div>
-          ${isAdmin() ? `<button class="ghost-button compact" type="button" data-group-action="edit" data-id="${group.id}">Editar</button>` : ""}
+          ${
+            isAdmin()
+              ? `<div class="group-actions">
+                  <button class="ghost-button compact" type="button" data-group-action="edit" data-id="${group.id}">Editar</button>
+                  <button class="danger-button compact" type="button" data-group-action="delete" data-id="${group.id}">Excluir</button>
+                </div>`
+              : ""
+          }
         </article>
       `;
     })
@@ -3623,6 +3634,56 @@ async function submitGroup(event) {
   applySnapshot(snap);
 }
 
+async function deleteGroup(group) {
+  const servers = state.servers.filter((server) => server.groupId === group.id);
+  const links = state.networkLinks.filter((link) => link.groupId === group.id);
+  const devices = state.networkDevices.filter((device) => device.groupId === group.id);
+  const totalRelated = servers.length + links.length + devices.length;
+  let mode = "detach";
+
+  if (totalRelated) {
+    const choice = window.prompt(
+      `A empresa "${group.name}" possui ${servers.length} servidor(es), ${links.length} link(s) e ${devices.length} dispositivo(s) vinculados.\n\n` +
+        "Digite DESVINCULAR para remover apenas a empresa desses cadastros.\n" +
+        "Digite EXCLUIR para remover a empresa e tambem esses cadastros."
+    );
+    if (!choice) return;
+    const normalized = choice.trim().toLowerCase();
+    if (normalized === "excluir") {
+      const confirmed = window.confirm(
+        `Confirmar exclusao de "${group.name}" e tambem ${servers.length} servidor(es), ${links.length} link(s) e ${devices.length} dispositivo(s)?`
+      );
+      if (!confirmed) return;
+      mode = "delete_related";
+    } else if (normalized === "desvincular") {
+      mode = "detach";
+    } else {
+      showToast("Acao cancelada", "Digite exatamente DESVINCULAR ou EXCLUIR.");
+      return;
+    }
+  } else if (!window.confirm(`Excluir a empresa "${group.name}"?`)) {
+    return;
+  }
+
+  try {
+    const result = await api(`/api/groups/${encodeURIComponent(group.id)}`, {
+      method: "DELETE",
+      body: JSON.stringify({ mode })
+    });
+    const snap = await api("/api/snapshot");
+    applySnapshot(snap);
+    const affected = result.affected || {};
+    showToast(
+      "Empresa removida",
+      mode === "delete_related"
+        ? `${group.name} e seus itens vinculados foram removidos.`
+        : `${group.name} foi removida; ${affected.serverCount || 0} servidor(es), ${affected.networkLinkCount || 0} link(s) e ${affected.networkDeviceCount || 0} dispositivo(s) ficaram sem empresa.`
+    );
+  } catch (error) {
+    showToast("Falha ao remover empresa", error.message);
+  }
+}
+
 async function submitUser(event) {
   event.preventDefault();
   const id = els.userId.value;
@@ -4306,6 +4367,7 @@ function bindEvents() {
     if (!button) return;
     const group = state.groups.find((item) => item.id === button.dataset.id);
     if (group && button.dataset.groupAction === "edit") openGroupDialog(group);
+    if (group && button.dataset.groupAction === "delete") deleteGroup(group);
   });
 
   els.serverList.addEventListener("click", (event) => {

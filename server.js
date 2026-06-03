@@ -1000,6 +1000,8 @@ function listedGroups() {
 function publicGroup(group) {
   const servers = listedServers().filter((server) => server.groupId === group.id);
   const activeServers = servers.filter((server) => server.isActive);
+  const networkDevices = listedNetworkDevices().filter((device) => device.groupId === group.id);
+  const networkLinks = listedNetworkLinks().filter((link) => link.groupId === group.id);
   return {
     id: group.id,
     name: group.name,
@@ -1008,6 +1010,8 @@ function publicGroup(group) {
     serverCount: servers.length,
     activeServerCount: activeServers.length,
     offlineCount: activeServers.filter((server) => server.currentStatus === "offline").length,
+    networkDeviceCount: networkDevices.length,
+    networkLinkCount: networkLinks.length,
     createdAt: group.createdAt,
     updatedAt: group.updatedAt,
     deletedAt: group.deletedAt || null
@@ -2592,6 +2596,8 @@ const handleGroups = createGroupsHandler({
   requireAdmin,
   listedGroups,
   listedServers,
+  listedNetworkDevices,
+  listedNetworkLinks,
   publicGroup,
   normalizeGroup,
   addGroup: (group) => state.groups.unshift(group),
