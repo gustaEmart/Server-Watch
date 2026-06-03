@@ -4,14 +4,16 @@ using System.Reflection;
 using System.Security.Principal;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Text.RegularExpressions;
 
 namespace ServerWatchProbeSetup;
 
 internal static class Program
 {
     private const string TaskName = "ServerWatch Probe Collector";
-    private const string ProbeCollectorVersion = "0.6.4";
     private const string NodeRuntimeDownloadPath = "/downloads/probe/node-runtime-windows-x64";
+    private static readonly Lazy<string> EmbeddedProbeCollectorVersion = new(ReadEmbeddedProbeCollectorVersion);
+    private static string ProbeCollectorVersion => EmbeddedProbeCollectorVersion.Value;
     private static readonly string InstallDir = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
         "ServerWatchProbe"
@@ -57,6 +59,21 @@ internal static class Program
         using var identity = WindowsIdentity.GetCurrent();
         var principal = new WindowsPrincipal(identity);
         return principal.IsInRole(WindowsBuiltInRole.Administrator);
+    }
+
+    private static string ReadEmbeddedProbeCollectorVersion()
+    {
+        var assembly = Assembly.GetExecutingAssembly();
+        using var stream = assembly.GetManifestResourceStream("collector.js");
+        if (stream is null)
+        {
+            return "unknown";
+        }
+
+        using var reader = new StreamReader(stream);
+        var collectorSource = reader.ReadToEnd();
+        var match = Regex.Match(collectorSource, """const\s+VERSION\s*=\s*["'](?<version>[^"']+)["']""");
+        return match.Success ? match.Groups["version"].Value : "unknown";
     }
 
     private sealed class InstallerForm : Form

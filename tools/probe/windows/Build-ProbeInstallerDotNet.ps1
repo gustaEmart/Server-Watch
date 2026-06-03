@@ -1,6 +1,7 @@
 param(
   [string]$OutputDir = "dist\probe-installer-dotnet",
-  [switch]$FrameworkDependent
+  [switch]$FrameworkDependent,
+  [switch]$SkipDownloadCopy
 )
 
 $ErrorActionPreference = "Stop"
@@ -39,6 +40,14 @@ if ($LASTEXITCODE -ne 0) {
 $exePath = Join-Path $publishDir "ServerWatchProbeSetup.exe"
 if (-not (Test-Path $exePath)) {
   throw "O instalador nao foi gerado em $exePath."
+}
+
+if (-not $SkipDownloadCopy) {
+  $downloadsDir = Join-Path $repoRoot "downloads"
+  $downloadExePath = Join-Path $downloadsDir "ServerWatchProbeSetup.exe"
+  New-Item -ItemType Directory -Path $downloadsDir -Force | Out-Null
+  Copy-Item -Path $exePath -Destination $downloadExePath -Force
+  Write-Host "Installer copied to $downloadExePath"
 }
 
 Write-Host "Installer generated at $exePath"
