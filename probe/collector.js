@@ -850,7 +850,7 @@ async function pingNetworkLink(target, timeoutMs) {
     .map((sample) => sample.latencyMs)
     .filter((value) => Number.isFinite(Number(value)))
     .map(Number);
-  const jitter = latencies.length > 1
+  const jitter = targetResults.length === 1 && latencies.length > 1
     ? Math.round(
         latencies
           .slice(1)

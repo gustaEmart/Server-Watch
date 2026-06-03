@@ -1170,10 +1170,59 @@ function addNetworkEvent(link, previousStatus, currentStatus, message) {
   return event;
 }
 
+function ipv4ToNumber(value) {
+  const parts = String(value || "").trim().split(".");
+  if (parts.length !== 4) return null;
+  const octets = parts.map((part) => Number(part));
+  if (octets.some((octet) => !Number.isInteger(octet) || octet < 0 || octet > 255)) return null;
+  return octets.reduce((acc, octet) => ((acc << 8) | octet) >>> 0, 0);
+}
+
+function sameIpv4Subnet(left, right, prefixLength) {
+  const leftNumber = ipv4ToNumber(left);
+  const rightNumber = ipv4ToNumber(right);
+  const prefix = Number(prefixLength);
+  if (leftNumber === null || rightNumber === null || !Number.isInteger(prefix) || prefix < 1 || prefix > 32) return false;
+  const mask = prefix === 0 ? 0 : (0xffffffff << (32 - prefix)) >>> 0;
+  return (leftNumber & mask) === (rightNumber & mask);
+}
+
+function reconcileNetworkLinkResult(link, result) {
+  const targetResults = Array.isArray(result.targetResults) ? result.targetResults.slice(0, 20) : [];
+  const targets = Array.isArray(link.targets) ? link.targets : [];
+  const observedPublicIp = String(result.observedPublicIp || "").trim();
+  const enrichedResults = targetResults.map((target) => {
+    const meta = targets.find((item) => item.host === target.targetHost || item.targetHost === target.targetHost) || {};
+    const prefixLength = target.prefixLength ?? meta.prefixLength ?? meta.prefix_length ?? null;
+    const egressActive = Boolean(observedPublicIp && observedPublicIp === target.targetHost);
+    const egressSubnetActive = Boolean(!egressActive && observedPublicIp && prefixLength && sameIpv4Subnet(observedPublicIp, target.targetHost, prefixLength));
+    return {
+      ...target,
+      targetName: target.targetName || meta.name || meta.label || "",
+      prefixLength,
+      egressActive,
+      egressSubnetActive,
+      egressSubnetPrefix: egressSubnetActive ? Number(prefixLength) : target.egressSubnetPrefix ?? null
+    };
+  });
+  const exact = enrichedResults.find((target) => target.egressActive);
+  const subnet = enrichedResults.find((target) => target.egressSubnetActive);
+  const active = exact || subnet || null;
+  return {
+    ...result,
+    targetResults: enrichedResults,
+    activeTargetHost: active?.targetHost || result.activeTargetHost || null,
+    activeTargetName: active?.targetName || result.activeTargetName || "",
+    activeDetection: exact ? "egress_ip" : subnet ? "egress_subnet" : result.activeDetection || "",
+    jitterMs: enrichedResults.length > 1 ? null : result.jitterMs ?? null
+  };
+}
+
 function networkCandidateStatus(link, result) {
   const packetLoss = Number(result.packetLossPercent ?? (result.online ? 0 : 100));
   const latency = Number(result.latencyMs ?? 0);
-  const jitter = Number(result.jitterMs ?? 0);
+  const hasMultipleTargets = Array.isArray(result.targetResults) && result.targetResults.length > 1;
+  const jitter = hasMultipleTargets ? 0 : Number(result.jitterMs ?? 0);
   if (!result.online || packetLoss >= 100) return "offline";
   if (
     packetLoss > Number(link.degradedPacketLossPercent || 10) ||
@@ -1187,20 +1236,21 @@ function networkCandidateStatus(link, result) {
 
 function applyNetworkLinkResult(link, result, probeId) {
   if (!link || link.deletedAt || link.probeId !== probeId) return false;
+  const adjustedResult = reconcileNetworkLinkResult(link, result);
   const checkedAt = result.checkedAt || nowIso();
   const previousStatus = link.currentStatus || "unknown";
-  const candidate = networkCandidateStatus(link, result);
+  const candidate = networkCandidateStatus(link, adjustedResult);
   link.lastProbeSeenAt = nowIso();
   link.lastCheckedAt = checkedAt;
-  link.lastLatencyMs = result.latencyMs ?? null;
-  link.lastPacketLossPercent = result.packetLossPercent ?? (result.online ? 0 : 100);
-  link.lastJitterMs = result.jitterMs ?? null;
-  link.lastError = result.error || null;
-  link.activeTargetHost = result.activeTargetHost || null;
-  link.activeTargetName = result.activeTargetName || "";
-  link.activeDetection = result.activeDetection || "";
-  link.observedPublicIp = result.observedPublicIp || null;
-  link.targetResults = Array.isArray(result.targetResults) ? result.targetResults.slice(0, 20) : [];
+  link.lastLatencyMs = adjustedResult.latencyMs ?? null;
+  link.lastPacketLossPercent = adjustedResult.packetLossPercent ?? (adjustedResult.online ? 0 : 100);
+  link.lastJitterMs = adjustedResult.jitterMs ?? null;
+  link.lastError = adjustedResult.error || null;
+  link.activeTargetHost = adjustedResult.activeTargetHost || null;
+  link.activeTargetName = adjustedResult.activeTargetName || "";
+  link.activeDetection = adjustedResult.activeDetection || "";
+  link.observedPublicIp = adjustedResult.observedPublicIp || null;
+  link.targetResults = adjustedResult.targetResults;
   link.forceCheckAt = null;
 
   if (candidate === "offline") {

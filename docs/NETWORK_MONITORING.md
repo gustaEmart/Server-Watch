@@ -177,6 +177,7 @@ Regra inicial:
 - se apenas um gateway/alvo responder, este alvo vira `activeTargetHost` com `activeDetection = single_reachable`;
 - se mais de um alvo responder e nao houver correspondencia com o IP publico de saida, o alvo com menor latencia vira `activeTargetHost` com `activeDetection = ping_best`;
 - se nenhum IP responder em 3 ciclos consecutivos, o link vira `offline`.
+- jitter nao deve ser calculado comparando gateways diferentes; em links com multiplos alvos, latencia/perda continuam validas, mas jitter e ignorado para evitar degradacao falsa.
 
 Observacao operacional:
 
