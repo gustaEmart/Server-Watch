@@ -4636,8 +4636,13 @@ body {
 }
 
 .simple-dashboard {
-  --simple-gap: 12px;
+  --simple-gap: 14px;
   --simple-panel-pad: 14px;
+  display: grid;
+  gap: var(--simple-gap);
+}
+
+#simpleDashboardContent {
   display: grid;
   gap: var(--simple-gap);
 }

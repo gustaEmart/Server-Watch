@@ -11,6 +11,7 @@ Resumo das versoes estaveis publicadas do ServerWatch.
 - Reorganiza o dashboard inicial com colunas mais simetricas, painel de redes monitoradas e rolagem interna para listas longas.
 - Padroniza espacamentos, padding e altura dos paineis do dashboard inicial para reduzir assimetria visual.
 - Adiciona cache-buster nos assets principais para garantir que alteracoes visuais cheguem ao navegador apos deploy.
+- Corrige o espacamento entre os blocos reais do dashboard aplicando o ritmo visual no container de conteudo renderizado.
 - Atualiza o Probe Collector para `0.6.7`.
 
 ## v2.0.0 - 2026-06-03
