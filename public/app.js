@@ -1346,6 +1346,29 @@ function renderSimpleDashboard() {
       return (order[left.displayStatus || left.currentStatus] ?? 3) - (order[right.displayStatus || right.currentStatus] ?? 3);
     })
     .slice(0, 4);
+  const networkRows = networkLinks
+    .slice()
+    .sort((left, right) => {
+      const order = { offline: 0, probe_unreachable: 1, degraded: 2, unknown: 3, online: 4, paused: 5 };
+      return (order[left.displayStatus || left.currentStatus] ?? 6) - (order[right.displayStatus || right.currentStatus] ?? 6) || left.name.localeCompare(right.name, "pt-BR");
+    });
+  const networkOverviewList = networkRows.length
+    ? networkRows
+        .map((link) => {
+          const status = link.displayStatus || link.currentStatus || "unknown";
+          return `
+            <button class="simple-network-row ${status}" type="button" data-simple-network-link-id="${escapeHtml(link.id)}">
+              <span>
+                <strong>${escapeHtml(link.name)}</strong>
+                <small>${escapeHtml([link.groupName || "Sem empresa", activeNetworkTargetLabel(link)].filter(Boolean).join(" · "))}</small>
+              </span>
+              <em>${networkStatusLabel(status)}</em>
+              <small>${link.lastLatencyMs ?? "-"} ms</small>
+            </button>
+          `;
+        })
+        .join("")
+    : `<div class="simple-empty">Nenhum link de rede cadastrado.</div>`;
   const availability = Number(state.summary.availability24h ?? availabilityForServers(activeServers));
   const tone = counts.offline || openAlerts.length || networkCounts.offline
     ? "danger"
@@ -1564,11 +1587,16 @@ function renderSimpleDashboard() {
 
       <section class="simple-panel simple-chart-card">
         <div class="panel-title compact-title">
-          <h2>Saude por empresa</h2>
-          <span>Prioridade visual</span>
+          <h2>Redes monitoradas</h2>
+          <span>${networkLinks.length} link${networkLinks.length === 1 ? "" : "s"}</span>
         </div>
-        <div class="simple-health-list">
-          ${groupHealthBars || `<div class="simple-empty">Nenhuma empresa com servidor ativo.</div>`}
+        <div class="simple-network-summary">
+          <article><strong>${networkCounts.online || 0}</strong><span>online</span></article>
+          <article class="${networkCounts.degraded ? "warning" : ""}"><strong>${networkCounts.degraded || 0}</strong><span>degradados</span></article>
+          <article class="${networkCounts.offline ? "danger" : ""}"><strong>${networkCounts.offline || 0}</strong><span>offline</span></article>
+        </div>
+        <div class="simple-scroll-list simple-network-list">
+          ${networkOverviewList}
         </div>
       </section>
     </div>
@@ -1579,15 +1607,17 @@ function renderSimpleDashboard() {
           <h2>Precisa de atencao</h2>
           <span>${problemServers.length ? `${problemServers.length} itens principais` : "Sem acao imediata"}</span>
         </div>
-        <div class="simple-attention-list">${attentionList}</div>
+        <div class="simple-attention-list simple-scroll-list">${attentionList}</div>
       </section>
 
       <section class="simple-panel">
         <div class="panel-title compact-title">
-          <h2>Links de rede</h2>
-          <span>${networkCounts.online}/${networkLinks.length} online</span>
+          <h2>Saude por empresa</h2>
+          <span>Prioridade visual</span>
         </div>
-        <div class="simple-attention-list">${networkAttentionList}</div>
+        <div class="simple-health-list simple-scroll-list">
+          ${groupHealthBars || `<div class="simple-empty">Nenhuma empresa com servidor ativo.</div>`}
+        </div>
       </section>
 
       <section class="simple-panel">
@@ -1595,7 +1625,7 @@ function renderSimpleDashboard() {
           <h2>Clientes</h2>
           <span>Saude por empresa</span>
         </div>
-        <div class="simple-client-grid">${groupRows || `<div class="simple-empty">Nenhuma empresa com servidor ativo.</div>`}</div>
+        <div class="simple-client-grid simple-scroll-list">${groupRows || `<div class="simple-empty">Nenhuma empresa com servidor ativo.</div>`}</div>
       </section>
     </div>
 
