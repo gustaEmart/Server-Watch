@@ -151,7 +151,9 @@ probe_unreachable
 
 ### Offline
 
-- alvo nao respondeu apos `failure_threshold` tentativas consecutivas.
+- alvo nao respondeu apos 3 pings consecutivos.
+- o padrao inicial para links deve ser uma checagem a cada 10 segundos.
+- com o padrao `10s x 3 falhas`, um link cai para `offline` apos aproximadamente 30 segundos sem resposta.
 
 ### Probe sem contato
 
@@ -174,10 +176,10 @@ GET /api/probe/config
 
 3. Backend retorna servidores e links atribuIds ao probe.
 4. Probe executa checagens locais.
-5. Probe envia resultados:
+5. Probe envia resultados junto dos resultados normais de servidores:
 
 ```text
-POST /api/probe/network-results
+POST /api/probe/results
 ```
 
 Payload sugerido:
@@ -379,8 +381,8 @@ PUT    /api/network/links/:id
 DELETE /api/network/links/:id
 
 GET    /api/network/events
-POST   /api/probe/network-results
-GET    /api/probe/config
+POST   /api/probe/results
+GET    /api/probe/targets
 ```
 
 Regras:
@@ -460,7 +462,7 @@ Recomendacao:
 3. Criar pagina `/networks` com lista e cards simples.
 4. Expandir configuracao enviada ao probe.
 5. Implementar checagem de links por ping no probe.
-6. Receber resultados em `/api/probe/network-results`.
+6. Receber resultados de rede em `/api/probe/results`.
 7. Gerar eventos e alertas para link offline/degradado/recuperado.
 8. Criar graficos 24h na pagina Redes.
 9. Validar tudo em Docker com MongoDB.
@@ -474,4 +476,3 @@ Recomendacao:
 - descoberta automatica completa;
 - API especifica por fabricante;
 - coleta SNMPv3 completa com criptografia de segredos.
-

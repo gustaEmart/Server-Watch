@@ -53,6 +53,7 @@
         <nav class="nav-tabs" aria-label="Navegacao principal">
           <a class="nav-tab active" href="/dashboard" data-view="dashboard">Dashboard</a>
           <a class="nav-tab" href="/servidores" data-view="servers">Servidores</a>
+          <a class="nav-tab" href="/redes" data-view="networks">Redes</a>
           <a class="nav-tab" href="/alertas" data-view="alerts">Alertas</a>
           <a class="nav-tab" href="/historico" data-view="history">Historico</a>
           <a class="nav-tab" href="/configuracoes" data-view="settings">Configuracoes</a>
@@ -234,6 +235,61 @@
                 <span>Selecione um servidor para abrir a ficha operacional completa.</span>
               </div>
             </section>
+          </div>
+        </section>
+
+        <section class="view" id="networksView">
+          <div class="wide-panel">
+            <div class="panel-title">
+              <div>
+                <h2>Redes e links</h2>
+                <span id="networkLinkCount">0 links monitorados</span>
+              </div>
+              <div class="panel-title-actions admin-only">
+                <button class="ghost-button compact" id="openNetworkDeviceForm" type="button">Adicionar dispositivo</button>
+                <button class="primary-button compact" id="openNetworkLinkForm" type="button">Adicionar link</button>
+              </div>
+            </div>
+
+            <div class="network-summary-grid" aria-label="Resumo dos links">
+              <article class="network-summary-card">
+                <span>Online</span>
+                <strong id="networkOnlineCount">0</strong>
+                <small>links respondendo</small>
+              </article>
+              <article class="network-summary-card warning">
+                <span>Degradados</span>
+                <strong id="networkDegradedCount">0</strong>
+                <small>latencia ou perda alta</small>
+              </article>
+              <article class="network-summary-card danger">
+                <span>Offline</span>
+                <strong id="networkOfflineCount">0</strong>
+                <small>falha confirmada</small>
+              </article>
+              <article class="network-summary-card warning">
+                <span>Probe sem contato</span>
+                <strong id="networkProbeStaleCount">0</strong>
+                <small>coleta indisponivel</small>
+              </article>
+            </div>
+
+            <div class="network-layout">
+              <section class="network-list-panel">
+                <div class="panel-title compact-title">
+                  <h3>Links por cliente</h3>
+                  <span id="networkDeviceCount">0 dispositivos</span>
+                </div>
+                <div class="network-link-list" id="networkLinksList"></div>
+              </section>
+
+              <aside class="network-detail-panel" id="networkDetailPanel">
+                <div class="empty-state compact-empty">
+                  <strong>Nenhum link selecionado</strong>
+                  <span>Selecione um link para ver alvo, probe, latencia, perda e ultimos eventos.</span>
+                </div>
+              </aside>
+            </div>
           </div>
         </section>
 
@@ -678,6 +734,150 @@
         <div class="dialog-actions">
           <button class="ghost-button" type="button" id="cancelForm">Cancelar</button>
           <button class="primary-button" type="submit">Salvar servidor</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog class="server-dialog" id="networkDeviceDialog">
+      <form method="dialog" id="networkDeviceForm">
+        <div class="dialog-header">
+          <div>
+            <p class="eyebrow">Redes</p>
+            <h2 id="networkDeviceDialogTitle">Adicionar dispositivo</h2>
+          </div>
+          <button class="icon-button" value="cancel" type="button" id="closeNetworkDeviceDialog" title="Fechar">x</button>
+        </div>
+
+        <input type="hidden" id="networkDeviceId" />
+        <div class="form-grid">
+          <label>
+            Nome
+            <input id="networkDeviceName" required placeholder="MikroTik Matriz" />
+          </label>
+          <label>
+            Fabricante
+            <select id="networkDeviceVendor">
+              <option value="mikrotik">MikroTik</option>
+              <option value="pfsense">pfSense</option>
+              <option value="fortigate">Fortigate</option>
+              <option value="generic">Generico</option>
+              <option value="other">Outro</option>
+            </select>
+          </label>
+          <label>
+            Modelo
+            <input id="networkDeviceModel" placeholder="RB4011, CCR, Fortigate 60F" />
+          </label>
+          <label>
+            IP de gerenciamento
+            <input id="networkDeviceManagementIp" placeholder="192.168.88.1" />
+          </label>
+          <label>
+            Empresa
+            <select id="networkDeviceGroup">
+              <option value="">Sem empresa</option>
+            </select>
+          </label>
+          <label>
+            Probe responsavel
+            <select id="networkDeviceProbe"></select>
+          </label>
+        </div>
+
+        <label>
+          Observacoes
+          <textarea id="networkDeviceNotes" rows="3" placeholder="Contexto operacional ou acesso local"></textarea>
+        </label>
+
+        <div class="dialog-actions">
+          <button class="ghost-button" type="button" id="cancelNetworkDeviceForm">Cancelar</button>
+          <button class="primary-button" type="submit">Salvar dispositivo</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog class="server-dialog" id="networkLinkDialog">
+      <form method="dialog" id="networkLinkForm">
+        <div class="dialog-header">
+          <div>
+            <p class="eyebrow">Links</p>
+            <h2 id="networkLinkDialogTitle">Adicionar link</h2>
+          </div>
+          <button class="icon-button" value="cancel" type="button" id="closeNetworkLinkDialog" title="Fechar">x</button>
+        </div>
+
+        <input type="hidden" id="networkLinkId" />
+        <div class="form-grid">
+          <label>
+            Nome do link
+            <input id="networkLinkName" required placeholder="Vivo Fibra" />
+          </label>
+          <label>
+            Operadora
+            <input id="networkLinkProvider" placeholder="Vivo, Claro, Algar" />
+          </label>
+          <label>
+            Dispositivo
+            <select id="networkLinkDevice">
+              <option value="">Sem dispositivo</option>
+            </select>
+          </label>
+          <label>
+            Tipo
+            <select id="networkLinkType">
+              <option value="internet">Internet</option>
+              <option value="mpls">MPLS</option>
+              <option value="vpn">VPN</option>
+              <option value="fiber">Fibra</option>
+              <option value="radio">Radio</option>
+              <option value="cellular">Celular</option>
+              <option value="other">Outro</option>
+            </select>
+          </label>
+          <label>
+            Alvo monitorado
+            <input id="networkLinkTarget" required placeholder="1.1.1.1" />
+          </label>
+          <label>
+            Interface
+            <input id="networkLinkInterface" placeholder="wan1, ether1, pppoe-out1" />
+          </label>
+          <label>
+            Empresa
+            <select id="networkLinkGroup">
+              <option value="">Sem empresa</option>
+            </select>
+          </label>
+          <label>
+            Probe responsavel
+            <select id="networkLinkProbe"></select>
+          </label>
+          <label>
+            Intervalo (segundos)
+            <input id="networkLinkInterval" type="number" min="10" max="3600" value="10" />
+          </label>
+          <label>
+            Falhas para offline
+            <input id="networkLinkThreshold" type="number" min="3" max="10" value="3" />
+          </label>
+          <label>
+            Latencia degradada (ms)
+            <input id="networkLinkLatencyLimit" type="number" min="1" max="10000" value="120" />
+          </label>
+          <label>
+            Perda degradada (%)
+            <input id="networkLinkLossLimit" type="number" min="0" max="100" value="10" />
+          </label>
+        </div>
+
+        <label>
+          Observacoes
+          <textarea id="networkLinkNotes" rows="3" placeholder="Contrato, IP publico esperado ou observacoes"></textarea>
+        </label>
+
+        <div class="dialog-actions">
+          <button class="ghost-button" type="button" id="cancelNetworkLinkForm">Cancelar</button>
+          <button class="primary-button" type="submit">Salvar link</button>
         </div>
       </form>
     </dialog>

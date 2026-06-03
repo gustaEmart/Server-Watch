@@ -8,6 +8,7 @@ import { createDownloadHandler } from "./routes/downloads.js";
 import { createGroupsHandler } from "./routes/groups.js";
 import { createHealthHandler } from "./routes/health.js";
 import { createMetaHandler } from "./routes/meta.js";
+import { createNetworkHandler } from "./routes/network.js";
 import { createProbesHandler } from "./routes/probes.js";
 import { createServerCheckHandler, createServerCreateHandler, createServerMutationHandler, createServerReadHandler } from "./routes/servers.js";
 import { createSettingsHandler } from "./routes/settings.js";
@@ -83,11 +84,14 @@ const MAX_HISTORY_PER_SERVER = 500;
 const CHECK_SOURCES = new Set(["serverwatch", "probe"]);
 const NODE_TYPES = new Set(["server", "physical", "hypervisor", "vm", "service"]);
 const INFRASTRUCTURE_PLATFORMS = new Set(["none", "proxmox", "vmware", "hyper-v", "bare-metal", "cloud", "linux", "windows", "other"]);
+const NETWORK_DEVICE_VENDORS = new Set(["mikrotik", "pfsense", "fortigate", "generic", "other"]);
+const NETWORK_LINK_TYPES = new Set(["internet", "mpls", "vpn", "radio", "fiber", "cellular", "other"]);
+const NETWORK_LINK_STATUSES = new Set(["online", "degraded", "offline", "unknown"]);
 const SESSION_COOKIE = "sw_session";
 const SESSION_TTL_MS = 8 * 60 * 60 * 1000;
 const DEFAULT_ADMIN_EMAIL = process.env.SERVERWATCH_ADMIN_EMAIL || "admin@serverwatch.local";
 const DEFAULT_ADMIN_PASSWORD = process.env.SERVERWATCH_ADMIN_PASSWORD || "admin123";
-const PROBE_COLLECTOR_VERSION = "0.6.4";
+const PROBE_COLLECTOR_VERSION = "0.6.5";
 const PROBE_UPDATE_SUPPORTED_PLATFORMS = new Set(["linux"]);
 
 const sessions = new Map();
@@ -95,6 +99,9 @@ let state = {
   servers: [],
   groups: [],
   probes: [],
+  networkDevices: [],
+  networkLinks: [],
+  networkEvents: [],
   users: [],
   events: [],
   alerts: [],
@@ -194,8 +201,8 @@ function normalizeServer(payload, existing = {}) {
     throw error;
   }
 
-  const interval = Number(payload.checkInterval ?? payload.check_interval ?? existing.checkInterval ?? state.settings.defaultInterval);
-  const threshold = Number(payload.failureThreshold ?? payload.failure_threshold ?? existing.failureThreshold ?? state.settings.defaultFailureThreshold);
+  const interval = Number(payload.checkInterval ?? payload.check_interval ?? existing.checkInterval ?? 10);
+  const threshold = Number(payload.failureThreshold ?? payload.failure_threshold ?? existing.failureThreshold ?? 3);
   const rawGroupId = payload.groupId ?? payload.group_id ?? existing.groupId ?? null;
   let groupId = rawGroupId && rawGroupId !== "none" ? String(rawGroupId) : null;
   const checkSource = normalizeCheckSource(payload.checkSource ?? payload.check_source, existing.checkSource);
@@ -273,6 +280,142 @@ function normalizeServer(payload, existing = {}) {
     tags: normalizeTags(payload.tags ?? existing.tags ?? []),
     isActive: Boolean(payload.isActive ?? payload.is_active ?? existing.isActive ?? true),
     updatedAt: nowIso()
+  };
+}
+
+function normalizeNetworkVendor(value, fallback = "generic") {
+  const vendor = String(value || fallback || "generic").trim().toLowerCase();
+  return NETWORK_DEVICE_VENDORS.has(vendor) ? vendor : "generic";
+}
+
+function normalizeNetworkLinkType(value, fallback = "internet") {
+  const type = String(value || fallback || "internet").trim().toLowerCase();
+  return NETWORK_LINK_TYPES.has(type) ? type : "internet";
+}
+
+function normalizeOptionalHost(value, fieldName = "host") {
+  const host = String(value || "").trim();
+  if (!host) return "";
+  if (!/^[a-zA-Z0-9._:-]+$/.test(host)) {
+    const error = new Error(`${fieldName} invalido. Use apenas letras, numeros, ponto, hifen, underline ou dois-pontos.`);
+    error.statusCode = 400;
+    throw error;
+  }
+  return host;
+}
+
+function normalizeNetworkDevice(payload, existing = {}) {
+  const name = String(payload.name || existing.name || "").trim();
+  if (!name) {
+    const error = new Error("Informe o nome do dispositivo de rede.");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const rawGroupId = payload.groupId ?? payload.group_id ?? existing.groupId ?? null;
+  const groupId = rawGroupId && rawGroupId !== "none" ? String(rawGroupId) : null;
+  if (groupId && !listedGroups().some((group) => group.id === groupId)) {
+    const error = new Error("Empresa/grupo informado nao existe.");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const rawProbeId = payload.probeId ?? payload.probe_id ?? existing.probeId ?? "";
+  const probeId = String(rawProbeId || "").trim();
+  if (probeId && !state.probes.some((probe) => probe.id === probeId && !probe.deletedAt)) {
+    const error = new Error("Probe collector nao encontrado.");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  return {
+    name,
+    vendor: normalizeNetworkVendor(payload.vendor, existing.vendor),
+    model: String(payload.model || existing.model || "").trim(),
+    managementIp: normalizeOptionalHost(payload.managementIp ?? payload.management_ip ?? existing.managementIp, "IP de gerenciamento"),
+    groupId,
+    probeId: probeId || null,
+    environment: String(payload.environment || existing.environment || "production").trim() || "production",
+    tags: normalizeTags(payload.tags ?? existing.tags ?? []),
+    notes: String(payload.notes || existing.notes || "").trim(),
+    isActive: payload.isActive ?? payload.is_active ?? existing.isActive ?? true
+  };
+}
+
+function normalizeNetworkLink(payload, existing = {}) {
+  const name = String(payload.name || existing.name || "").trim();
+  if (!name) {
+    const error = new Error("Informe o nome do link.");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const rawDeviceId = payload.networkDeviceId ?? payload.network_device_id ?? existing.networkDeviceId ?? null;
+  const networkDeviceId = rawDeviceId && rawDeviceId !== "none" ? String(rawDeviceId) : null;
+  const device = networkDeviceId
+    ? (state.networkDevices || []).find((item) => item.id === networkDeviceId && !item.deletedAt)
+    : null;
+  if (networkDeviceId && !device) {
+    const error = new Error("Dispositivo de rede informado nao existe.");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const rawGroupId = payload.groupId ?? payload.group_id ?? existing.groupId ?? device?.groupId ?? null;
+  const groupId = rawGroupId && rawGroupId !== "none" ? String(rawGroupId) : null;
+  if (groupId && !listedGroups().some((group) => group.id === groupId)) {
+    const error = new Error("Empresa/grupo informado nao existe.");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const probeId = String(payload.probeId ?? payload.probe_id ?? existing.probeId ?? device?.probeId ?? "").trim();
+  if (!probeId) {
+    const error = new Error("Selecione um probe para monitorar este link.");
+    error.statusCode = 400;
+    throw error;
+  }
+  if (!state.probes.some((probe) => probe.id === probeId && !probe.deletedAt)) {
+    const error = new Error("Probe collector nao encontrado.");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const targetHost = normalizeOptionalHost(payload.targetHost ?? payload.target_host ?? existing.targetHost, "Alvo do link");
+  if (!targetHost) {
+    const error = new Error("Informe o alvo de monitoramento do link.");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const interval = Number(payload.checkInterval ?? payload.check_interval ?? existing.checkInterval ?? state.settings.defaultInterval);
+  const threshold = Number(payload.failureThreshold ?? payload.failure_threshold ?? existing.failureThreshold ?? state.settings.defaultFailureThreshold);
+  const degradedLatencyMs = Number(payload.degradedLatencyMs ?? payload.degraded_latency_ms ?? existing.degradedLatencyMs ?? 120);
+  const degradedPacketLossPercent = Number(
+    payload.degradedPacketLossPercent ?? payload.degraded_packet_loss_percent ?? existing.degradedPacketLossPercent ?? 10
+  );
+  const degradedJitterMs = Number(payload.degradedJitterMs ?? payload.degraded_jitter_ms ?? existing.degradedJitterMs ?? 40);
+
+  return {
+    name,
+    networkDeviceId,
+    groupId,
+    provider: String(payload.provider || existing.provider || "").trim(),
+    linkType: normalizeNetworkLinkType(payload.linkType ?? payload.link_type, existing.linkType),
+    interfaceName: String(payload.interfaceName ?? payload.interface_name ?? existing.interfaceName ?? "").trim(),
+    targetHost,
+    expectedPublicIp: normalizeOptionalHost(payload.expectedPublicIp ?? payload.expected_public_ip ?? existing.expectedPublicIp, "IP publico esperado"),
+    contractedDownloadMbps: Math.max(0, Number(payload.contractedDownloadMbps ?? payload.contracted_download_mbps ?? existing.contractedDownloadMbps ?? 0) || 0),
+    contractedUploadMbps: Math.max(0, Number(payload.contractedUploadMbps ?? payload.contracted_upload_mbps ?? existing.contractedUploadMbps ?? 0) || 0),
+    probeId,
+    checkInterval: Math.max(10, Math.min(3600, Number.isFinite(interval) ? interval : 10)),
+    failureThreshold: Math.max(3, Math.min(10, Number.isFinite(threshold) ? threshold : 3)),
+    degradedLatencyMs: Math.max(1, Math.min(10000, Number.isFinite(degradedLatencyMs) ? degradedLatencyMs : 120)),
+    degradedPacketLossPercent: Math.max(0, Math.min(100, Number.isFinite(degradedPacketLossPercent) ? degradedPacketLossPercent : 10)),
+    degradedJitterMs: Math.max(0, Math.min(10000, Number.isFinite(degradedJitterMs) ? degradedJitterMs : 40)),
+    sampleCount: 1,
+    isActive: payload.isActive ?? payload.is_active ?? existing.isActive ?? true,
+    notes: String(payload.notes || existing.notes || "").trim()
   };
 }
 
@@ -519,6 +662,9 @@ function createSeedState() {
       }
     ],
     groups: [],
+    networkDevices: [],
+    networkLinks: [],
+    networkEvents: [],
     users: [],
     events: [],
     alerts: []
@@ -539,6 +685,9 @@ async function loadState() {
     ...parsed,
     groups: Array.isArray(parsed.groups) ? parsed.groups : [],
     probes: Array.isArray(parsed.probes) ? parsed.probes : [],
+    networkDevices: Array.isArray(parsed.networkDevices) ? parsed.networkDevices : [],
+    networkLinks: Array.isArray(parsed.networkLinks) ? parsed.networkLinks : [],
+    networkEvents: Array.isArray(parsed.networkEvents) ? parsed.networkEvents : [],
     probeUpdateRequests: Array.isArray(parsed.probeUpdateRequests) ? parsed.probeUpdateRequests : [],
     users: Array.isArray(parsed.users) ? parsed.users : [],
     settings: { ...state.settings, ...(parsed.settings || {}) }
@@ -576,13 +725,35 @@ async function loadState() {
     ...user,
     mustChangePassword: user.mustChangePassword === true
   }));
+  state.networkDevices = (state.networkDevices || []).map((device) => ({
+    ...device,
+    vendor: normalizeNetworkVendor(device.vendor),
+    groupId: device.groupId || null,
+    probeId: device.probeId || null,
+    isActive: device.isActive !== false
+  }));
+  state.networkLinks = (state.networkLinks || []).map((link) => ({
+    ...link,
+    networkDeviceId: link.networkDeviceId || null,
+    groupId: link.groupId || null,
+    probeId: link.probeId || null,
+    linkType: normalizeNetworkLinkType(link.linkType),
+    currentStatus: NETWORK_LINK_STATUSES.has(link.currentStatus) ? link.currentStatus : "unknown",
+    previousStatus: NETWORK_LINK_STATUSES.has(link.previousStatus) ? link.previousStatus : "unknown",
+    consecutiveFailures: link.consecutiveFailures || 0,
+    checkInterval: Math.max(10, Number(link.checkInterval || 10)),
+    failureThreshold: Math.max(3, Number(link.failureThreshold || 3)),
+    sampleCount: Math.max(1, Number(link.sampleCount || 1)),
+    isActive: link.isActive !== false
+  }));
   if (needsSave) await persistState();
 }
 
 async function persistState() {
   const payload = {
     ...state,
-    servers: state.servers.map(({ nextCheckAt, nextProbeFallbackCheckAt, ...server }) => server)
+    servers: state.servers.map(({ nextCheckAt, nextProbeFallbackCheckAt, ...server }) => server),
+    networkLinks: (state.networkLinks || []).map(({ nextCheckAt, ...link }) => link)
   };
   await storage.saveState(payload);
 }
@@ -756,6 +927,206 @@ function publicGroup(group) {
   };
 }
 
+function listedNetworkDevices() {
+  return (state.networkDevices || []).filter((device) => !device.deletedAt);
+}
+
+function listedNetworkLinks() {
+  return (state.networkLinks || []).filter((link) => !link.deletedAt);
+}
+
+function networkLinkStaleAfterMs(link) {
+  const intervalMs = Math.max(5, Number(link.checkInterval || state.settings.defaultInterval || 10)) * 1000;
+  const threshold = Math.max(1, Number(link.failureThreshold || state.settings.defaultFailureThreshold || 2));
+  const graceMs = Math.max(15, Number(state.settings.probeStaleGraceSeconds || 45)) * 1000;
+  return Math.max(graceMs, intervalMs * (threshold + 1) + 15000);
+}
+
+function networkProbeConnection(link) {
+  const probe = (state.probes || []).find((item) => item.id === link.probeId && !item.deletedAt);
+  const lastSeenMs = newestTimestamp(probe?.lastSeenAt, link.lastProbeSeenAt);
+  const staleAfterMs = networkLinkStaleAfterMs(link);
+  return {
+    status: lastSeenMs && Date.now() - lastSeenMs > staleAfterMs ? "stale" : lastSeenMs ? "online" : "unknown",
+    lastSeenAt: lastSeenMs ? new Date(lastSeenMs).toISOString() : null,
+    staleAfterSeconds: Math.round(staleAfterMs / 1000)
+  };
+}
+
+function publicNetworkDevice(device) {
+  const group = device.groupId ? listedGroups().find((item) => item.id === device.groupId) : null;
+  const links = listedNetworkLinks().filter((link) => link.networkDeviceId === device.id);
+  return {
+    id: device.id,
+    name: device.name,
+    vendor: device.vendor || "generic",
+    model: device.model || "",
+    managementIp: device.managementIp || "",
+    groupId: device.groupId || null,
+    groupName: group?.name || null,
+    probeId: device.probeId || null,
+    environment: device.environment || "production",
+    tags: Array.isArray(device.tags) ? device.tags : [],
+    notes: device.notes || "",
+    isActive: device.isActive !== false,
+    linkCount: links.length,
+    offlineLinkCount: links.filter((link) => publicNetworkLink(link).displayStatus === "offline").length,
+    degradedLinkCount: links.filter((link) => publicNetworkLink(link).displayStatus === "degraded").length,
+    createdAt: device.createdAt,
+    updatedAt: device.updatedAt,
+    deletedAt: device.deletedAt || null
+  };
+}
+
+function publicNetworkLink(link) {
+  const group = link.groupId ? listedGroups().find((item) => item.id === link.groupId) : null;
+  const device = link.networkDeviceId ? listedNetworkDevices().find((item) => item.id === link.networkDeviceId) : null;
+  const probe = (state.probes || []).find((item) => item.id === link.probeId && !item.deletedAt);
+  const probeConnection = networkProbeConnection(link);
+  const displayStatus = link.isActive === false
+    ? "paused"
+    : probeConnection.status === "stale"
+    ? "probe_unreachable"
+    : link.currentStatus || "unknown";
+  return {
+    id: link.id,
+    name: link.name,
+    networkDeviceId: link.networkDeviceId || null,
+    networkDeviceName: device?.name || null,
+    vendor: device?.vendor || "generic",
+    groupId: link.groupId || null,
+    groupName: group?.name || null,
+    provider: link.provider || "",
+    linkType: link.linkType || "internet",
+    interfaceName: link.interfaceName || "",
+    targetHost: link.targetHost,
+    expectedPublicIp: link.expectedPublicIp || "",
+    contractedDownloadMbps: link.contractedDownloadMbps || 0,
+    contractedUploadMbps: link.contractedUploadMbps || 0,
+    probeId: link.probeId || null,
+    probeName: probe?.name || link.probeId || null,
+    probeStatus: probeConnection.status,
+    probeLastSeenAt: probeConnection.lastSeenAt,
+    probeStaleAfterSeconds: probeConnection.staleAfterSeconds,
+    checkInterval: link.checkInterval,
+    failureThreshold: link.failureThreshold,
+    degradedLatencyMs: link.degradedLatencyMs,
+    degradedPacketLossPercent: link.degradedPacketLossPercent,
+    degradedJitterMs: link.degradedJitterMs,
+    currentStatus: link.currentStatus || "unknown",
+    displayStatus,
+    previousStatus: link.previousStatus || "unknown",
+    statusChangedAt: link.statusChangedAt || link.createdAt,
+    lastCheckedAt: link.lastCheckedAt || null,
+    lastLatencyMs: link.lastLatencyMs ?? null,
+    lastPacketLossPercent: link.lastPacketLossPercent ?? null,
+    lastJitterMs: link.lastJitterMs ?? null,
+    lastError: link.lastError || null,
+    lastProbeSeenAt: link.lastProbeSeenAt || null,
+    consecutiveFailures: link.consecutiveFailures || 0,
+    forceCheckAt: link.forceCheckAt || null,
+    isActive: link.isActive !== false,
+    notes: link.notes || "",
+    createdAt: link.createdAt,
+    updatedAt: link.updatedAt,
+    deletedAt: link.deletedAt || null
+  };
+}
+
+function networkSummary() {
+  const links = listedNetworkLinks().filter((link) => link.isActive !== false);
+  const publicLinks = links.map(publicNetworkLink);
+  return {
+    totalLinks: links.length,
+    online: publicLinks.filter((link) => link.displayStatus === "online").length,
+    degraded: publicLinks.filter((link) => link.displayStatus === "degraded").length,
+    offline: publicLinks.filter((link) => link.displayStatus === "offline").length,
+    probeUnreachable: publicLinks.filter((link) => link.displayStatus === "probe_unreachable").length,
+    devices: listedNetworkDevices().filter((device) => device.isActive !== false).length,
+    lastEventAt: state.networkEvents?.[0]?.createdAt || null
+  };
+}
+
+function addNetworkEvent(link, previousStatus, currentStatus, message) {
+  const device = link.networkDeviceId ? listedNetworkDevices().find((item) => item.id === link.networkDeviceId) : null;
+  const group = link.groupId ? listedGroups().find((item) => item.id === link.groupId) : null;
+  const event = {
+    id: randomUUID(),
+    category: "network",
+    kind: currentStatus === "offline" ? "network_link_offline" : currentStatus === "online" ? "network_link_recovered" : "network_link_degraded",
+    linkId: link.id,
+    linkName: link.name,
+    deviceId: device?.id || null,
+    deviceName: device?.name || null,
+    groupId: group?.id || null,
+    groupName: group?.name || null,
+    previousStatus,
+    currentStatus,
+    latencyMs: link.lastLatencyMs ?? null,
+    packetLossPercent: link.lastPacketLossPercent ?? null,
+    jitterMs: link.lastJitterMs ?? null,
+    message: message || null,
+    createdAt: nowIso()
+  };
+  state.networkEvents.unshift(event);
+  state.networkEvents = state.networkEvents.slice(0, 5000);
+  broadcast({ type: "network_event_created", event, networkSummary: networkSummary() });
+  return event;
+}
+
+function networkCandidateStatus(link, result) {
+  const packetLoss = Number(result.packetLossPercent ?? (result.online ? 0 : 100));
+  const latency = Number(result.latencyMs ?? 0);
+  const jitter = Number(result.jitterMs ?? 0);
+  if (!result.online || packetLoss >= 100) return "offline";
+  if (
+    packetLoss > Number(link.degradedPacketLossPercent || 10) ||
+    latency > Number(link.degradedLatencyMs || 120) ||
+    jitter > Number(link.degradedJitterMs || 40)
+  ) {
+    return "degraded";
+  }
+  return "online";
+}
+
+function applyNetworkLinkResult(link, result, probeId) {
+  if (!link || link.deletedAt || link.probeId !== probeId) return false;
+  const checkedAt = result.checkedAt || nowIso();
+  const previousStatus = link.currentStatus || "unknown";
+  const candidate = networkCandidateStatus(link, result);
+  link.lastProbeSeenAt = nowIso();
+  link.lastCheckedAt = checkedAt;
+  link.lastLatencyMs = result.latencyMs ?? null;
+  link.lastPacketLossPercent = result.packetLossPercent ?? (result.online ? 0 : 100);
+  link.lastJitterMs = result.jitterMs ?? null;
+  link.lastError = result.error || null;
+  link.forceCheckAt = null;
+
+  if (candidate === "offline") {
+    link.consecutiveFailures = (link.consecutiveFailures || 0) + 1;
+    if (link.consecutiveFailures >= Math.max(1, Number(link.failureThreshold || 1))) {
+      link.currentStatus = "offline";
+    }
+  } else {
+    link.consecutiveFailures = 0;
+    link.currentStatus = candidate;
+  }
+
+  const changed = (link.currentStatus || "unknown") !== previousStatus;
+  if (changed) {
+    link.previousStatus = previousStatus;
+    link.statusChangedAt = checkedAt;
+    addNetworkEvent(
+      link,
+      previousStatus,
+      link.currentStatus,
+      link.lastError || `Resultado recebido do probe ${probeId}.`
+    );
+  }
+  link.updatedAt = nowIso();
+  return true;
+}
+
 function summary() {
   const servers = listedServers();
   const activeServers = servers.filter((server) => server.isActive);
@@ -776,6 +1147,7 @@ function summary() {
     inactive: servers.length - total,
     availability24h,
     alertsOpen: state.alerts.filter((alert) => !alert.read && alert.type === "down").length,
+    network: networkSummary(),
     groups: listedGroups().length,
     lastEventAt: state.events[0]?.createdAt || null
   };
@@ -787,6 +1159,9 @@ function snapshot(currentUser = null) {
     summary: summary(),
     servers: listedServers().map(publicServer),
     groups: listedGroups().map(publicGroup),
+    networkDevices: listedNetworkDevices().map(publicNetworkDevice),
+    networkLinks: listedNetworkLinks().map(publicNetworkLink),
+    networkEvents: (state.networkEvents || []).slice(0, 100),
     probes: currentUser?.role === "admin" ? (state.probes || []).filter((probe) => !probe.deletedAt).map(publicProbe) : [],
     users: currentUser?.role === "admin" ? listedUsers().map(publicUser) : [],
     currentUser: currentUser ? publicUser(currentUser) : null,
@@ -1669,9 +2044,28 @@ function probeTargets(probeId) {
         .filter((server) => canProbeVerifyServer(probe, server))
         .map((server) => toTarget(server, true))
     : [];
+  const networkLinks = listedNetworkLinks()
+    .filter((link) => link.isActive !== false && link.probeId === probeId)
+    .map((link) => ({
+      id: link.id,
+      name: link.name,
+      targetHost: link.targetHost,
+      checkMethod: "ping",
+      checkInterval: link.checkInterval,
+      failureThreshold: link.failureThreshold,
+      degradedLatencyMs: link.degradedLatencyMs,
+      degradedPacketLossPercent: link.degradedPacketLossPercent,
+      degradedJitterMs: link.degradedJitterMs,
+      sampleCount: link.sampleCount || 3,
+      forceCheck: Boolean(
+        link.forceCheckAt &&
+          (!link.lastCheckedAt || new Date(link.forceCheckAt).getTime() > new Date(link.lastCheckedAt).getTime())
+      )
+    }));
 
   return {
     targets: [...ownedTargets, ...verificationTargets],
+    networkLinks,
     updateRequest:
       updateRequest?.status === "pending"
         ? {
@@ -1860,6 +2254,7 @@ async function handleApi(req, res) {
         return sendJson(res, 200, {
           probe: publicProbe(registered.probe),
           targets: probeWork.targets,
+          networkLinks: probeWork.networkLinks,
           updateRequest: probeWork.updateRequest
         });
       }
@@ -1883,6 +2278,7 @@ async function handleApi(req, res) {
         const probe = registered.probe;
         const ensuredServer = ensureProbeServer(probe);
         const results = Array.isArray(payload.results) ? payload.results : [];
+        const networkResults = Array.isArray(payload.networkResults) ? payload.networkResults : [];
         let accepted = 0;
         for (const result of results) {
           const server = state.servers.find(
@@ -1898,9 +2294,15 @@ async function handleApi(req, res) {
           applyProbeResult(server, result, probe.id, { verification: verifiesPeer });
           accepted += 1;
         }
+        let acceptedNetworkResults = 0;
+        for (const result of networkResults) {
+          const link = (state.networkLinks || []).find((item) => item.id === result.linkId && !item.deletedAt);
+          if (!link || link.probeId !== probe.id) continue;
+          if (applyNetworkLinkResult(link, result, probe.id)) acceptedNetworkResults += 1;
+        }
         scheduleSave();
-        if (registered.changed || ensuredServer.changed || accepted > 0) broadcastSnapshot();
-        return sendJson(res, 200, { ok: true, accepted });
+        if (registered.changed || ensuredServer.changed || accepted > 0 || acceptedNetworkResults > 0) broadcastSnapshot();
+        return sendJson(res, 200, { ok: true, accepted, acceptedNetworkResults });
       }
 
       if (req.method === "POST" && parts[2] === "update-status") {
@@ -1954,6 +2356,10 @@ async function handleApi(req, res) {
 
     if (parts[1] === "groups") {
       if (await handleGroups(req, res, { parts, session })) return;
+    }
+
+    if (parts[1] === "network") {
+      if (await handleNetwork(req, res, { parts, session })) return;
     }
 
     if (parts[1] === "servers") {
@@ -2034,6 +2440,24 @@ const handleGroups = createGroupsHandler({
   publicGroup,
   normalizeGroup,
   addGroup: (group) => state.groups.unshift(group),
+  scheduleSave,
+  broadcastSnapshot
+});
+const handleNetwork = createNetworkHandler({
+  randomId: randomUUID,
+  nowIso,
+  readBody,
+  sendJson,
+  notFound,
+  requireAdmin,
+  getDevices: () => state.networkDevices || [],
+  getLinks: () => state.networkLinks || [],
+  publicDevice: publicNetworkDevice,
+  publicLink: publicNetworkLink,
+  normalizeDevice: normalizeNetworkDevice,
+  normalizeLink: normalizeNetworkLink,
+  addDevice: (device) => state.networkDevices.unshift(device),
+  addLink: (link) => state.networkLinks.unshift(link),
   scheduleSave,
   broadcastSnapshot
 });

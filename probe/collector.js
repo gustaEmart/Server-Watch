@@ -5,7 +5,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const DEFAULT_CONFIG = new URL("./config.json", import.meta.url);
-const VERSION = "0.6.4";
+const VERSION = "0.6.5";
 const DEFAULT_QUEUE_MAX_BATCHES = 1000;
 const HOST_METRICS_CACHE_MS = 60 * 1000;
 const HOST_METRICS_TIMEOUT_MS = 7000;
@@ -746,6 +746,42 @@ function pingHost(hostname, timeoutMs) {
   });
 }
 
+async function pingNetworkLink(target, timeoutMs) {
+  const sampleCount = Math.max(1, Math.min(10, Number(target.sampleCount || 1)));
+  const samples = [];
+  for (let index = 0; index < sampleCount; index += 1) {
+    samples.push(await pingHost(target.targetHost, timeoutMs));
+  }
+  const successful = samples.filter((sample) => sample.online);
+  const latencies = successful
+    .map((sample) => sample.latencyMs)
+    .filter((value) => Number.isFinite(Number(value)))
+    .map(Number);
+  const averageLatency = latencies.length
+    ? Math.round(latencies.reduce((sum, value) => sum + value, 0) / latencies.length)
+    : null;
+  const jitter = latencies.length > 1
+    ? Math.round(
+        latencies
+          .slice(1)
+          .reduce((sum, value, index) => sum + Math.abs(value - latencies[index]), 0) /
+          (latencies.length - 1)
+      )
+    : null;
+  const packetLossPercent = Math.round(((sampleCount - successful.length) / sampleCount) * 1000) / 10;
+  const firstError = samples.find((sample) => sample.error)?.error || null;
+  return {
+    linkId: target.id,
+    targetHost: target.targetHost,
+    online: successful.length > 0,
+    latencyMs: averageLatency,
+    packetLossPercent,
+    jitterMs: jitter,
+    error: successful.length > 0 ? null : firstError || "Sem resposta ao ping.",
+    checkedAt: new Date().toISOString()
+  };
+}
+
 async function requestJson(config, path, options = {}) {
   const { timeoutMs = REQUEST_TIMEOUT_MS, headers = {}, ...fetchOptions } = options;
   const controller = new AbortController();
@@ -784,7 +820,7 @@ async function readQueue(config) {
       .map((line) => line.trim())
       .filter(Boolean)
       .map((line) => JSON.parse(line))
-      .filter((entry) => Array.isArray(entry.results) && entry.results.length);
+      .filter((entry) => (Array.isArray(entry.results) && entry.results.length) || (Array.isArray(entry.networkResults) && entry.networkResults.length));
   } catch (error) {
     if (error.code === "ENOENT") return [];
     console.error(`[${new Date().toISOString()}] Queue read failed: ${error.message}`);
@@ -800,13 +836,14 @@ async function writeQueue(config, entries) {
   await rename(tmpPath, config.queuePath);
 }
 
-async function queueResults(config, results, reason) {
-  if (!results.length) return;
+async function queueResults(config, results, reason, networkResults = []) {
+  if (!results.length && !networkResults.length) return;
   await mkdir(dirname(config.queuePath), { recursive: true });
   const entry = {
     createdAt: new Date().toISOString(),
     reason: String(reason || "Falha ao enviar resultados."),
-    results
+    results,
+    networkResults
   };
   await appendFile(config.queuePath, `${JSON.stringify(entry)}\n`, "utf8");
 
@@ -816,7 +853,7 @@ async function queueResults(config, results, reason) {
     await writeQueue(config, trimmed);
     console.warn(`Queue limit reached. Dropped ${entries.length - trimmed.length} old batch(es).`);
   }
-  console.warn(`Queued ${results.length} result(s) locally at ${config.queuePath}`);
+  console.warn(`Queued ${results.length} server result(s) and ${networkResults.length} network result(s) locally at ${config.queuePath}`);
 }
 
 async function flushQueue(config) {
@@ -827,8 +864,8 @@ async function flushQueue(config) {
   for (let index = 0; index < entries.length; index += 1) {
     const entry = entries[index];
     try {
-      await sendResults(config, entry.results);
-      sentResults += entry.results.length;
+      await sendResults(config, entry.results || [], entry.networkResults || []);
+      sentResults += (entry.results || []).length + (entry.networkResults || []).length;
     } catch (error) {
       await writeQueue(config, entries.slice(index));
       throw error;
@@ -855,14 +892,15 @@ async function getTargets(config) {
   return requestJson(config, `/api/probe/targets?${params.toString()}`);
 }
 
-async function sendResults(config, results) {
-  if (!results.length) return;
+async function sendResults(config, results, networkResults = []) {
+  if (!results.length && !networkResults.length) return;
   const metadata = await probeMetadata(config);
   await requestJson(config, "/api/probe/results", {
     method: "POST",
     body: JSON.stringify({
       ...metadata,
-      results
+      results,
+      networkResults
     })
   });
 }
@@ -935,13 +973,16 @@ async function handleUpdateRequest(config, request) {
 
 async function runLoop(config) {
   const nextChecks = new Map();
+  const nextNetworkChecks = new Map();
   let cachedTargets = [];
+  let cachedNetworkLinks = [];
   let offlineSince = null;
   console.log(`ServerWatch Probe ${VERSION} started as ${config.probeId}`);
   for (;;) {
     try {
       const payload = await getTargets(config);
       cachedTargets = Array.isArray(payload.targets) ? payload.targets : [];
+      cachedNetworkLinks = Array.isArray(payload.networkLinks) ? payload.networkLinks : [];
       if (payload.updateRequest) {
         try {
           await handleUpdateRequest(config, payload.updateRequest);
@@ -978,19 +1019,30 @@ async function runLoop(config) {
         });
         nextChecks.set(target.id, Date.now() + Math.max(3, target.checkInterval || config.intervalSeconds) * 1000);
       }
+      const dueNetworkLinks = cachedNetworkLinks.filter((target) => {
+        const dueAt = nextNetworkChecks.get(target.id) || 0;
+        return target.forceCheck || dueAt <= now;
+      });
+      const networkResults = [];
+      for (const target of dueNetworkLinks) {
+        networkResults.push(await pingNetworkLink(target, config.timeoutMs));
+        nextNetworkChecks.set(target.id, Date.now() + Math.max(10, target.checkInterval || 10) * 1000);
+      }
       try {
-        await sendResults(config, results);
-        if (results.length) console.log(`Sent ${results.length} result(s)`);
+        await sendResults(config, results, networkResults);
+        if (results.length || networkResults.length) {
+          console.log(`Sent ${results.length} server result(s) and ${networkResults.length} network result(s)`);
+        }
       } catch (error) {
         if (!offlineSince) offlineSince = new Date();
-        await queueResults(config, results, error.message);
+        await queueResults(config, results, error.message, networkResults);
         console.error(`[${new Date().toISOString()}] Send failed: ${error.message}`);
       }
     } catch (error) {
       if (!offlineSince) offlineSince = new Date();
       console.error(`[${new Date().toISOString()}] ${error.message}`);
 
-      if (cachedTargets.length) {
+      if (cachedTargets.length || cachedNetworkLinks.length) {
         const now = Date.now();
         const dueTargets = cachedTargets.filter((target) => {
           const dueAt = nextChecks.get(target.id) || 0;
@@ -1006,10 +1058,19 @@ async function runLoop(config) {
           });
           nextChecks.set(target.id, Date.now() + Math.max(3, target.checkInterval || config.intervalSeconds) * 1000);
         }
-        await queueResults(config, results, error.message);
+        const dueNetworkLinks = cachedNetworkLinks.filter((target) => {
+          const dueAt = nextNetworkChecks.get(target.id) || 0;
+          return target.forceCheck || dueAt <= now;
+        });
+        const networkResults = [];
+        for (const target of dueNetworkLinks) {
+          networkResults.push(await pingNetworkLink(target, config.timeoutMs));
+          nextNetworkChecks.set(target.id, Date.now() + Math.max(10, target.checkInterval || 10) * 1000);
+        }
+        await queueResults(config, results, error.message, networkResults);
       }
     }
-    await new Promise((resolve) => setTimeout(resolve, Math.max(3, config.intervalSeconds) * 1000));
+    await new Promise((resolve) => setTimeout(resolve, Math.min(10, Math.max(3, config.intervalSeconds)) * 1000));
   }
 }
 

@@ -5134,3 +5134,144 @@ body {
     flex-direction: column;
   }
 }
+
+/* Network monitoring */
+.network-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.network-summary-card {
+  border: 1px solid var(--border-default);
+  border-radius: 8px;
+  background: var(--bg-surface);
+  padding: 14px 16px;
+  display: grid;
+  gap: 5px;
+}
+
+.network-summary-card span,
+.network-summary-card small {
+  color: var(--text-secondary);
+}
+
+.network-summary-card strong {
+  font-size: 2rem;
+  line-height: 1;
+  color: var(--color-success);
+}
+
+.network-summary-card.warning strong {
+  color: var(--color-warning);
+}
+
+.network-summary-card.danger strong {
+  color: var(--color-danger);
+}
+
+.network-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(340px, 0.85fr);
+  gap: 16px;
+}
+
+.network-list-panel,
+.network-detail-panel {
+  border: 1px solid var(--border-default);
+  border-radius: 8px;
+  background: var(--bg-surface);
+  padding: 14px;
+}
+
+.network-link-list,
+.network-event-list {
+  display: grid;
+  gap: 8px;
+}
+
+.network-link-row {
+  width: 100%;
+  min-height: 64px;
+  border: 1px solid var(--border-muted);
+  border-radius: 8px;
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  text-align: left;
+}
+
+.network-link-row > * {
+  pointer-events: none;
+}
+
+.network-link-row strong,
+.network-link-row small {
+  display: block;
+}
+
+.network-link-row small {
+  color: var(--text-secondary);
+}
+
+.network-link-row:hover,
+.network-link-row.selected {
+  border-color: var(--color-accent);
+  background: var(--selected-bg);
+}
+
+.network-detail-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.network-detail-header h3 {
+  margin: 0;
+  font-size: 1.4rem;
+}
+
+.network-detail-header span {
+  color: var(--text-secondary);
+}
+
+.network-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 12px 0 16px;
+}
+
+.status-dot.warning,
+.status-dot.probe_stale {
+  background: var(--color-warning);
+}
+
+.status-badge.warning {
+  background: rgba(245, 158, 11, 0.18);
+  color: var(--warning);
+}
+
+.network-link-list > .network-link-row:nth-child(odd),
+.network-event-list > .profile-data-row:nth-child(odd) {
+  background: color-mix(in srgb, var(--bg-elevated) 72%, var(--bg-surface));
+}
+
+.network-link-list > .network-link-row:nth-child(even),
+.network-event-list > .profile-data-row:nth-child(even) {
+  background: color-mix(in srgb, var(--bg-surface) 82%, var(--bg-elevated));
+}
+
+@media (max-width: 1100px) {
+  .network-summary-grid,
+  .network-layout {
+    grid-template-columns: 1fr;
+  }
+}

@@ -2,6 +2,9 @@ const state = {
   servers: [],
   groups: [],
   probes: [],
+  networkDevices: [],
+  networkLinks: [],
+  networkEvents: [],
   users: [],
   currentUser: null,
   settings: {},
@@ -11,6 +14,7 @@ const state = {
   selectedServerId: null,
   selectedGroupId: null,
   selectedProbeId: null,
+  selectedNetworkLinkId: null,
   topologyExpanded: new Set(),
   probeInstallTarget: "linux",
   filters: {
@@ -70,6 +74,42 @@ const els = {
   serverDirectoryList: document.querySelector("#serverDirectoryList"),
   serverDirectoryCount: document.querySelector("#serverDirectoryCount"),
   serverProfilePanel: document.querySelector("#serverProfilePanel"),
+  networkLinkCount: document.querySelector("#networkLinkCount"),
+  networkDeviceCount: document.querySelector("#networkDeviceCount"),
+  networkOnlineCount: document.querySelector("#networkOnlineCount"),
+  networkDegradedCount: document.querySelector("#networkDegradedCount"),
+  networkOfflineCount: document.querySelector("#networkOfflineCount"),
+  networkProbeStaleCount: document.querySelector("#networkProbeStaleCount"),
+  networkLinksList: document.querySelector("#networkLinksList"),
+  networkDetailPanel: document.querySelector("#networkDetailPanel"),
+  networkDeviceDialog: document.querySelector("#networkDeviceDialog"),
+  networkDeviceForm: document.querySelector("#networkDeviceForm"),
+  networkDeviceDialogTitle: document.querySelector("#networkDeviceDialogTitle"),
+  networkDeviceId: document.querySelector("#networkDeviceId"),
+  networkDeviceName: document.querySelector("#networkDeviceName"),
+  networkDeviceVendor: document.querySelector("#networkDeviceVendor"),
+  networkDeviceModel: document.querySelector("#networkDeviceModel"),
+  networkDeviceManagementIp: document.querySelector("#networkDeviceManagementIp"),
+  networkDeviceGroup: document.querySelector("#networkDeviceGroup"),
+  networkDeviceProbe: document.querySelector("#networkDeviceProbe"),
+  networkDeviceNotes: document.querySelector("#networkDeviceNotes"),
+  networkLinkDialog: document.querySelector("#networkLinkDialog"),
+  networkLinkForm: document.querySelector("#networkLinkForm"),
+  networkLinkDialogTitle: document.querySelector("#networkLinkDialogTitle"),
+  networkLinkId: document.querySelector("#networkLinkId"),
+  networkLinkName: document.querySelector("#networkLinkName"),
+  networkLinkProvider: document.querySelector("#networkLinkProvider"),
+  networkLinkDevice: document.querySelector("#networkLinkDevice"),
+  networkLinkType: document.querySelector("#networkLinkType"),
+  networkLinkTarget: document.querySelector("#networkLinkTarget"),
+  networkLinkInterface: document.querySelector("#networkLinkInterface"),
+  networkLinkGroup: document.querySelector("#networkLinkGroup"),
+  networkLinkProbe: document.querySelector("#networkLinkProbe"),
+  networkLinkInterval: document.querySelector("#networkLinkInterval"),
+  networkLinkThreshold: document.querySelector("#networkLinkThreshold"),
+  networkLinkLatencyLimit: document.querySelector("#networkLinkLatencyLimit"),
+  networkLinkLossLimit: document.querySelector("#networkLinkLossLimit"),
+  networkLinkNotes: document.querySelector("#networkLinkNotes"),
   timeline: document.querySelector("#timeline"),
   eventCount: document.querySelector("#eventCount"),
   historyServerFilter: document.querySelector("#historyServerFilter"),
@@ -165,6 +205,7 @@ const els = {
 const VIEW_ROUTES = {
   dashboard: "/dashboard",
   servers: "/servidores",
+  networks: "/redes",
   admin: "/admin",
   groups: "/empresas",
   probes: "/probes",
@@ -641,6 +682,9 @@ function applySnapshot(payload) {
   state.servers = payload.servers || [];
   state.groups = payload.groups || [];
   state.probes = payload.probes || [];
+  state.networkDevices = payload.networkDevices || [];
+  state.networkLinks = payload.networkLinks || [];
+  state.networkEvents = payload.networkEvents || [];
   state.users = payload.users || [];
   state.currentUser = payload.currentUser || state.currentUser;
   state.settings = payload.settings || {};
@@ -652,6 +696,12 @@ function applySnapshot(payload) {
   }
   if (!state.selectedServerId && state.servers.length) {
     state.selectedServerId = state.servers[0].id;
+  }
+  if (state.selectedNetworkLinkId && !state.networkLinks.some((link) => link.id === state.selectedNetworkLinkId)) {
+    state.selectedNetworkLinkId = null;
+  }
+  if (!state.selectedNetworkLinkId && state.networkLinks.length) {
+    state.selectedNetworkLinkId = state.networkLinks[0].id;
   }
   renderGroupOptions();
   renderProbeOptions();
@@ -717,6 +767,7 @@ function updateTopbarContext() {
   const titles = {
     dashboard: ["Monitoramento em tempo real", "Disponibilidade dos servidores"],
     servers: ["Inventario operacional", "Informacoes dos servidores"],
+    networks: ["Monitoramento de redes", "Links e conectividade"],
     admin: ["Gestao do sistema", "Painel administrativo"],
     groups: ["Organizacao operacional", "Empresas e grupos"],
     probes: ["Instalacao e coleta", "Probe Collector"],
@@ -850,6 +901,27 @@ function renderGroupOptions() {
       els.serverGroup.value = current;
     }
   }
+  for (const select of [els.networkDeviceGroup, els.networkLinkGroup]) {
+    if (!select) continue;
+    const current = select.value;
+    select.innerHTML = `
+      <option value="">Sem empresa</option>
+      ${groupOptions}
+    `;
+    if ([...select.options].some((option) => option.value === current)) {
+      select.value = current;
+    }
+  }
+  if (els.networkLinkDevice) {
+    const current = els.networkLinkDevice.value;
+    els.networkLinkDevice.innerHTML = `
+      <option value="">Sem dispositivo</option>
+      ${state.networkDevices.map((device) => `<option value="${escapeHtml(device.id)}">${escapeHtml(device.name)}</option>`).join("")}
+    `;
+    if ([...els.networkLinkDevice.options].some((option) => option.value === current)) {
+      els.networkLinkDevice.value = current;
+    }
+  }
   renderAlertGroupOptions(groupOptions);
   renderCompanyNav();
 }
@@ -975,6 +1047,11 @@ function renderProbeOptions() {
   if (!state.probes.length) {
     els.serverProbeId.innerHTML = `<option value="">Nenhum probe instalado encontrado</option>`;
     els.serverProbeId.disabled = true;
+    for (const select of [els.networkDeviceProbe, els.networkLinkProbe]) {
+      if (!select) continue;
+      select.innerHTML = `<option value="">Nenhum probe instalado encontrado</option>`;
+      select.disabled = true;
+    }
     if (els.serverProbeHint) {
       els.serverProbeHint.textContent = "Instale o Probe Collector primeiro. Assim que ele se conectar, aparecera aqui.";
     }
@@ -982,14 +1059,22 @@ function renderProbeOptions() {
   }
 
   els.serverProbeId.disabled = false;
-  els.serverProbeId.innerHTML = state.probes
+  const probeOptions = state.probes
     .map((probe) => {
       const address = probe.primaryAddress || probe.addresses?.[0] || probe.lastAddress || "";
       const label = `${probe.name || probe.id} (${address || probe.id})`;
       return `<option value="${escapeHtml(probe.id)}">${escapeHtml(label)}</option>`;
     })
     .join("");
+  els.serverProbeId.innerHTML = probeOptions;
   els.serverProbeId.value = state.probes.some((probe) => probe.id === current) ? current : state.probes[0].id;
+  for (const select of [els.networkDeviceProbe, els.networkLinkProbe]) {
+    if (!select) continue;
+    const previous = select.value;
+    select.disabled = false;
+    select.innerHTML = probeOptions;
+    select.value = state.probes.some((probe) => probe.id === previous) ? previous : state.probes[0].id;
+  }
   if (els.serverProbeHint) {
     const selected = state.probes.find((probe) => probe.id === els.serverProbeId.value);
     const selectedAddress = selected?.primaryAddress || selected?.addresses?.[0] || selected?.lastAddress || "";
@@ -2955,6 +3040,163 @@ function renderProbes() {
   renderProbeDetail(state.probes.find((probe) => probe.id === state.selectedProbeId) || null);
 }
 
+function networkStatusLabel(status) {
+  return {
+    online: "Online",
+    degraded: "Degradado",
+    offline: "Offline",
+    probe_unreachable: "Probe sem contato",
+    paused: "Pausado",
+    unknown: "Sem status"
+  }[status] || "Sem status";
+}
+
+function networkStatusClass(status) {
+  return {
+    online: "online",
+    degraded: "warning",
+    offline: "offline",
+    probe_unreachable: "probe_stale",
+    paused: "unknown",
+    unknown: "unknown"
+  }[status] || "unknown";
+}
+
+function networkVendorLabel(vendor) {
+  return {
+    mikrotik: "MikroTik",
+    pfsense: "pfSense",
+    fortigate: "Fortigate",
+    generic: "Generico",
+    other: "Outro"
+  }[vendor] || "Generico";
+}
+
+function networkLinkTypeLabel(type) {
+  return {
+    internet: "Internet",
+    mpls: "MPLS",
+    vpn: "VPN",
+    radio: "Radio",
+    fiber: "Fibra",
+    cellular: "Celular",
+    other: "Outro"
+  }[type] || "Internet";
+}
+
+function networkEventsForLink(linkId) {
+  return state.networkEvents.filter((event) => event.linkId === linkId).slice(0, 8);
+}
+
+function renderNetworkDetail(link) {
+  if (!els.networkDetailPanel) return;
+  if (!link) {
+    els.networkDetailPanel.innerHTML = `
+      <div class="empty-state compact-empty">
+        <strong>Nenhum link selecionado</strong>
+        <span>Selecione um link para ver alvo, probe, latencia, perda e ultimos eventos.</span>
+      </div>
+    `;
+    return;
+  }
+  const events = networkEventsForLink(link.id);
+  const status = link.displayStatus || link.currentStatus || "unknown";
+  els.networkDetailPanel.innerHTML = `
+    <div class="network-detail-header">
+      <div>
+        <h3>${escapeHtml(link.name)}</h3>
+        <span>${escapeHtml([link.groupName, link.provider, link.networkDeviceName].filter(Boolean).join(" · ") || "Sem contexto adicional")}</span>
+      </div>
+      <span class="status-badge ${networkStatusClass(status)}">${networkStatusLabel(status)}</span>
+    </div>
+    <div class="profile-data-grid">
+      <div><span>Alvo</span><strong>${escapeHtml(link.targetHost)}</strong></div>
+      <div><span>Probe</span><strong>${escapeHtml(link.probeName || link.probeId || "-")}</strong></div>
+      <div><span>Latencia</span><strong>${link.lastLatencyMs ?? "-"} ms</strong></div>
+      <div><span>Perda</span><strong>${link.lastPacketLossPercent ?? "-"}%</strong></div>
+      <div><span>Jitter</span><strong>${link.lastJitterMs ?? "-"} ms</strong></div>
+      <div><span>Ultima checagem</span><strong>${formatDate(link.lastCheckedAt)}</strong></div>
+      <div><span>Intervalo</span><strong>${link.checkInterval || 10}s</strong></div>
+      <div><span>Falhas para offline</span><strong>${link.failureThreshold || 3}</strong></div>
+      <div><span>Tipo</span><strong>${networkLinkTypeLabel(link.linkType)}</strong></div>
+      <div><span>Interface</span><strong>${escapeHtml(link.interfaceName || "-")}</strong></div>
+      <div><span>Limite latencia</span><strong>${link.degradedLatencyMs || 120} ms</strong></div>
+      <div><span>Limite perda</span><strong>${link.degradedPacketLossPercent ?? 10}%</strong></div>
+    </div>
+    ${
+      isAdmin()
+        ? `<div class="network-actions">
+            <button class="ghost-button compact" type="button" data-network-action="check" data-link-id="${escapeHtml(link.id)}">Checar agora</button>
+            <button class="ghost-button compact" type="button" data-network-action="edit" data-link-id="${escapeHtml(link.id)}">Editar</button>
+            <button class="danger-button compact" type="button" data-network-action="delete" data-link-id="${escapeHtml(link.id)}">Excluir</button>
+          </div>`
+        : ""
+    }
+    <section class="profile-section">
+      <div class="panel-title compact-title">
+        <h3>Historico recente</h3>
+        <span>${events.length} eventos</span>
+      </div>
+      <div class="network-event-list">
+        ${
+          events.length
+            ? events.map((event) => `
+                <div class="profile-data-row">
+                  <strong>${escapeHtml(networkStatusLabel(event.currentStatus))}</strong>
+                  <span>${escapeHtml(event.message || "")}</span>
+                  <small>${formatDate(event.createdAt)}</small>
+                </div>
+              `).join("")
+            : `<div class="empty-list compact">Nenhum evento deste link ainda.</div>`
+        }
+      </div>
+    </section>
+  `;
+}
+
+function renderNetworks() {
+  if (!els.networkLinksList) return;
+  const links = state.networkLinks || [];
+  const counts = links.reduce((acc, link) => {
+    const status = link.displayStatus || link.currentStatus || "unknown";
+    acc[status] = (acc[status] || 0) + 1;
+    return acc;
+  }, {});
+  if (els.networkLinkCount) els.networkLinkCount.textContent = `${links.length} ${links.length === 1 ? "link monitorado" : "links monitorados"}`;
+  if (els.networkDeviceCount) els.networkDeviceCount.textContent = `${state.networkDevices.length} ${state.networkDevices.length === 1 ? "dispositivo" : "dispositivos"}`;
+  if (els.networkOnlineCount) els.networkOnlineCount.textContent = counts.online || 0;
+  if (els.networkDegradedCount) els.networkDegradedCount.textContent = counts.degraded || 0;
+  if (els.networkOfflineCount) els.networkOfflineCount.textContent = counts.offline || 0;
+  if (els.networkProbeStaleCount) els.networkProbeStaleCount.textContent = counts.probe_unreachable || 0;
+
+  els.networkLinksList.innerHTML = links.length
+    ? links
+        .map((link) => {
+          const status = link.displayStatus || link.currentStatus || "unknown";
+          const selected = state.selectedNetworkLinkId === link.id ? "selected" : "";
+          const subtitle = [
+            link.groupName || "Sem empresa",
+            link.provider || "Sem operadora",
+            link.networkDeviceName || "Sem dispositivo",
+            link.targetHost
+          ].filter(Boolean).join(" · ");
+          return `
+            <button class="network-link-row ${selected}" type="button" data-network-link-id="${escapeHtml(link.id)}">
+              <span class="status-dot ${networkStatusClass(status)}"></span>
+              <div>
+                <strong>${escapeHtml(link.name)}</strong>
+                <small>${escapeHtml(subtitle)}</small>
+              </div>
+              <span class="status-badge ${networkStatusClass(status)}">${networkStatusLabel(status)}</span>
+              <small>${link.lastLatencyMs ?? "-"} ms</small>
+            </button>
+          `;
+        })
+        .join("")
+    : `<div class="empty-list">Nenhum link cadastrado ainda.</div>`;
+  renderNetworkDetail(links.find((link) => link.id === state.selectedNetworkLinkId) || null);
+}
+
 function render() {
   updateTopbarContext();
   updateMetricsVisibility();
@@ -2967,6 +3209,7 @@ function render() {
   renderDetail();
   renderServerDirectory();
   renderServerProfile();
+  renderNetworks();
   renderTimeline();
   renderAlerts();
   renderGroups();
@@ -3086,6 +3329,68 @@ function closeUserDialog() {
   els.userDialog.close();
 }
 
+function openNetworkDeviceDialog(device = null) {
+  if (!els.networkDeviceDialog || !isAdmin()) return;
+  els.networkDeviceForm.reset();
+  renderGroupOptions();
+  renderProbeOptions();
+  els.networkDeviceId.value = device?.id || "";
+  els.networkDeviceDialogTitle.textContent = device ? "Editar dispositivo" : "Adicionar dispositivo";
+  els.networkDeviceName.value = device?.name || "";
+  els.networkDeviceVendor.value = device?.vendor || "mikrotik";
+  els.networkDeviceModel.value = device?.model || "";
+  els.networkDeviceManagementIp.value = device?.managementIp || "";
+  els.networkDeviceGroup.value = device?.groupId || "";
+  if (device?.probeId && state.probes.some((probe) => probe.id === device.probeId)) {
+    els.networkDeviceProbe.value = device.probeId;
+  }
+  els.networkDeviceNotes.value = device?.notes || "";
+  els.networkDeviceDialog.showModal();
+}
+
+function closeNetworkDeviceDialog() {
+  els.networkDeviceDialog?.close();
+}
+
+function applyNetworkDeviceDefaults() {
+  const device = state.networkDevices.find((item) => item.id === els.networkLinkDevice?.value);
+  if (!device) return;
+  if (device.groupId && els.networkLinkGroup) els.networkLinkGroup.value = device.groupId;
+  if (device.probeId && els.networkLinkProbe && state.probes.some((probe) => probe.id === device.probeId)) {
+    els.networkLinkProbe.value = device.probeId;
+  }
+}
+
+function openNetworkLinkDialog(link = null) {
+  if (!els.networkLinkDialog || !isAdmin()) return;
+  els.networkLinkForm.reset();
+  renderGroupOptions();
+  renderProbeOptions();
+  els.networkLinkId.value = link?.id || "";
+  els.networkLinkDialogTitle.textContent = link ? "Editar link" : "Adicionar link";
+  els.networkLinkName.value = link?.name || "";
+  els.networkLinkProvider.value = link?.provider || "";
+  els.networkLinkDevice.value = link?.networkDeviceId || "";
+  els.networkLinkType.value = link?.linkType || "internet";
+  els.networkLinkTarget.value = link?.targetHost || "";
+  els.networkLinkInterface.value = link?.interfaceName || "";
+  els.networkLinkGroup.value = link?.groupId || "";
+  if (link?.probeId && state.probes.some((probe) => probe.id === link.probeId)) {
+    els.networkLinkProbe.value = link.probeId;
+  }
+  els.networkLinkInterval.value = link?.checkInterval || 10;
+  els.networkLinkThreshold.value = link?.failureThreshold || 3;
+  els.networkLinkLatencyLimit.value = link?.degradedLatencyMs || 120;
+  els.networkLinkLossLimit.value = link?.degradedPacketLossPercent ?? 10;
+  els.networkLinkNotes.value = link?.notes || "";
+  if (!link) applyNetworkDeviceDefaults();
+  els.networkLinkDialog.showModal();
+}
+
+function closeNetworkLinkDialog() {
+  els.networkLinkDialog?.close();
+}
+
 async function submitGroup(event) {
   event.preventDefault();
   const id = els.groupId.value;
@@ -3123,6 +3428,64 @@ async function submitUser(event) {
   closeUserDialog();
   renderUsers();
   showToast("Usuario salvo", `${saved.name} pode acessar o ServerWatch.`);
+}
+
+async function submitNetworkDevice(event) {
+  event.preventDefault();
+  const id = els.networkDeviceId.value;
+  const payload = {
+    name: els.networkDeviceName.value,
+    vendor: els.networkDeviceVendor.value,
+    model: els.networkDeviceModel.value,
+    managementIp: els.networkDeviceManagementIp.value,
+    groupId: els.networkDeviceGroup.value || null,
+    probeId: els.networkDeviceProbe.value || null,
+    notes: els.networkDeviceNotes.value
+  };
+  try {
+    const saved = id
+      ? await api(`/api/network/devices/${encodeURIComponent(id)}`, { method: "PUT", body: JSON.stringify(payload) })
+      : await api("/api/network/devices", { method: "POST", body: JSON.stringify(payload) });
+    state.networkDevices = [saved, ...state.networkDevices.filter((item) => item.id !== saved.id)];
+    closeNetworkDeviceDialog();
+    renderGroupOptions();
+    renderNetworks();
+    showToast("Dispositivo salvo", `${saved.name} esta disponivel para vincular links.`);
+  } catch (error) {
+    showToast("Falha ao salvar dispositivo", error.message);
+  }
+}
+
+async function submitNetworkLink(event) {
+  event.preventDefault();
+  const id = els.networkLinkId.value;
+  const payload = {
+    name: els.networkLinkName.value,
+    provider: els.networkLinkProvider.value,
+    networkDeviceId: els.networkLinkDevice.value || null,
+    linkType: els.networkLinkType.value,
+    targetHost: els.networkLinkTarget.value,
+    interfaceName: els.networkLinkInterface.value,
+    groupId: els.networkLinkGroup.value || null,
+    probeId: els.networkLinkProbe.value || null,
+    checkInterval: Number(els.networkLinkInterval.value || 10),
+    failureThreshold: Number(els.networkLinkThreshold.value || 3),
+    degradedLatencyMs: Number(els.networkLinkLatencyLimit.value || 120),
+    degradedPacketLossPercent: Number(els.networkLinkLossLimit.value || 10),
+    notes: els.networkLinkNotes.value
+  };
+  try {
+    const saved = id
+      ? await api(`/api/network/links/${encodeURIComponent(id)}`, { method: "PUT", body: JSON.stringify(payload) })
+      : await api("/api/network/links", { method: "POST", body: JSON.stringify(payload) });
+    state.selectedNetworkLinkId = saved.id;
+    state.networkLinks = [saved, ...state.networkLinks.filter((item) => item.id !== saved.id)];
+    closeNetworkLinkDialog();
+    renderNetworks();
+    showToast("Link salvo", `${saved.name} sera testado pelo probe a cada ${saved.checkInterval || 10}s.`);
+  } catch (error) {
+    showToast("Falha ao salvar link", error.message);
+  }
 }
 
 function serverUpdatePayload(server, overrides = {}) {
@@ -3372,6 +3735,51 @@ function bindEvents() {
     }
   });
 
+  els.networkLinksList?.addEventListener("click", (event) => {
+    const row = eventClosest(event, "[data-network-link-id]");
+    if (!row) return;
+    state.selectedNetworkLinkId = row.dataset.networkLinkId;
+    renderNetworks();
+  });
+
+  els.networkDetailPanel?.addEventListener("click", async (event) => {
+    const button = eventClosest(event, "[data-network-action]");
+    if (!button || !isAdmin()) return;
+    const link = state.networkLinks.find((item) => item.id === button.dataset.linkId);
+    if (!link) return;
+
+    if (button.dataset.networkAction === "edit") {
+      openNetworkLinkDialog(link);
+      return;
+    }
+
+    if (button.dataset.networkAction === "check") {
+      try {
+        const updated = await api(`/api/network/links/${encodeURIComponent(link.id)}/check`, { method: "POST" });
+        state.networkLinks = state.networkLinks.map((item) => (item.id === updated.id ? updated : item));
+        renderNetworks();
+        showToast("Checagem solicitada", `${link.name} sera testado no proximo ciclo do probe.`);
+      } catch (error) {
+        showToast("Falha ao solicitar checagem", error.message);
+      }
+      return;
+    }
+
+    if (button.dataset.networkAction === "delete") {
+      const confirmed = window.confirm(`Excluir o link "${link.name}"?`);
+      if (!confirmed) return;
+      try {
+        await api(`/api/network/links/${encodeURIComponent(link.id)}`, { method: "DELETE" });
+        state.networkLinks = state.networkLinks.filter((item) => item.id !== link.id);
+        state.selectedNetworkLinkId = state.networkLinks[0]?.id || null;
+        renderNetworks();
+        showToast("Link excluido", `${link.name} saiu do monitoramento.`);
+      } catch (error) {
+        showToast("Nao foi possivel excluir", error.message);
+      }
+    }
+  });
+
   document.querySelectorAll(".segment").forEach((button) => {
     button.addEventListener("click", () => {
       document.querySelectorAll(".segment").forEach((item) => item.classList.remove("active"));
@@ -3503,6 +3911,16 @@ function bindEvents() {
     renderServers();
   });
   els.serverForm.addEventListener("submit", submitServer);
+
+  document.querySelector("#openNetworkDeviceForm")?.addEventListener("click", () => openNetworkDeviceDialog());
+  document.querySelector("#openNetworkLinkForm")?.addEventListener("click", () => openNetworkLinkDialog());
+  document.querySelector("#closeNetworkDeviceDialog")?.addEventListener("click", closeNetworkDeviceDialog);
+  document.querySelector("#cancelNetworkDeviceForm")?.addEventListener("click", closeNetworkDeviceDialog);
+  document.querySelector("#closeNetworkLinkDialog")?.addEventListener("click", closeNetworkLinkDialog);
+  document.querySelector("#cancelNetworkLinkForm")?.addEventListener("click", closeNetworkLinkDialog);
+  els.networkDeviceForm?.addEventListener("submit", submitNetworkDevice);
+  els.networkLinkForm?.addEventListener("submit", submitNetworkLink);
+  els.networkLinkDevice?.addEventListener("change", applyNetworkDeviceDefaults);
 
   els.toggleProbeToken?.addEventListener("click", () => {
     const showToken = els.probeTokenValue.type === "password";
