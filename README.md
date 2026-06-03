@@ -28,6 +28,8 @@ Para requisitos de implantacao, ambiente recomendado, portas, firewall e proximo
 
 Para monitorar clientes em redes diferentes sem VPN, veja `docs/PROBE_COLLECTOR.md`.
 
+Para planejar monitoramento de links, roteadores e firewalls, veja `docs/NETWORK_MONITORING.md`.
+
 Para usar MongoDB no backend, veja `docs/MONGODB.md`.
 
 A aplicacao sobe em `0.0.0.0:3000`, entao pode ser acessada pela propria maquina em:

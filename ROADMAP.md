@@ -61,6 +61,28 @@ Campos sugeridos:
 
 ## Prioridade 3 - Probe Collector
 
+### Monitoramento de redes e links
+
+Objetivo:
+
+- Criar uma pagina separada para redes, links de internet e equipamentos como MikroTik, pfSense, Fortigate e roteadores genericos.
+- Coletar primeiro disponibilidade, latencia, perda de pacotes e jitter via Probe Collector.
+- Evoluir depois para SNMP generico e templates por fabricante.
+- Manter diferenca clara entre `link offline`, `link degradado` e `probe sem contato`.
+
+Escopo inicial:
+
+- Cadastro de dispositivos de rede por empresa.
+- Cadastro de links por dispositivo.
+- Checagem de links pelo probe local.
+- Historico de falhas e recuperacoes.
+- Cards e graficos simples na rota `/networks`.
+- Validacao da funcionalidade em Docker com MongoDB antes da transferencia para outro servidor.
+
+Documento tecnico:
+
+- `docs/NETWORK_MONITORING.md`
+
 ### Metricas avancadas pelo probe
 
 Objetivo:
