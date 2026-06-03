@@ -4714,7 +4714,7 @@ body {
 
 .simple-kpi-row {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 12px;
 }
 
@@ -5171,6 +5171,51 @@ body {
   color: var(--color-danger);
 }
 
+.form-section.full-span {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: 10px;
+}
+
+.form-section-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.form-section-title strong,
+.form-section-title span {
+  display: block;
+}
+
+.form-section-title span {
+  margin-top: 2px;
+  color: var(--text-secondary);
+  font-size: 0.85rem;
+}
+
+.network-target-editor {
+  display: grid;
+  gap: 8px;
+}
+
+.network-target-input-row {
+  display: grid;
+  grid-template-columns: minmax(140px, 0.9fr) minmax(180px, 1fr) auto;
+  gap: 10px;
+  align-items: end;
+  padding: 10px;
+  border: 1px solid var(--border-muted);
+  border-radius: 8px;
+  background: var(--bg-elevated);
+}
+
+.network-target-remove {
+  width: 38px;
+  height: 38px;
+}
+
 .network-layout {
   display: grid;
   grid-template-columns: minmax(0, 1.15fr) minmax(340px, 0.85fr);
@@ -5226,6 +5271,29 @@ body {
   background: var(--selected-bg);
 }
 
+.network-target-card {
+  border-width: 1px;
+}
+
+.network-target-card.online {
+  border-color: color-mix(in srgb, var(--color-success) 42%, var(--border-muted));
+  background: color-mix(in srgb, var(--color-success) 18%, var(--bg-surface));
+}
+
+.network-target-card.online strong,
+.network-target-card.online small {
+  color: color-mix(in srgb, var(--color-success) 74%, var(--text-primary));
+}
+
+.network-target-card.offline {
+  border-color: color-mix(in srgb, var(--color-danger) 40%, var(--border-muted));
+  background: color-mix(in srgb, var(--color-danger) 12%, var(--bg-surface));
+}
+
+.network-target-card.active {
+  box-shadow: inset 3px 0 0 var(--color-success);
+}
+
 .network-detail-header {
   display: flex;
   justify-content: space-between;
@@ -5272,9 +5340,25 @@ body {
   background: color-mix(in srgb, var(--bg-surface) 82%, var(--bg-elevated));
 }
 
+.network-target-list > .network-target-card.online {
+  background: color-mix(in srgb, var(--color-success) 18%, var(--bg-surface));
+}
+
+.network-target-list > .network-target-card.offline {
+  background: color-mix(in srgb, var(--color-danger) 12%, var(--bg-surface));
+}
+
 @media (max-width: 1100px) {
   .network-summary-grid,
   .network-layout {
     grid-template-columns: 1fr;
+  }
+
+  .network-target-input-row {
+    grid-template-columns: 1fr;
+  }
+
+  .network-target-remove {
+    width: 100%;
   }
 }

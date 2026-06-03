@@ -834,10 +834,16 @@
               <option value="other">Outro</option>
             </select>
           </label>
-          <label>
-            Alvos monitorados
-            <textarea id="networkLinkTarget" rows="3" required placeholder="Vivo | 187.91.174.154&#10;BR Digital | 200.0.40.218"></textarea>
-          </label>
+          <section class="form-section full-span">
+            <div class="form-section-title">
+              <div>
+                <strong>Links monitorados</strong>
+                <span>Cadastre ate 10 links para identificar qual esta ativo.</span>
+              </div>
+              <button class="ghost-button compact" id="addNetworkTarget" type="button">+</button>
+            </div>
+            <div class="network-target-editor" id="networkLinkTarget"></div>
+          </section>
           <label>
             Interface
             <input id="networkLinkInterface" placeholder="wan1, ether1, pppoe-out1" />

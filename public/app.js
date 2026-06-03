@@ -102,6 +102,7 @@ const els = {
   networkLinkDevice: document.querySelector("#networkLinkDevice"),
   networkLinkType: document.querySelector("#networkLinkType"),
   networkLinkTarget: document.querySelector("#networkLinkTarget"),
+  addNetworkTarget: document.querySelector("#addNetworkTarget"),
   networkLinkInterface: document.querySelector("#networkLinkInterface"),
   networkLinkGroup: document.querySelector("#networkLinkGroup"),
   networkLinkProbe: document.querySelector("#networkLinkProbe"),
@@ -1329,12 +1330,32 @@ function renderSimpleDashboard() {
     })
     .slice(0, 4);
   const staleProbes = state.probes.filter((probe) => probe.status === "stale");
+  const networkLinks = (state.networkLinks || []).filter((link) => link.isActive !== false);
+  const networkCounts = networkLinks.reduce(
+    (acc, link) => {
+      const status = link.displayStatus || link.currentStatus || "unknown";
+      acc[status] = (acc[status] || 0) + 1;
+      return acc;
+    },
+    { online: 0, degraded: 0, offline: 0, probe_unreachable: 0, unknown: 0, paused: 0 }
+  );
+  const networkProblems = networkLinks
+    .filter((link) => ["offline", "degraded", "probe_unreachable"].includes(link.displayStatus || link.currentStatus))
+    .sort((left, right) => {
+      const order = { offline: 0, probe_unreachable: 1, degraded: 2 };
+      return (order[left.displayStatus || left.currentStatus] ?? 3) - (order[right.displayStatus || right.currentStatus] ?? 3);
+    })
+    .slice(0, 4);
   const availability = Number(state.summary.availability24h ?? availabilityForServers(activeServers));
-  const tone = counts.offline || openAlerts.length ? "danger" : counts.dependency_down || counts.probe_stale || staleProbes.length ? "warning" : "success";
+  const tone = counts.offline || openAlerts.length || networkCounts.offline
+    ? "danger"
+    : counts.dependency_down || counts.probe_stale || staleProbes.length || networkCounts.degraded || networkCounts.probe_unreachable
+    ? "warning"
+    : "success";
   const headline = tone === "danger" ? "Atencao necessaria" : tone === "warning" ? "Acompanhar operacao" : "Operacao normal";
   const message =
     tone === "danger"
-      ? `${counts.offline} offline e ${openAlerts.length} alerta${openAlerts.length === 1 ? "" : "s"} aberto${openAlerts.length === 1 ? "" : "s"}.`
+      ? `${counts.offline} servidores offline, ${networkCounts.offline} links offline e ${openAlerts.length} alerta${openAlerts.length === 1 ? "" : "s"} aberto${openAlerts.length === 1 ? "" : "s"}.`
       : tone === "warning"
       ? "Ha itens para acompanhar, mas sem queda critica confirmada."
       : "Nenhuma queda critica aberta no momento.";
@@ -1435,6 +1456,22 @@ function renderSimpleDashboard() {
         })
         .join("")
     : `<div class="simple-empty">Tudo certo nos servidores ativos.</div>`;
+  const networkAttentionList = networkProblems.length
+    ? networkProblems
+        .map((link) => {
+          const status = link.displayStatus || link.currentStatus || "unknown";
+          return `
+            <button class="simple-attention-item ${status}" type="button" data-simple-network-link-id="${escapeHtml(link.id)}">
+              <span>
+                <strong>${escapeHtml(link.name)}</strong>
+                <small>${escapeHtml([link.groupName || "Sem empresa", activeNetworkTargetLabel(link)].filter(Boolean).join(" · "))}</small>
+              </span>
+              <em>${networkStatusLabel(status)}</em>
+            </button>
+          `;
+        })
+        .join("")
+    : `<div class="simple-empty">Todos os links monitorados estao operacionais.</div>`;
 
   const groupRows = groupedServers(state.servers)
     .filter((group) => group.servers.some((server) => server.isActive))
@@ -1488,6 +1525,7 @@ function renderSimpleDashboard() {
       <article class="success"><span>Online</span><strong>${counts.online}</strong><small>respondendo</small></article>
       <article class="${counts.offline ? "danger" : "success"}"><span>Offline</span><strong>${counts.offline}</strong><small>${openAlerts.length} alertas</small></article>
       <article class="${staleProbes.length ? "warning" : "success"}"><span>Probes</span><strong>${staleProbes.length}</strong><small>sem contato</small></article>
+      <article class="${networkCounts.offline ? "danger" : networkCounts.degraded || networkCounts.probe_unreachable ? "warning" : "success"}"><span>Links</span><strong>${networkLinks.length}</strong><small>${networkCounts.online} online</small></article>
     </div>
 
     <div class="simple-chart-grid" aria-label="Graficos rapidos">
@@ -1542,6 +1580,14 @@ function renderSimpleDashboard() {
           <span>${problemServers.length ? `${problemServers.length} itens principais` : "Sem acao imediata"}</span>
         </div>
         <div class="simple-attention-list">${attentionList}</div>
+      </section>
+
+      <section class="simple-panel">
+        <div class="panel-title compact-title">
+          <h2>Links de rede</h2>
+          <span>${networkCounts.online}/${networkLinks.length} online</span>
+        </div>
+        <div class="simple-attention-list">${networkAttentionList}</div>
       </section>
 
       <section class="simple-panel">
@@ -3096,6 +3142,62 @@ function networkTargetsForLink(link) {
   return (link?.targetHosts || [link?.targetHost]).filter(Boolean).map((host) => ({ name: "", host }));
 }
 
+function normalizeNetworkTargetInput(target) {
+  return {
+    name: String(target?.name || target?.targetName || "").trim(),
+    host: String(target?.host || target?.targetHost || "").trim()
+  };
+}
+
+function renderNetworkTargetInputs(targets = [{ name: "", host: "" }]) {
+  if (!els.networkLinkTarget) return;
+  const normalized = (targets.length ? targets : [{ name: "", host: "" }]).map(normalizeNetworkTargetInput).slice(0, 10);
+  els.networkLinkTarget.innerHTML = normalized
+    .map((target, index) => `
+      <div class="network-target-input-row" data-network-target-row>
+        <label>
+          Nome do link
+          <input data-network-target-name value="${escapeHtml(target.name)}" placeholder="Vivo, BR Digital" />
+        </label>
+        <label>
+          IP monitorado
+          <input data-network-target-host value="${escapeHtml(target.host)}" required placeholder="187.91.174.154" />
+        </label>
+        <button class="icon-button network-target-remove" type="button" data-remove-network-target title="Remover link" ${index === 0 ? "disabled" : ""}>-</button>
+      </div>
+    `)
+    .join("");
+  if (els.addNetworkTarget) {
+    els.addNetworkTarget.disabled = normalized.length >= 10;
+    els.addNetworkTarget.title = normalized.length >= 10 ? "Limite de 10 links atingido" : "Adicionar link";
+  }
+}
+
+function readNetworkTargetInputs() {
+  if (!els.networkLinkTarget) return [];
+  return [...els.networkLinkTarget.querySelectorAll("[data-network-target-row]")]
+    .map((row) => ({
+      name: row.querySelector("[data-network-target-name]")?.value.trim() || "",
+      host: row.querySelector("[data-network-target-host]")?.value.trim() || ""
+    }))
+    .filter((target) => target.name || target.host);
+}
+
+function addNetworkTargetInput() {
+  const targets = readNetworkTargetInputs();
+  if (targets.length >= 10) return;
+  renderNetworkTargetInputs([...targets, { name: "", host: "" }]);
+}
+
+function removeNetworkTargetInput(button) {
+  const targets = readNetworkTargetInputs();
+  const rows = [...els.networkLinkTarget.querySelectorAll("[data-network-target-row]")];
+  const index = rows.findIndex((row) => row.contains(button));
+  if (index <= 0 || targets.length <= 1) return;
+  targets.splice(index, 1);
+  renderNetworkTargetInputs(targets);
+}
+
 function activeNetworkTargetLabel(link) {
   if (!link?.activeTargetHost) return "-";
   const target = networkTargetsForLink(link).find((item) => item.host === link.activeTargetHost || item.targetHost === link.activeTargetHost);
@@ -3159,7 +3261,7 @@ function renderNetworkDetail(link) {
             <div class="network-target-list">
               ${link.targetResults
                 .map((target) => `
-                  <div class="profile-data-row">
+                  <div class="profile-data-row network-target-card ${target.online ? "online" : "offline"} ${target.targetHost === link.activeTargetHost ? "active" : ""}">
                     <strong>${escapeHtml(networkTargetLabel(target))}${target.targetHost === link.activeTargetHost ? " · ativo" : ""}</strong>
                     <span>${target.online ? "Respondendo" : escapeHtml(target.error || "Sem resposta")}</span>
                     <small>${target.egressActive ? "IP de saida" : `${target.latencyMs ?? "-"} ms`}</small>
@@ -3419,11 +3521,7 @@ function openNetworkLinkDialog(link = null) {
   els.networkLinkProvider.value = link?.provider || "";
   els.networkLinkDevice.value = link?.networkDeviceId || "";
   els.networkLinkType.value = link?.linkType || "internet";
-  els.networkLinkTarget.value = networkTargetsForLink(link).map((target) => {
-    const name = target.name || target.targetName || "";
-    const host = target.host || target.targetHost || "";
-    return name ? `${name} | ${host}` : host;
-  }).filter(Boolean).join("\n");
+  renderNetworkTargetInputs(link ? networkTargetsForLink(link) : [{ name: "", host: "" }]);
   els.networkLinkInterface.value = link?.interfaceName || "";
   els.networkLinkGroup.value = link?.groupId || "";
   if (link?.probeId && state.probes.some((probe) => probe.id === link.probeId)) {
@@ -3510,12 +3608,17 @@ async function submitNetworkDevice(event) {
 async function submitNetworkLink(event) {
   event.preventDefault();
   const id = els.networkLinkId.value;
+  const targets = readNetworkTargetInputs();
+  if (!targets.length || targets.some((target) => !target.host)) {
+    showToast("Informe os IPs", "Cada link cadastrado precisa ter um IP monitorado.");
+    return;
+  }
   const payload = {
     name: els.networkLinkName.value,
     provider: els.networkLinkProvider.value,
     networkDeviceId: els.networkLinkDevice.value || null,
     linkType: els.networkLinkType.value,
-    targets: els.networkLinkTarget.value,
+    targets,
     interfaceName: els.networkLinkInterface.value,
     groupId: els.networkLinkGroup.value || null,
     probeId: els.networkLinkProbe.value || null,
@@ -3776,6 +3879,14 @@ function bindEvents() {
       return;
     }
 
+    const networkButton = eventClosest(event, "[data-simple-network-link-id]");
+    if (networkButton?.dataset.simpleNetworkLinkId) {
+      state.selectedNetworkLinkId = networkButton.dataset.simpleNetworkLinkId;
+      setActiveView("networks");
+      renderNetworks();
+      return;
+    }
+
     const companyButton = eventClosest(event, "[data-simple-company-id]");
     if (companyButton?.dataset.simpleCompanyId) {
       state.filters.groupId = companyButton.dataset.simpleCompanyId;
@@ -3972,6 +4083,11 @@ function bindEvents() {
   els.networkDeviceForm?.addEventListener("submit", submitNetworkDevice);
   els.networkLinkForm?.addEventListener("submit", submitNetworkLink);
   els.networkLinkDevice?.addEventListener("change", applyNetworkDeviceDefaults);
+  els.addNetworkTarget?.addEventListener("click", addNetworkTargetInput);
+  els.networkLinkTarget?.addEventListener("click", (event) => {
+    const button = eventClosest(event, "[data-remove-network-target]");
+    if (button) removeNetworkTargetInput(button);
+  });
 
   els.toggleProbeToken?.addEventListener("click", () => {
     const showToken = els.probeTokenValue.type === "password";

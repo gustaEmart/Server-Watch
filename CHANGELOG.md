@@ -4,6 +4,19 @@ Resumo das versoes estaveis publicadas do ServerWatch.
 
 ## Unreleased
 
+## v2.0.0 - 2026-06-03
+
+- Adiciona monitoramento de redes e links em pagina dedicada.
+- Permite cadastrar dispositivos de rede e links por empresa, operadora, tipo, probe responsavel e limites de latencia/perda.
+- Adiciona monitoramento continuo de links pelo Probe Collector a cada 10 segundos, com queda confirmada apos 3 falhas consecutivas.
+- Permite cadastrar ate 10 alvos por link com campos separados de nome e IP monitorado.
+- Adiciona botoes `+` e `-` no cadastro de links para adicionar/remover alvos dinamicamente, mantendo o primeiro alvo obrigatorio.
+- Identifica o link ativo comparando o IP publico de saida observado pelo probe com os IPs cadastrados.
+- Mantem fallback por melhor resposta ao ping quando o IP publico de saida nao corresponde a nenhum alvo cadastrado.
+- Exibe cards visuais por IP testado, destacando online em verde, offline em vermelho e o alvo ativo.
+- Mostra resumo de links no dashboard inicial, incluindo total monitorado e problemas de rede.
+- Atualiza a documentacao de redes com orientacao operacional sobre ping de IP publico da propria interface, gateway do provedor e alvos SLA.
+
 - Forca a troca da senha do administrador criado automaticamente no primeiro login.
 - Adiciona endpoint autenticado para troca de senha com validacao minima de 8 caracteres.
 - Extrai a logica de transicao de monitoramento para `services/monitor.js`.

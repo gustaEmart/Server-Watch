@@ -176,14 +176,18 @@ Regra inicial:
 - se nao houver correspondencia com o IP publico de saida, o alvo com melhor resposta ao ping vira `activeTargetHost` com `activeDetection = ping`;
 - se nenhum IP responder em 3 ciclos consecutivos, o link vira `offline`.
 
-Formato recomendado no cadastro:
+Observacao operacional:
 
-```text
-Vivo | 187.91.174.154
-BR Digital | 200.0.40.218
-```
+- pingar o IP publico configurado na propria interface do firewall pode continuar respondendo mesmo quando o link esta fora do SD-WAN ou com SLA degradado;
+- para validar queda real do link, prefira usar o gateway do provedor, um alvo SLA externo forcado pela interface, ou uma integracao SNMP/API do roteador/firewall.
 
-Linhas somente com IP continuam validas para compatibilidade.
+Formato do cadastro na UI:
+
+- cada alvo possui campos separados de `Nome do link` e `IP monitorado`;
+- o botao `+` adiciona novos alvos ate o limite de 10;
+- o botao `-` remove apenas o alvo daquela linha;
+- o primeiro alvo permanece obrigatorio e nao pode ser removido;
+- dados antigos em texto continuam validos para compatibilidade.
 
 ### Probe sem contato
 
