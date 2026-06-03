@@ -44,7 +44,10 @@ http://SEU-IP-DA-LAN:3000
 
 ## Como rodar com Docker
 
+Para um servidor novo, use o Docker Compose. Ele sobe o ServerWatch e um MongoDB local em containers separados:
+
 ```bash
+cp .env.example .env
 docker compose up -d --build
 ```
 
@@ -60,7 +63,25 @@ Para alterar a porta externa, copie `.env.example` para `.env` e ajuste:
 SERVERWATCH_PORT=3000
 ```
 
-O Docker Compose cria um volume chamado `serverwatch_data` para persistir os dados.
+Antes de expor fora da rede local, ajuste no `.env` pelo menos:
+
+```text
+MONGO_INITDB_ROOT_PASSWORD=uma-senha-forte
+MONGODB_URI=mongodb://serverwatch:uma-senha-forte@mongodb:27017/serverwatch?authSource=admin
+SERVERWATCH_ADMIN_EMAIL=seu-email
+SERVERWATCH_ADMIN_PASSWORD=uma-senha-inicial-forte
+SERVERWATCH_PROBE_TOKEN=um-token-forte-para-os-probes
+```
+
+O Compose cria os volumes `serverwatch_data` e `mongodb_data`. Em deploys novos, os dados da aplicacao ficam no MongoDB. A pasta local `downloads/` e montada em `/app/downloads` para servir artefatos grandes do Probe Collector, como o instalador Windows e runtimes Node.js, sem precisar rebuildar a imagem.
+
+Comandos uteis:
+
+```bash
+docker compose ps
+docker compose logs -f serverwatch
+docker compose logs -f mongodb
+```
 
 ## Como rodar no Linux com systemd
 
