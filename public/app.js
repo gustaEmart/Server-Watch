@@ -664,6 +664,43 @@ function escapeHtml(value) {
     .replaceAll("'", "&#039;");
 }
 
+const alphaCollator = new Intl.Collator("pt-BR", {
+  numeric: true,
+  sensitivity: "base"
+});
+
+function alphaText(value) {
+  return String(value ?? "").trim();
+}
+
+function compareAlpha(left, right) {
+  return alphaCollator.compare(alphaText(left), alphaText(right));
+}
+
+function sortedByAlpha(items, getLabel) {
+  return [...(items || [])].sort((left, right) => compareAlpha(getLabel(left), getLabel(right)));
+}
+
+function groupSortLabel(group) {
+  return group?.name || "";
+}
+
+function serverSortLabel(server) {
+  return server?.name || server?.hostname || server?.id || "";
+}
+
+function probeSortLabel(probe) {
+  return probe?.name || probe?.hostName || probe?.id || "";
+}
+
+function networkLinkSortLabel(link) {
+  return [link?.groupName || groupLabel(link?.groupId), link?.name || link?.provider || link?.id || ""].join(" ");
+}
+
+function networkDeviceSortLabel(device) {
+  return device?.name || device?.managementIp || device?.id || "";
+}
+
 function setConnection(status) {
   els.connectionDot.className = `connection-dot ${status}`;
   if (status === "connected") {
@@ -696,13 +733,13 @@ function applySnapshot(payload) {
     state.selectedServerId = null;
   }
   if (!state.selectedServerId && state.servers.length) {
-    state.selectedServerId = state.servers[0].id;
+    state.selectedServerId = sortedByAlpha(state.servers, serverSortLabel)[0].id;
   }
   if (state.selectedNetworkLinkId && !state.networkLinks.some((link) => link.id === state.selectedNetworkLinkId)) {
     state.selectedNetworkLinkId = null;
   }
   if (!state.selectedNetworkLinkId && state.networkLinks.length) {
-    state.selectedNetworkLinkId = state.networkLinks[0].id;
+    state.selectedNetworkLinkId = sortedByAlpha(state.networkLinks, networkLinkSortLabel)[0].id;
   }
   renderGroupOptions();
   renderProbeOptions();
@@ -803,7 +840,7 @@ function updateActiveFilterCount() {
 function upsertServer(server) {
   if (server.deletedAt) {
     state.servers = state.servers.filter((item) => item.id !== server.id);
-    if (state.selectedServerId === server.id) state.selectedServerId = state.servers[0]?.id || null;
+    if (state.selectedServerId === server.id) state.selectedServerId = sortedByAlpha(state.servers, serverSortLabel)[0]?.id || null;
     return;
   }
   const index = state.servers.findIndex((item) => item.id === server.id);
@@ -877,7 +914,7 @@ function connectSocket() {
 }
 
 function renderGroupOptions() {
-  const groupOptions = state.groups
+  const groupOptions = sortedByAlpha(state.groups, groupSortLabel)
     .map((group) => `<option value="${group.id}">${escapeHtml(group.name)}</option>`)
     .join("");
 
@@ -917,7 +954,7 @@ function renderGroupOptions() {
     const current = els.networkLinkDevice.value;
     els.networkLinkDevice.innerHTML = `
       <option value="">Sem dispositivo</option>
-      ${state.networkDevices.map((device) => `<option value="${escapeHtml(device.id)}">${escapeHtml(device.name)}</option>`).join("")}
+      ${sortedByAlpha(state.networkDevices, networkDeviceSortLabel).map((device) => `<option value="${escapeHtml(device.id)}">${escapeHtml(device.name)}</option>`).join("")}
     `;
     if ([...els.networkLinkDevice.options].some((option) => option.value === current)) {
       els.networkLinkDevice.value = current;
@@ -933,7 +970,7 @@ function renderAlertGroupOptions(groupOptions = "") {
   els.alertGroupFilter.innerHTML = `
     <option value="all">Todas empresas</option>
     <option value="none">Sem empresa</option>
-    ${groupOptions || state.groups.map((group) => `<option value="${group.id}">${escapeHtml(group.name)}</option>`).join("")}
+    ${groupOptions || sortedByAlpha(state.groups, groupSortLabel).map((group) => `<option value="${group.id}">${escapeHtml(group.name)}</option>`).join("")}
   `;
   els.alertGroupFilter.value = [...els.alertGroupFilter.options].some((option) => option.value === current) ? current : "all";
   state.alertFilters.groupId = els.alertGroupFilter.value;
@@ -942,8 +979,9 @@ function renderAlertGroupOptions(groupOptions = "") {
 function renderParentOptions(currentServerId = "") {
   if (!els.serverParentId) return;
   const current = els.serverParentId.value;
-  const candidates = state.servers.filter(
-    (server) => !server.deletedAt && server.id !== currentServerId && server.nodeType === "hypervisor"
+  const candidates = sortedByAlpha(
+    state.servers.filter((server) => !server.deletedAt && server.id !== currentServerId && server.nodeType === "hypervisor"),
+    serverSortLabel
   );
   els.serverParentId.innerHTML = `
     <option value="">Sem dependencia</option>
@@ -1008,7 +1046,7 @@ function renderVirtualizerChildOptions(currentServerId = "") {
       .filter((server) => server.parentId === currentServerId && !server.deletedAt)
       .forEach((server) => selected.add(server.id));
   }
-  const candidates = virtualizerChildCandidates(currentServerId);
+  const candidates = sortedByAlpha(virtualizerChildCandidates(currentServerId), serverSortLabel);
   els.serverChildIds.innerHTML = candidates.length
     ? candidates
         .map((server) => {
@@ -1060,7 +1098,8 @@ function renderProbeOptions() {
   }
 
   els.serverProbeId.disabled = false;
-  const probeOptions = state.probes
+  const probes = sortedByAlpha(state.probes, probeSortLabel);
+  const probeOptions = probes
     .map((probe) => {
       const address = probe.primaryAddress || probe.addresses?.[0] || probe.lastAddress || "";
       const label = `${probe.name || probe.id} (${address || probe.id})`;
@@ -1068,13 +1107,13 @@ function renderProbeOptions() {
     })
     .join("");
   els.serverProbeId.innerHTML = probeOptions;
-  els.serverProbeId.value = state.probes.some((probe) => probe.id === current) ? current : state.probes[0].id;
+  els.serverProbeId.value = probes.some((probe) => probe.id === current) ? current : probes[0].id;
   for (const select of [els.networkDeviceProbe, els.networkLinkProbe]) {
     if (!select) continue;
     const previous = select.value;
     select.disabled = false;
     select.innerHTML = probeOptions;
-    select.value = state.probes.some((probe) => probe.id === previous) ? previous : state.probes[0].id;
+    select.value = probes.some((probe) => probe.id === previous) ? previous : probes[0].id;
   }
   if (els.serverProbeHint) {
     const selected = state.probes.find((probe) => probe.id === els.serverProbeId.value);
@@ -1117,6 +1156,15 @@ function groupFilterMatches(server) {
 function renderCompanyNav() {
   if (!els.companyNav) return;
   const noneCount = state.servers.filter((server) => !server.groupId).length;
+  const companyButtons = sortedByAlpha(state.groups, groupSortLabel).map((group) => {
+    const servers = state.servers.filter((server) => server.groupId === group.id);
+    return {
+      id: group.id,
+      name: group.name,
+      count: servers.length,
+      offline: servers.filter((server) => server.isActive && server.currentStatus === "offline").length
+    };
+  });
   const buttons = [
     {
       id: "all",
@@ -1124,15 +1172,7 @@ function renderCompanyNav() {
       count: state.servers.length,
       offline: state.servers.filter((server) => server.isActive && server.currentStatus === "offline").length
     },
-    ...state.groups.map((group) => {
-      const servers = state.servers.filter((server) => server.groupId === group.id);
-      return {
-        id: group.id,
-        name: group.name,
-        count: servers.length,
-        offline: servers.filter((server) => server.isActive && server.currentStatus === "offline").length
-      };
-    }),
+    ...companyButtons,
     {
       id: "none",
       name: "Sem empresa",
@@ -1326,7 +1366,7 @@ function renderSimpleDashboard() {
     .filter((server) => ["offline", "probe_stale", "dependency_down"].includes(displayStatus(server)))
     .sort((left, right) => {
       const order = { offline: 0, dependency_down: 1, probe_stale: 2 };
-      return (order[displayStatus(left)] ?? 3) - (order[displayStatus(right)] ?? 3);
+      return (order[displayStatus(left)] ?? 3) - (order[displayStatus(right)] ?? 3) || compareAlpha(serverSortLabel(left), serverSortLabel(right));
     })
     .slice(0, 4);
   const staleProbes = state.probes.filter((probe) => probe.status === "stale");
@@ -1343,14 +1383,20 @@ function renderSimpleDashboard() {
     .filter((link) => ["offline", "degraded", "probe_unreachable"].includes(link.displayStatus || link.currentStatus))
     .sort((left, right) => {
       const order = { offline: 0, probe_unreachable: 1, degraded: 2 };
-      return (order[left.displayStatus || left.currentStatus] ?? 3) - (order[right.displayStatus || right.currentStatus] ?? 3);
+      return (
+        (order[left.displayStatus || left.currentStatus] ?? 3) - (order[right.displayStatus || right.currentStatus] ?? 3) ||
+        compareAlpha(networkLinkSortLabel(left), networkLinkSortLabel(right))
+      );
     })
     .slice(0, 4);
   const networkRows = networkLinks
     .slice()
     .sort((left, right) => {
       const order = { offline: 0, probe_unreachable: 1, degraded: 2, unknown: 3, online: 4, paused: 5 };
-      return (order[left.displayStatus || left.currentStatus] ?? 6) - (order[right.displayStatus || right.currentStatus] ?? 6) || left.name.localeCompare(right.name, "pt-BR");
+      return (
+        (order[left.displayStatus || left.currentStatus] ?? 6) - (order[right.displayStatus || right.currentStatus] ?? 6) ||
+        compareAlpha(networkLinkSortLabel(left), networkLinkSortLabel(right))
+      );
     });
   const networkOverviewList = networkRows.length
     ? networkRows
@@ -1445,7 +1491,7 @@ function renderSimpleDashboard() {
         availability: health
       };
     })
-    .sort((left, right) => right.attention - left.attention || left.availability - right.availability || left.name.localeCompare(right.name, "pt-BR"));
+    .sort((left, right) => right.attention - left.attention || left.availability - right.availability || compareAlpha(left.name, right.name));
 
   const groupHealthBars = groupHealth
     .slice(0, 5)
@@ -1516,7 +1562,7 @@ function renderSimpleDashboard() {
     })
     .sort((left, right) => {
       const order = { danger: 0, warning: 1, success: 2 };
-      return (order[left.tone] ?? 3) - (order[right.tone] ?? 3) || left.name.localeCompare(right.name, "pt-BR");
+      return (order[left.tone] ?? 3) - (order[right.tone] ?? 3) || compareAlpha(left.name, right.name);
     })
     .slice(0, 6)
     .map(
@@ -1661,7 +1707,7 @@ function renderExecutiveDashboard() {
     .filter((server) => server.currentStatus === "offline")
     .sort((left, right) => {
       const priority = { production: 0, staging: 1, development: 2 };
-      return (priority[left.environment] ?? 3) - (priority[right.environment] ?? 3);
+      return (priority[left.environment] ?? 3) - (priority[right.environment] ?? 3) || compareAlpha(serverSortLabel(left), serverSortLabel(right));
     })
     .slice(0, 5);
   const recentDrops = state.events
@@ -1672,7 +1718,7 @@ function renderExecutiveDashboard() {
     .slice(0, 4);
   const worstLatencies = activeServers
     .filter((server) => server.currentStatus === "online" && Number.isFinite(Number(server.lastLatencyMs)))
-    .sort((left, right) => Number(right.lastLatencyMs) - Number(left.lastLatencyMs))
+    .sort((left, right) => Number(right.lastLatencyMs) - Number(left.lastLatencyMs) || compareAlpha(serverSortLabel(left), serverSortLabel(right)))
     .slice(0, 4);
   const clientsWithAlerts = groupedServers(state.servers)
     .map((group) => {
@@ -1685,12 +1731,12 @@ function renderExecutiveDashboard() {
       };
     })
     .filter((group) => group.openAlerts || group.offline)
-    .sort((left, right) => right.openAlerts - left.openAlerts || right.offline - left.offline)
+    .sort((left, right) => right.openAlerts - left.openAlerts || right.offline - left.offline || compareAlpha(left.name, right.name))
     .slice(0, 4);
   const availabilityByCompany = groupedServers(state.servers)
     .map((group) => ({ ...group, availability: availabilityForServers(group.servers) }))
     .filter((group) => group.servers.some((server) => server.isActive))
-    .sort((left, right) => left.availability - right.availability)
+    .sort((left, right) => left.availability - right.availability || compareAlpha(left.name, right.name))
     .slice(0, 4);
   const byEnvironment = ["production", "staging", "development"].map((environment) => {
     const servers = activeServers.filter((server) => server.environment === environment);
@@ -1725,7 +1771,7 @@ function renderExecutiveDashboard() {
       <div class="executive-list">
         ${
           staleProbes.length
-            ? staleProbes
+            ? sortedByAlpha(staleProbes, probeSortLabel)
                 .slice(0, 4)
                 .map((probe) =>
                   executiveItem({
@@ -1929,6 +1975,9 @@ function renderServerTopology(servers) {
     children.push(server);
     childrenByParent.set(server.parentId, children);
   }
+  for (const [parentId, children] of childrenByParent.entries()) {
+    childrenByParent.set(parentId, sortedByAlpha(children, serverSortLabel));
+  }
 
   const renderNode = (server, depth = 0, visited = new Set()) => {
     const children = childrenByParent.get(server.id) || [];
@@ -1945,8 +1994,10 @@ function renderServerTopology(servers) {
     `;
   };
 
-  return servers
-    .filter((server) => !server.parentId || !visibleIds.has(server.parentId))
+  return sortedByAlpha(
+    servers.filter((server) => !server.parentId || !visibleIds.has(server.parentId)),
+    serverSortLabel
+  )
     .map((server) => renderNode(server))
     .join("");
 }
@@ -1971,15 +2022,21 @@ function groupedServers(servers) {
   const groups = [];
   const knownGroupIds = new Set(state.groups.map((group) => group.id));
 
-  for (const group of state.groups) {
-    const items = servers.filter((server) => server.groupId === group.id);
+  for (const group of sortedByAlpha(state.groups, groupSortLabel)) {
+    const items = sortedByAlpha(
+      servers.filter((server) => server.groupId === group.id),
+      serverSortLabel
+    );
     if (items.length) groups.push({ id: group.id, name: group.name, servers: items });
   }
 
-  const withoutGroup = servers.filter((server) => !server.groupId || !knownGroupIds.has(server.groupId));
+  const withoutGroup = sortedByAlpha(
+    servers.filter((server) => !server.groupId || !knownGroupIds.has(server.groupId)),
+    serverSortLabel
+  );
   if (withoutGroup.length) groups.push({ id: "none", name: "Sem empresa", servers: withoutGroup });
 
-  return groups;
+  return sortedByAlpha(groups, (group) => group.name);
 }
 
 function renderServers() {
@@ -2188,9 +2245,9 @@ function renderDetail() {
 
 function sortedServersForDirectory() {
   return [...state.servers].sort((a, b) => {
-    const groupCompare = groupLabel(a.groupId).localeCompare(groupLabel(b.groupId), "pt-BR");
+    const groupCompare = compareAlpha(groupLabel(a.groupId), groupLabel(b.groupId));
     if (groupCompare) return groupCompare;
-    return String(a.name || "").localeCompare(String(b.name || ""), "pt-BR");
+    return compareAlpha(serverSortLabel(a), serverSortLabel(b));
   });
 }
 
@@ -2242,7 +2299,10 @@ function renderServerProfile() {
   const system = metrics?.system || {};
   const primaryInterface = (metrics?.networkInterfaces || []).find((item) => interfacePrimaryAddress(item)) || metrics?.networkInterfaces?.[0] || null;
   const recent = state.events.filter((event) => event.serverId === server.id).slice(0, 10);
-  const dependents = state.servers.filter((item) => item.parentId === server.id);
+  const dependents = sortedByAlpha(
+    state.servers.filter((item) => item.parentId === server.id),
+    serverSortLabel
+  );
   const macAddresses = Array.isArray(server.macAddresses) && server.macAddresses.length ? server.macAddresses : primaryMac(server) ? [primaryMac(server)] : [];
   const statusTimeLabel = !server.isActive
     ? "Monitoramento pausado"
@@ -2378,7 +2438,7 @@ function renderServerProfile() {
 function renderHistoryFilters() {
   if (!els.historyServerFilter) return;
   const current = state.historyFilters.serverId;
-  const options = state.servers
+  const options = sortedByAlpha(state.servers, serverSortLabel)
     .map((server) => `<option value="${escapeHtml(server.id)}">${escapeHtml(server.name)} (${escapeHtml(server.hostname)})</option>`)
     .join("");
   els.historyServerFilter.innerHTML = `<option value="all">Todos servidores</option>${options}`;
@@ -2503,7 +2563,7 @@ function renderGroups() {
     return;
   }
 
-  els.groupsList.innerHTML = state.groups
+  els.groupsList.innerHTML = sortedByAlpha(state.groups, groupSortLabel)
     .map((group) => {
       const servers = state.servers.filter((server) => server.groupId === group.id);
       const links = state.networkLinks.filter((link) => link.groupId === group.id);
@@ -2546,7 +2606,7 @@ function renderUsers() {
   els.userCount.textContent = `${state.users.length} ${state.users.length === 1 ? "usuario" : "usuarios"}`;
 
   els.usersList.innerHTML = state.users.length
-    ? state.users
+    ? sortedByAlpha(state.users, (user) => user.name || user.email || user.id)
         .map(
           (user) => `
             <article class="user-card ${user.isActive ? "" : "inactive"}">
@@ -2968,7 +3028,7 @@ function renderProbeDetail(probe) {
     return;
   }
 
-  const linkedServers = probeLinkedServers(probe.id);
+  const linkedServers = sortedByAlpha(probeLinkedServers(probe.id), serverSortLabel);
   const reinstallCommand = probeInstallCommandFor(probe);
   const mac = primaryMac(probe);
   const address = probe.primaryAddress || probe.addresses?.[0] || probe.lastAddress || "-";
@@ -3096,15 +3156,16 @@ function renderProbes() {
     els.updateOutdatedProbes.disabled = updatableCount === 0;
     els.updateOutdatedProbes.textContent = updatableCount ? `Atualizar ${updatableCount}` : "Atualizar desatualizados";
   }
+  const probes = sortedByAlpha(state.probes, probeSortLabel);
   if (state.selectedProbeId && !state.probes.some((probe) => probe.id === state.selectedProbeId)) {
     state.selectedProbeId = null;
   }
-  if (!state.selectedProbeId && state.probes.length) {
-    state.selectedProbeId = state.probes[0].id;
+  if (!state.selectedProbeId && probes.length) {
+    state.selectedProbeId = probes[0].id;
   }
 
-  els.probesList.innerHTML = state.probes.length
-    ? state.probes
+  els.probesList.innerHTML = probes.length
+    ? probes
         .map(
           (probe) => `
             <button class="probe-card ${state.selectedProbeId === probe.id ? "selected" : ""}" type="button" data-probe-id="${escapeHtml(probe.id)}">
@@ -3381,7 +3442,7 @@ function renderNetworkDetail(link) {
 
 function renderNetworks() {
   if (!els.networkLinksList) return;
-  const links = state.networkLinks || [];
+  const links = sortedByAlpha(state.networkLinks || [], networkLinkSortLabel);
   const counts = links.reduce((acc, link) => {
     const status = link.displayStatus || link.currentStatus || "unknown";
     acc[status] = (acc[status] || 0) + 1;
@@ -4068,7 +4129,7 @@ function bindEvents() {
       try {
         await api(`/api/network/links/${encodeURIComponent(link.id)}`, { method: "DELETE" });
         state.networkLinks = state.networkLinks.filter((item) => item.id !== link.id);
-        state.selectedNetworkLinkId = state.networkLinks[0]?.id || null;
+        state.selectedNetworkLinkId = sortedByAlpha(state.networkLinks, networkLinkSortLabel)[0]?.id || null;
         renderNetworks();
         showToast("Link excluido", `${link.name} saiu do monitoramento.`);
       } catch (error) {
@@ -4296,7 +4357,7 @@ function bindEvents() {
       try {
         await api(`/api/probes/${encodeURIComponent(probe.id)}`, { method: "DELETE" });
         state.probes = state.probes.filter((item) => item.id !== probe.id);
-        state.selectedProbeId = state.probes[0]?.id || null;
+        state.selectedProbeId = sortedByAlpha(state.probes, probeSortLabel)[0]?.id || null;
         renderProbeOptions();
         renderProbes();
         showToast("Probe removido", `${probe.name || probe.id} saiu da lista de collectors.`);

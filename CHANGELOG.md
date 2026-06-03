@@ -4,6 +4,7 @@ Resumo das versoes estaveis publicadas do ServerWatch.
 
 ## Unreleased
 
+- Organiza alfabeticamente listas e seletores operacionais de empresas, servidores, VMs, probes, usuarios, dispositivos e links.
 - Permite remover empresas escolhendo entre desvincular servidores/links/dispositivos ou excluir tambem os cadastros vinculados.
 - Ajusta a deteccao de link ativo para cenarios com gateways de operadora: quando apenas um alvo responde ele e marcado como ativo; quando mais de um responde, a UI mostra melhor resposta ao ping em vez de indicar certeza operacional.
 - Adiciona mascara por alvo de link, como `/30`, `/29` ou `/28`, para associar o IP publico de saida ao gateway correto.
