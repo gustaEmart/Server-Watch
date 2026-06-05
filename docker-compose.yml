@@ -11,13 +11,20 @@ services:
       HOST: 0.0.0.0
       PORT: 3000
       DATA_DIR: /app/data
-      SERVERWATCH_STORAGE: ${SERVERWATCH_STORAGE:-json}
-      MONGODB_URI: ${MONGODB_URI:-}
+      SERVERWATCH_STORAGE: ${SERVERWATCH_STORAGE:-mongodb}
+      MONGODB_URI: ${MONGODB_URI:-mongodb://serverwatch:troque-essa-senha@mongodb:27017/serverwatch?authSource=admin}
       MONGODB_DB: ${MONGODB_DB:-serverwatch}
+      SERVERWATCH_ADMIN_EMAIL: ${SERVERWATCH_ADMIN_EMAIL:-admin@serverwatch.local}
+      SERVERWATCH_ADMIN_PASSWORD: ${SERVERWATCH_ADMIN_PASSWORD:-admin123}
+      SERVERWATCH_PROBE_TOKEN: ${SERVERWATCH_PROBE_TOKEN:-}
     ports:
       - "${SERVERWATCH_PORT:-3000}:3000"
     volumes:
       - serverwatch_data:/app/data
+      - ./downloads:/app/downloads:ro
+    depends_on:
+      mongodb:
+        condition: service_healthy
     cap_add:
       - NET_RAW
     healthcheck:
@@ -31,8 +38,6 @@ services:
     image: mongo:7
     container_name: serverwatch-mongodb
     restart: unless-stopped
-    profiles:
-      - mongodb
     ports:
       - "127.0.0.1:27017:27017"
     environment:
@@ -40,6 +45,12 @@ services:
       MONGO_INITDB_ROOT_PASSWORD: ${MONGO_INITDB_ROOT_PASSWORD:-troque-essa-senha}
     volumes:
       - mongodb_data:/data/db
+    healthcheck:
+      test: ["CMD-SHELL", "mongosh --quiet -u \"$${MONGO_INITDB_ROOT_USERNAME}\" -p \"$${MONGO_INITDB_ROOT_PASSWORD}\" --authenticationDatabase admin --eval \"db.adminCommand('ping').ok\""]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
 
 volumes:
   serverwatch_data:

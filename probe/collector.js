@@ -5,8 +5,36 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const DEFAULT_CONFIG = new URL("./config.json", import.meta.url);
-const VERSION = "0.5.0";
+const VERSION = "0.6.7";
 const DEFAULT_QUEUE_MAX_BATCHES = 1000;
+const HOST_METRICS_CACHE_MS = 60 * 1000;
+const HOST_METRICS_TIMEOUT_MS = 7000;
+const REQUEST_TIMEOUT_MS = 15000;
+const PUBLIC_IP_ENDPOINTS = [
+  "https://api.ipify.org",
+  "https://ifconfig.me/ip",
+  "https://icanhazip.com"
+];
+const handledUpdateRequests = new Set();
+const CRITICAL_SERVICE_NAMES = [
+  "apache2",
+  "docker",
+  "glpi-agent",
+  "httpd",
+  "mariadb",
+  "mssql-server",
+  "mysql",
+  "nginx",
+  "postgresql",
+  "sshd",
+  "zabbix-agent",
+  "Docker",
+  "MSSQLSERVER",
+  "MySQL",
+  "Spooler",
+  "W3SVC",
+  "WinRM"
+];
 
 function argValue(name) {
   const index = process.argv.indexOf(name);
@@ -29,9 +57,12 @@ async function loadConfig() {
   const configPath = argValue("--config") || process.env.SERVERWATCH_PROBE_CONFIG || DEFAULT_CONFIG;
   const raw = (await readFile(configPath, "utf8")).replace(/^\uFEFF/, "");
   const config = JSON.parse(raw);
+  config.token = String(process.env.PROBE_TOKEN || config.token || "").trim();
   const required = ["serverUrl", "probeId", "token"];
   for (const key of required) {
-    if (!config[key]) throw new Error(`Missing required config field: ${key}`);
+    if (!config[key]) {
+      throw new Error(key === "token" ? "Missing probe token. Set PROBE_TOKEN or config.token." : `Missing required config field: ${key}`);
+    }
   }
   return {
     intervalSeconds: 10,
@@ -101,6 +132,14 @@ function cpuUsageFromSnapshots(start, end) {
   return Math.round(usages.reduce((sum, value) => sum + value, 0) / usages.length);
 }
 
+function withTimeout(promise, timeoutMs, message) {
+  let timeoutId;
+  const timeout = new Promise((_, reject) => {
+    timeoutId = setTimeout(() => reject(new Error(message)), timeoutMs);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timeoutId));
+}
+
 function runCommand(command, args, timeoutMs = 2500) {
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, { shell: false });
@@ -132,16 +171,20 @@ function runCommand(command, args, timeoutMs = 2500) {
   });
 }
 
+function runPowerShell(command, timeoutMs = 2500) {
+  return runCommand("powershell.exe", [
+    "-NoProfile",
+    "-ExecutionPolicy",
+    "Bypass",
+    "-Command",
+    `[Console]::OutputEncoding=[System.Text.Encoding]::UTF8; $OutputEncoding=[System.Text.Encoding]::UTF8; ${command}`
+  ], timeoutMs);
+}
+
 async function diskUsage() {
   try {
     if (os.platform() === "win32") {
-      const output = await runCommand("powershell.exe", [
-        "-NoProfile",
-        "-ExecutionPolicy",
-        "Bypass",
-        "-Command",
-        "$d=Get-CimInstance Win32_LogicalDisk -Filter \"DeviceID='C:'\"; if($d){[pscustomobject]@{mount=$d.DeviceID;totalBytes=[int64]$d.Size;freeBytes=[int64]$d.FreeSpace}|ConvertTo-Json -Compress}"
-      ]);
+      const output = await runPowerShell("$d=Get-CimInstance Win32_LogicalDisk -Filter \"DeviceID='C:'\"; if($d){[pscustomobject]@{mount=$d.DeviceID;totalBytes=[int64]$d.Size;freeBytes=[int64]$d.FreeSpace}|ConvertTo-Json -Compress}");
       const parsed = JSON.parse(output.trim());
       const totalBytes = Number(parsed.totalBytes || 0);
       const freeBytes = Number(parsed.freeBytes || 0);
@@ -177,6 +220,294 @@ async function diskUsage() {
   }
 }
 
+async function diskPartitions() {
+  try {
+    if (os.platform() === "win32") {
+      const output = await runPowerShell("Get-CimInstance Win32_LogicalDisk -Filter \"DriveType=3\" | Select-Object DeviceID,VolumeName,FileSystem,Size,FreeSpace | ConvertTo-Json -Compress", 4000);
+      const parsed = JSON.parse(output.trim() || "[]");
+      const rows = Array.isArray(parsed) ? parsed : [parsed];
+      return rows
+        .map((row) => {
+          const totalBytes = Number(row.Size || 0);
+          const freeBytes = Number(row.FreeSpace || 0);
+          if (!totalBytes) return null;
+          const usedBytes = Math.max(0, totalBytes - freeBytes);
+          return {
+            mount: String(row.DeviceID || "").trim(),
+            label: String(row.VolumeName || "").trim() || null,
+            filesystem: String(row.FileSystem || "").trim() || null,
+            totalBytes,
+            freeBytes,
+            usedBytes,
+            usedPercent: Math.round((usedBytes / totalBytes) * 100)
+          };
+        })
+        .filter(Boolean)
+        .slice(0, 24);
+    }
+
+    const output = await runCommand("df", ["-kPT", "-x", "tmpfs", "-x", "devtmpfs", "-x", "squashfs"], 4000);
+    return output
+      .trim()
+      .split(/\r?\n/)
+      .slice(1)
+      .map((line) => {
+        const parts = line.split(/\s+/);
+        if (parts.length < 7) return null;
+        const totalBytes = Number(parts[2]) * 1024;
+        const usedBytes = Number(parts[3]) * 1024;
+        const freeBytes = Number(parts[4]) * 1024;
+        if (!totalBytes) return null;
+        return {
+          filesystem: parts[1] || null,
+          mount: parts.slice(6).join(" ") || parts[6] || null,
+          totalBytes,
+          usedBytes,
+          freeBytes,
+          usedPercent: Math.round((usedBytes / totalBytes) * 100)
+        };
+      })
+      .filter(Boolean)
+      .slice(0, 24);
+  } catch {
+    return [];
+  }
+}
+
+function splitCommandLines(output) {
+  return String(output || "").trim().split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+}
+
+async function listeningPorts() {
+  try {
+    if (os.platform() === "win32") {
+      const output = await runPowerShell("Get-NetTCPConnection -State Listen | Select-Object LocalAddress,LocalPort,OwningProcess | Sort-Object LocalPort -Unique | ConvertTo-Json -Compress", 4000);
+      const parsed = JSON.parse(output.trim() || "[]");
+      const rows = Array.isArray(parsed) ? parsed : [parsed];
+      return rows
+        .map((row) => ({
+          protocol: "tcp",
+          address: String(row.LocalAddress || "").trim() || null,
+          port: Number(row.LocalPort),
+          processId: Number(row.OwningProcess) || null
+        }))
+        .filter((row) => Number.isFinite(row.port) && row.port > 0)
+        .slice(0, 64);
+    }
+
+    let output = "";
+    try {
+      output = await runCommand("ss", ["-ltnH"], 3500);
+    } catch {
+      output = await runCommand("netstat", ["-ltn"], 3500);
+    }
+    return splitCommandLines(output)
+      .map((line) => {
+        const parts = line.split(/\s+/);
+        const endpoint = parts.find((part) => /:\d+$/.test(part));
+        if (!endpoint) return null;
+        const match = endpoint.match(/^(.*):(\d+)$/);
+        if (!match) return null;
+        return {
+          protocol: "tcp",
+          address: match[1].replace(/^\[|\]$/g, "") || null,
+          port: Number(match[2])
+        };
+      })
+      .filter((row) => row && Number.isFinite(row.port) && row.port > 0)
+      .filter((row, index, rows) => rows.findIndex((item) => item.port === row.port && item.address === row.address) === index)
+      .sort((a, b) => a.port - b.port)
+      .slice(0, 64);
+  } catch {
+    return [];
+  }
+}
+
+async function criticalServices() {
+  try {
+    if (os.platform() === "win32") {
+      const names = CRITICAL_SERVICE_NAMES.map((name) => `'${name.replace(/'/g, "''")}'`).join(",");
+      const output = await runPowerShell(`$names=@(${names}); Get-Service | Where-Object {$names -contains $_.Name -or $names -contains $_.DisplayName} | Select-Object Name,DisplayName,Status,StartType | ConvertTo-Json -Compress`, 4500);
+      const parsed = JSON.parse(output.trim() || "[]");
+      const rows = Array.isArray(parsed) ? parsed : [parsed];
+      return rows
+        .map((row) => ({
+          name: String(row.Name || "").trim(),
+          displayName: String(row.DisplayName || "").trim() || null,
+          status: String(row.Status || "").trim() || null,
+          startType: String(row.StartType || "").trim() || null
+        }))
+        .filter((row) => row.name)
+        .slice(0, 32);
+    }
+
+    const output = await runCommand("systemctl", ["list-units", "--type=service", "--all", "--no-legend", "--no-pager"], 4500);
+    const watched = new Set(CRITICAL_SERVICE_NAMES.map((name) => name.toLowerCase()));
+    return splitCommandLines(output)
+      .map((line) => {
+        const parts = line.replace(/^●\s*/, "").split(/\s+/);
+        const unit = parts[0] || "";
+        const baseName = unit.replace(/\.service$/, "").toLowerCase();
+        if (!watched.has(baseName)) return null;
+        return {
+          name: unit,
+          displayName: unit.replace(/\.service$/, ""),
+          load: parts[1] || null,
+          active: parts[2] || null,
+          status: parts[3] || null
+        };
+      })
+      .filter(Boolean)
+      .slice(0, 32);
+  } catch {
+    return [];
+  }
+}
+
+async function topProcesses() {
+  try {
+    if (os.platform() === "win32") {
+      const output = await runPowerShell("Get-Process | Sort-Object CPU -Descending | Select-Object -First 10 ProcessName,Id,CPU,WorkingSet64 | ConvertTo-Json -Compress", 4500);
+      const parsed = JSON.parse(output.trim() || "[]");
+      const rows = Array.isArray(parsed) ? parsed : [parsed];
+      return rows
+        .map((row) => ({
+          name: String(row.ProcessName || "").trim(),
+          processId: Number(row.Id) || null,
+          cpuSeconds: Number(row.CPU) || null,
+          memoryBytes: Number(row.WorkingSet64) || null
+        }))
+        .filter((row) => row.name)
+        .slice(0, 10);
+    }
+
+    const output = await runCommand("ps", ["-eo", "pid,comm,pcpu,pmem,rss", "--sort=-pcpu"], 3500);
+    return splitCommandLines(output)
+      .slice(1, 11)
+      .map((line) => {
+        const parts = line.split(/\s+/);
+        return {
+          processId: Number(parts[0]) || null,
+          name: parts[1] || "",
+          cpuPercent: Number(parts[2]) || null,
+          memoryPercent: Number(parts[3]) || null,
+          memoryBytes: Number(parts[4]) ? Number(parts[4]) * 1024 : null
+        };
+      })
+      .filter((row) => row.name);
+  } catch {
+    return [];
+  }
+}
+
+async function criticalEvents() {
+  try {
+    if (os.platform() === "win32") {
+      const output = await runPowerShell("Get-WinEvent -FilterHashtable @{LogName=@('System','Application');Level=@(1,2)} -MaxEvents 10 | Select-Object TimeCreated,ProviderName,Id,LevelDisplayName,Message | ConvertTo-Json -Compress", 6000);
+      const parsed = JSON.parse(output.trim() || "[]");
+      const rows = Array.isArray(parsed) ? parsed : [parsed];
+      return rows
+        .map((row) => ({
+          createdAt: row.TimeCreated || null,
+          source: String(row.ProviderName || "").trim() || null,
+          eventId: Number(row.Id) || null,
+          level: String(row.LevelDisplayName || "").trim() || null,
+          message: String(row.Message || "").replace(/\s+/g, " ").trim().slice(0, 500)
+        }))
+        .filter((row) => row.message || row.source)
+        .slice(0, 10);
+    }
+
+    const output = await runCommand("journalctl", ["-p", "err..alert", "-n", "10", "--no-pager", "-o", "short-iso"], 5000);
+    return splitCommandLines(output)
+      .map((line) => {
+        const match = line.match(/^(\S+\s+\S+)\s+\S+\s+([^:]+):\s*(.*)$/);
+        return {
+          createdAt: match?.[1] || null,
+          source: match?.[2] || null,
+          level: "error",
+          message: (match?.[3] || line).slice(0, 500)
+        };
+      })
+      .slice(0, 10);
+  } catch {
+    return [];
+  }
+}
+
+async function virtualizationInventory() {
+  try {
+    if (os.platform() === "win32") {
+      const output = await runPowerShell("if(Get-Command Get-VM -ErrorAction SilentlyContinue){Get-VM | Select-Object Name,State,Status,Uptime,MemoryAssigned,ProcessorCount | ConvertTo-Json -Compress}", 5000);
+      if (!output.trim()) return [];
+      const parsed = JSON.parse(output.trim() || "[]");
+      const rows = Array.isArray(parsed) ? parsed : [parsed];
+      return rows
+        .map((row) => ({
+          type: "vm",
+          name: String(row.Name || "").trim(),
+          state: String(row.State || row.Status || "").trim() || null,
+          memoryBytes: Number(row.MemoryAssigned) || null,
+          cpuCount: Number(row.ProcessorCount) || null
+        }))
+        .filter((row) => row.name)
+        .slice(0, 64);
+    }
+
+    const rows = [];
+    try {
+      const output = await runCommand("qm", ["list"], 3500);
+      rows.push(...splitCommandLines(output).slice(1).map((line) => {
+        const parts = line.split(/\s+/);
+        return { type: "vm", id: parts[0], name: parts[1], state: parts[2] || null, memoryMb: Number(parts[3]) || null };
+      }));
+    } catch {
+      // qm exists only on Proxmox hosts.
+    }
+    try {
+      const output = await runCommand("pct", ["list"], 3500);
+      rows.push(...splitCommandLines(output).slice(1).map((line) => {
+        const parts = line.split(/\s+/);
+        return { type: "container", id: parts[0], state: parts[1] || null, name: parts[2] || null };
+      }));
+    } catch {
+      // pct exists only on Proxmox hosts.
+    }
+    return rows.filter((row) => row.name || row.id).slice(0, 64);
+  } catch {
+    return [];
+  }
+}
+
+async function proxmoxStorage() {
+  if (os.platform() === "win32") return [];
+  try {
+    const output = await runCommand("pvesm", ["status"], 3500);
+    return splitCommandLines(output)
+      .slice(1)
+      .map((line) => {
+        const parts = line.split(/\s+/);
+        if (parts.length < 6) return null;
+        const totalBytes = Number(parts[3]) * 1024;
+        const usedBytes = Number(parts[4]) * 1024;
+        const availableBytes = Number(parts[5]) * 1024;
+        return {
+          name: parts[0] || null,
+          type: parts[1] || null,
+          status: parts[2] || null,
+          totalBytes: Number.isFinite(totalBytes) ? totalBytes : null,
+          usedBytes: Number.isFinite(usedBytes) ? usedBytes : null,
+          availableBytes: Number.isFinite(availableBytes) ? availableBytes : null,
+          usedPercent: Number.isFinite(totalBytes) && totalBytes > 0 ? Math.round((usedBytes / totalBytes) * 100) : null
+        };
+      })
+      .filter((row) => row?.name)
+      .slice(0, 32);
+  } catch {
+    return [];
+  }
+}
+
 function parseLinkSpeedMbps(value) {
   const text = String(value || "").trim();
   if (!text) return null;
@@ -190,13 +521,7 @@ function parseLinkSpeedMbps(value) {
 async function windowsAdapterDetails() {
   if (os.platform() !== "win32") return new Map();
   try {
-    const output = await runCommand("powershell.exe", [
-      "-NoProfile",
-      "-ExecutionPolicy",
-      "Bypass",
-      "-Command",
-      "Get-NetAdapter | Select-Object Name,InterfaceDescription,Status,LinkSpeed,MacAddress | ConvertTo-Json -Compress"
-    ]);
+    const output = await runPowerShell("Get-NetAdapter | Select-Object Name,InterfaceDescription,Status,LinkSpeed,MacAddress | ConvertTo-Json -Compress");
     const parsed = JSON.parse(output.trim() || "[]");
     const rows = Array.isArray(parsed) ? parsed : [parsed];
     const byName = new Map();
@@ -289,7 +614,14 @@ async function hostMetrics() {
       usedPercent: totalMemoryBytes > 0 ? Math.round((usedMemoryBytes / totalMemoryBytes) * 100) : null
     },
     disk: await diskUsage(),
+    diskPartitions: await diskPartitions(),
     networkInterfaces: await networkInterfaceMetrics(),
+    listeningPorts: await listeningPorts(),
+    services: await criticalServices(),
+    topProcesses: await topProcesses(),
+    criticalEvents: await criticalEvents(),
+    virtualization: await virtualizationInventory(),
+    proxmoxStorage: await proxmoxStorage(),
     system: {
       uptimeSeconds: Math.floor(os.uptime()),
       arch: os.arch(),
@@ -299,10 +631,44 @@ async function hostMetrics() {
   };
 }
 
+let hostMetricsCache = null;
+let hostMetricsCacheAt = 0;
+let hostMetricsInFlight = null;
+
+async function safeHostMetrics() {
+  const now = Date.now();
+  if (hostMetricsCache && now - hostMetricsCacheAt < HOST_METRICS_CACHE_MS) {
+    return hostMetricsCache;
+  }
+
+  if (!hostMetricsInFlight) {
+    hostMetricsInFlight = hostMetrics()
+      .then((metrics) => {
+        hostMetricsCache = metrics;
+        hostMetricsCacheAt = Date.now();
+        return metrics;
+      })
+      .catch((error) => {
+        console.error(`[${new Date().toISOString()}] Host metrics failed: ${error.message}`);
+        return hostMetricsCache;
+      })
+      .finally(() => {
+        hostMetricsInFlight = null;
+      });
+  }
+
+  try {
+    return await withTimeout(hostMetricsInFlight, HOST_METRICS_TIMEOUT_MS, "Host metrics collection timed out.");
+  } catch (error) {
+    console.error(`[${new Date().toISOString()}] ${error.message}`);
+    return hostMetricsCache;
+  }
+}
+
 async function probeMetadata(config) {
   const addresses = localAddresses();
   const macAddresses = localMacAddresses();
-  return {
+  const metadata = {
     probeId: config.probeId,
     name: config.name || config.probeId,
     version: VERSION,
@@ -311,9 +677,11 @@ async function probeMetadata(config) {
     primaryAddress: addresses[0] || "",
     addresses,
     primaryMac: macAddresses[0] || "",
-    macAddresses,
-    hostMetrics: await hostMetrics()
+    macAddresses
   };
+  const metrics = await safeHostMetrics();
+  if (metrics) metadata.hostMetrics = metrics;
+  return metadata;
 }
 
 function parseLatency(output) {
@@ -383,16 +751,181 @@ function pingHost(hostname, timeoutMs) {
   });
 }
 
+function ipv4ToNumber(value) {
+  const parts = String(value || "").trim().split(".");
+  if (parts.length !== 4) return null;
+  const octets = parts.map((part) => Number(part));
+  if (octets.some((octet) => !Number.isInteger(octet) || octet < 0 || octet > 255)) return null;
+  return octets.reduce((acc, octet) => ((acc << 8) | octet) >>> 0, 0);
+}
+
+function sameIpv4Subnet(left, right, prefixLength) {
+  const leftNumber = ipv4ToNumber(left);
+  const rightNumber = ipv4ToNumber(right);
+  if (leftNumber === null || rightNumber === null) return false;
+  const mask = prefixLength === 0 ? 0 : (0xffffffff << (32 - prefixLength)) >>> 0;
+  return (leftNumber & mask) === (rightNumber & mask);
+}
+
+function egressSubnetMatch(observedPublicIp, targetHost, configuredPrefixLength = null) {
+  if (!observedPublicIp || !targetHost) return null;
+  const prefixLength = Number(configuredPrefixLength);
+  if (Number.isInteger(prefixLength) && prefixLength >= 1 && prefixLength <= 32) {
+    return sameIpv4Subnet(observedPublicIp, targetHost, prefixLength) ? prefixLength : null;
+  }
+  for (const prefixLength of [30, 29, 28]) {
+    if (sameIpv4Subnet(observedPublicIp, targetHost, prefixLength)) return prefixLength;
+  }
+  return null;
+}
+
+async function pingNetworkLink(target, timeoutMs) {
+  const sampleCount = Math.max(1, Math.min(10, Number(target.sampleCount || 1)));
+  const rawTargets = Array.isArray(target.targets) && target.targets.length
+    ? target.targets
+    : (Array.isArray(target.targetHosts) && target.targetHosts.length ? target.targetHosts : [target.targetHost]);
+  const targets = [];
+  const seen = new Set();
+  for (const item of rawTargets) {
+    const parsed = typeof item === "object" && item !== null
+      ? {
+          targetName: String(item.name || item.label || "").trim(),
+          targetHost: String(item.host || item.targetHost || "").trim(),
+          prefixLength: item.prefixLength ?? item.prefix_length ?? null
+        }
+      : {
+          targetName: "",
+          targetHost: String(item || "").trim(),
+          prefixLength: null
+        };
+    if (!parsed.targetHost || seen.has(parsed.targetHost)) continue;
+    seen.add(parsed.targetHost);
+    targets.push(parsed);
+  }
+  const targetHosts = targets.map((item) => item.targetHost);
+  const observedPublicIp = String(target.observedPublicIp || "").trim();
+  const targetResults = [];
+  for (const { targetHost, targetName, prefixLength } of targets) {
+    const egressSubnetPrefix = egressSubnetMatch(observedPublicIp, targetHost, prefixLength);
+    const samples = [];
+    for (let index = 0; index < sampleCount; index += 1) {
+      samples.push(await pingHost(targetHost, timeoutMs));
+    }
+    const successful = samples.filter((sample) => sample.online);
+    const latencies = successful
+      .map((sample) => sample.latencyMs)
+      .filter((value) => Number.isFinite(Number(value)))
+      .map(Number);
+    const averageLatency = latencies.length
+      ? Math.round(latencies.reduce((sum, value) => sum + value, 0) / latencies.length)
+      : null;
+    targetResults.push({
+      targetHost,
+      targetName,
+      prefixLength: prefixLength || null,
+      online: successful.length > 0,
+      egressActive: Boolean(observedPublicIp && observedPublicIp === targetHost),
+      egressSubnetActive: Boolean(egressSubnetPrefix),
+      egressSubnetPrefix,
+      latencyMs: averageLatency,
+      packetLossPercent: Math.round(((sampleCount - successful.length) / sampleCount) * 1000) / 10,
+      error: successful.length > 0 ? null : samples.find((sample) => sample.error)?.error || "Sem resposta ao ping."
+    });
+  }
+  const successful = targetResults.filter((sample) => sample.online);
+  successful.sort((left, right) => Number(left.latencyMs ?? 999999) - Number(right.latencyMs ?? 999999));
+  const egressActive = targetResults.find((sample) => sample.egressActive) || null;
+  const egressSubnetActive = targetResults.find((sample) => sample.egressSubnetActive) || null;
+  const active = egressActive || egressSubnetActive || successful[0] || null;
+  const activeDetection = egressActive
+    ? "egress_ip"
+    : egressSubnetActive
+    ? "egress_subnet"
+    : successful.length === 1
+    ? "single_reachable"
+    : successful.length > 1
+    ? "ping_best"
+    : "";
+  const latencies = successful
+    .map((sample) => sample.latencyMs)
+    .filter((value) => Number.isFinite(Number(value)))
+    .map(Number);
+  const jitter = targetResults.length === 1 && latencies.length > 1
+    ? Math.round(
+        latencies
+          .slice(1)
+          .reduce((sum, value, index) => sum + Math.abs(value - latencies[index]), 0) /
+          (latencies.length - 1)
+      )
+    : null;
+  const firstError = targetResults.find((sample) => sample.error)?.error || null;
+  return {
+    linkId: target.id,
+    targetHost: target.targetHost,
+    targetHosts,
+    targets,
+    activeTargetHost: active?.targetHost || null,
+    activeTargetName: active?.targetName || "",
+    activeDetection,
+    observedPublicIp: observedPublicIp || null,
+    targetResults,
+    online: successful.length > 0,
+    latencyMs: active?.latencyMs ?? null,
+    packetLossPercent: successful.length > 0 ? 0 : 100,
+    jitterMs: jitter,
+    error: successful.length > 0 ? null : firstError || "Sem resposta ao ping.",
+    checkedAt: new Date().toISOString()
+  };
+}
+
+async function detectPublicIp(timeoutMs) {
+  const timeout = Math.max(1500, Math.min(5000, Number(timeoutMs || 2500)));
+  for (const endpoint of PUBLIC_IP_ENDPOINTS) {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), timeout);
+    try {
+      const response = await fetch(endpoint, {
+        signal: controller.signal,
+        headers: { "User-Agent": `ServerWatchProbe/${VERSION}` }
+      });
+      if (!response.ok) continue;
+      const body = (await response.text()).trim();
+      const match = body.match(/[a-fA-F0-9:.]+/);
+      if (match?.[0]) return match[0];
+    } catch {
+      // Try the next endpoint; link monitoring can still fall back to ping.
+    } finally {
+      clearTimeout(timeoutId);
+    }
+  }
+  return null;
+}
+
 async function requestJson(config, path, options = {}) {
-  const response = await fetch(`${config.serverUrl}${path}`, {
-    ...options,
-    headers: {
+  const { timeoutMs = REQUEST_TIMEOUT_MS, headers = {}, ...fetchOptions } = options;
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  let response;
+  try {
+    response = await fetch(`${config.serverUrl}${path}`, {
+      ...fetchOptions,
+      signal: controller.signal,
+      headers: {
       "Content-Type": "application/json",
       Authorization: `Bearer ${config.token}`,
       "X-ServerWatch-Probe-Token": config.token,
-      ...(options.headers || {})
+        ...headers
+      }
+    });
+  } catch (error) {
+    if (error.name === "AbortError") {
+      throw new Error(`Timeout ao conectar no ServerWatch apos ${Math.round(timeoutMs / 1000)}s.`);
     }
-  });
+    throw error;
+  } finally {
+    clearTimeout(timeoutId);
+  }
+
   const body = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(body.error || `HTTP ${response.status}`);
   return body;
@@ -406,7 +939,7 @@ async function readQueue(config) {
       .map((line) => line.trim())
       .filter(Boolean)
       .map((line) => JSON.parse(line))
-      .filter((entry) => Array.isArray(entry.results) && entry.results.length);
+      .filter((entry) => (Array.isArray(entry.results) && entry.results.length) || (Array.isArray(entry.networkResults) && entry.networkResults.length));
   } catch (error) {
     if (error.code === "ENOENT") return [];
     console.error(`[${new Date().toISOString()}] Queue read failed: ${error.message}`);
@@ -422,13 +955,14 @@ async function writeQueue(config, entries) {
   await rename(tmpPath, config.queuePath);
 }
 
-async function queueResults(config, results, reason) {
-  if (!results.length) return;
+async function queueResults(config, results, reason, networkResults = []) {
+  if (!results.length && !networkResults.length) return;
   await mkdir(dirname(config.queuePath), { recursive: true });
   const entry = {
     createdAt: new Date().toISOString(),
     reason: String(reason || "Falha ao enviar resultados."),
-    results
+    results,
+    networkResults
   };
   await appendFile(config.queuePath, `${JSON.stringify(entry)}\n`, "utf8");
 
@@ -438,7 +972,7 @@ async function queueResults(config, results, reason) {
     await writeQueue(config, trimmed);
     console.warn(`Queue limit reached. Dropped ${entries.length - trimmed.length} old batch(es).`);
   }
-  console.warn(`Queued ${results.length} result(s) locally at ${config.queuePath}`);
+  console.warn(`Queued ${results.length} server result(s) and ${networkResults.length} network result(s) locally at ${config.queuePath}`);
 }
 
 async function flushQueue(config) {
@@ -449,8 +983,8 @@ async function flushQueue(config) {
   for (let index = 0; index < entries.length; index += 1) {
     const entry = entries[index];
     try {
-      await sendResults(config, entry.results);
-      sentResults += entry.results.length;
+      await sendResults(config, entry.results || [], entry.networkResults || []);
+      sentResults += (entry.results || []).length + (entry.networkResults || []).length;
     } catch (error) {
       await writeQueue(config, entries.slice(index));
       throw error;
@@ -472,33 +1006,109 @@ async function getTargets(config) {
     addresses: JSON.stringify(metadata.addresses),
     platform: metadata.platform,
     primaryMac: metadata.primaryMac,
-    macAddresses: JSON.stringify(metadata.macAddresses),
-    hostMetrics: JSON.stringify(metadata.hostMetrics)
+    macAddresses: JSON.stringify(metadata.macAddresses)
   });
   return requestJson(config, `/api/probe/targets?${params.toString()}`);
 }
 
-async function sendResults(config, results) {
-  if (!results.length) return;
+async function sendResults(config, results, networkResults = []) {
+  if (!results.length && !networkResults.length) return;
   const metadata = await probeMetadata(config);
   await requestJson(config, "/api/probe/results", {
     method: "POST",
     body: JSON.stringify({
       ...metadata,
-      results
+      results,
+      networkResults
     })
   });
 }
 
+function shellQuote(value) {
+  return `'${String(value || "").replaceAll("'", "'\"'\"'")}'`;
+}
+
+async function reportUpdateStatus(config, request, status, error = null) {
+  await requestJson(config, "/api/probe/update-status", {
+    method: "POST",
+    body: JSON.stringify({
+      probeId: config.probeId,
+      requestId: request.id,
+      status,
+      error
+    })
+  });
+}
+
+function spawnDetached(command, args) {
+  const child = spawn(command, args, {
+    detached: true,
+    stdio: "ignore"
+  });
+  child.unref();
+}
+
+async function handleUpdateRequest(config, request) {
+  if (!request?.id || handledUpdateRequests.has(request.id)) return;
+  handledUpdateRequests.add(request.id);
+
+  if (os.platform() !== "linux") {
+    await reportUpdateStatus(config, request, "unsupported", "Atualizacao remota automatica disponivel apenas para Linux.");
+    return;
+  }
+
+  const installCommand = [
+    `curl -fsSL ${shellQuote(`${config.serverUrl}/downloads/probe/linux-installer`)}`,
+    "|",
+    "bash -s -- --repair",
+    "--server-url",
+    shellQuote(config.serverUrl),
+    "--probe-id",
+    shellQuote(config.probeId),
+    "--token",
+    shellQuote(config.token),
+    "--name",
+    shellQuote(config.name || config.probeId)
+  ].join(" ");
+  const unitName = `serverwatch-probe-update-${String(request.id).replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 24)}`;
+  await reportUpdateStatus(config, request, "running");
+
+  try {
+    spawnDetached("systemd-run", [
+      "--unit",
+      unitName,
+      "--description",
+      "ServerWatch Probe Collector update",
+      "/usr/bin/env",
+      "bash",
+      "-lc",
+      installCommand
+    ]);
+    console.log(`Scheduled probe update ${request.id} to ${request.targetVersion || "latest"}`);
+  } catch (error) {
+    await reportUpdateStatus(config, request, "failed", error.message);
+  }
+}
+
 async function runLoop(config) {
   const nextChecks = new Map();
+  const nextNetworkChecks = new Map();
   let cachedTargets = [];
+  let cachedNetworkLinks = [];
   let offlineSince = null;
   console.log(`ServerWatch Probe ${VERSION} started as ${config.probeId}`);
   for (;;) {
     try {
       const payload = await getTargets(config);
       cachedTargets = Array.isArray(payload.targets) ? payload.targets : [];
+      cachedNetworkLinks = Array.isArray(payload.networkLinks) ? payload.networkLinks : [];
+      if (payload.updateRequest) {
+        try {
+          await handleUpdateRequest(config, payload.updateRequest);
+        } catch (error) {
+          console.error(`[${new Date().toISOString()}] Update request failed: ${error.message}`);
+        }
+      }
       if (offlineSince) {
         const offlineMs = Date.now() - offlineSince.getTime();
         console.log(`ServerWatch connection restored after ${Math.round(offlineMs / 1000)}s`);
@@ -528,19 +1138,31 @@ async function runLoop(config) {
         });
         nextChecks.set(target.id, Date.now() + Math.max(3, target.checkInterval || config.intervalSeconds) * 1000);
       }
+      const dueNetworkLinks = cachedNetworkLinks.filter((target) => {
+        const dueAt = nextNetworkChecks.get(target.id) || 0;
+        return target.forceCheck || dueAt <= now;
+      });
+      const networkResults = [];
+      const observedPublicIp = dueNetworkLinks.length ? await detectPublicIp(Math.min(config.timeoutMs, 3000)) : null;
+      for (const target of dueNetworkLinks) {
+        networkResults.push(await pingNetworkLink({ ...target, observedPublicIp }, config.timeoutMs));
+        nextNetworkChecks.set(target.id, Date.now() + Math.max(10, target.checkInterval || 10) * 1000);
+      }
       try {
-        await sendResults(config, results);
-        if (results.length) console.log(`Sent ${results.length} result(s)`);
+        await sendResults(config, results, networkResults);
+        if (results.length || networkResults.length) {
+          console.log(`Sent ${results.length} server result(s) and ${networkResults.length} network result(s)`);
+        }
       } catch (error) {
         if (!offlineSince) offlineSince = new Date();
-        await queueResults(config, results, error.message);
+        await queueResults(config, results, error.message, networkResults);
         console.error(`[${new Date().toISOString()}] Send failed: ${error.message}`);
       }
     } catch (error) {
       if (!offlineSince) offlineSince = new Date();
       console.error(`[${new Date().toISOString()}] ${error.message}`);
 
-      if (cachedTargets.length) {
+      if (cachedTargets.length || cachedNetworkLinks.length) {
         const now = Date.now();
         const dueTargets = cachedTargets.filter((target) => {
           const dueAt = nextChecks.get(target.id) || 0;
@@ -556,10 +1178,20 @@ async function runLoop(config) {
           });
           nextChecks.set(target.id, Date.now() + Math.max(3, target.checkInterval || config.intervalSeconds) * 1000);
         }
-        await queueResults(config, results, error.message);
+        const dueNetworkLinks = cachedNetworkLinks.filter((target) => {
+          const dueAt = nextNetworkChecks.get(target.id) || 0;
+          return target.forceCheck || dueAt <= now;
+        });
+        const networkResults = [];
+        const observedPublicIp = dueNetworkLinks.length ? await detectPublicIp(Math.min(config.timeoutMs, 3000)) : null;
+        for (const target of dueNetworkLinks) {
+          networkResults.push(await pingNetworkLink({ ...target, observedPublicIp }, config.timeoutMs));
+          nextNetworkChecks.set(target.id, Date.now() + Math.max(10, target.checkInterval || 10) * 1000);
+        }
+        await queueResults(config, results, error.message, networkResults);
       }
     }
-    await new Promise((resolve) => setTimeout(resolve, Math.max(3, config.intervalSeconds) * 1000));
+    await new Promise((resolve) => setTimeout(resolve, Math.min(10, Math.max(3, config.intervalSeconds)) * 1000));
   }
 }
 

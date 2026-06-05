@@ -5,7 +5,10 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>ServerWatch</title>
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
-    <link rel="stylesheet" href="/styles.css" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="/styles.css?v=20260605-linkprobe-groups" />
   </head>
   <body>
     <section class="bootstrap-screen" id="bootScreen" aria-label="Carregando ServerWatch">
@@ -49,12 +52,15 @@
 
         <nav class="nav-tabs" aria-label="Navegacao principal">
           <a class="nav-tab active" href="/dashboard" data-view="dashboard">Dashboard</a>
-          <a class="nav-tab" href="/empresas" data-view="groups">Empresas</a>
-          <a class="nav-tab admin-only" href="/probes" data-view="probes">Probes</a>
-          <a class="nav-tab admin-only" href="/usuarios" data-view="users">Usuarios</a>
-          <a class="nav-tab admin-only" href="/configuracoes" data-view="settings">Configuracoes</a>
-          <a class="nav-tab" href="/historico" data-view="history">Historico</a>
+          <a class="nav-tab" href="/servidores" data-view="servers">Servidores</a>
+          <a class="nav-tab" href="/redes" data-view="networks">Redes</a>
           <a class="nav-tab" href="/alertas" data-view="alerts">Alertas</a>
+          <a class="nav-tab" href="/historico" data-view="history">Historico</a>
+          <a class="nav-tab" href="/configuracoes" data-view="settings">Configuracoes</a>
+          <a class="nav-tab admin-only" href="/admin" data-view="admin">Administracao</a>
+          <a class="nav-tab route-only admin-only" href="/empresas" data-view="groups">Empresas</a>
+          <a class="nav-tab route-only admin-only" href="/probes" data-view="probes">Probes</a>
+          <a class="nav-tab route-only admin-only" href="/usuarios" data-view="users">Usuarios</a>
         </nav>
 
         <section class="company-nav" aria-label="Visualizacoes por empresa">
@@ -108,7 +114,7 @@
             <strong id="metricOnline">0</strong>
             <small>respondendo agora</small>
           </article>
-          <article class="metric-card offline">
+          <article class="metric-card offline clickable-card" data-view-link="alerts" role="button" tabindex="0" title="Ver alertas">
             <span>Offline</span>
             <strong id="metricOffline">0</strong>
             <small id="metricAlerts">0 alertas abertos</small>
@@ -121,78 +127,210 @@
         </section>
 
         <section class="view active" id="dashboardView">
-          <section class="executive-dashboard" id="executiveDashboard" aria-label="Dashboard executivo">
-            <div class="panel-title">
-              <div>
-                <h2>Visao executiva</h2>
-                <span>Prioridades operacionais do dia</span>
-              </div>
-            </div>
-            <div class="executive-grid" id="executiveGrid"></div>
+          <section class="simple-dashboard" id="simpleDashboard" aria-label="Resumo simplificado">
+            <div id="simpleDashboardContent"></div>
           </section>
 
-          <div class="toolbar">
-            <details class="filter-menu" id="filterMenu">
-              <summary class="filter-toggle">
-                <span>Filtrar</span>
-                <small id="activeFilterCount">Todos</small>
-              </summary>
-              <div class="filter-panel" aria-label="Filtros de servidores">
-                <div>
-                  <span class="filter-label">Status</span>
-                  <div class="segmented" role="group" aria-label="Filtro de status">
-                    <button class="segment active" data-status="all" type="button">Todos</button>
-                    <button class="segment" data-status="online" type="button">Online</button>
-                    <button class="segment" data-status="offline" type="button">Offline</button>
-                    <button class="segment" data-status="probe_stale" type="button">Probe sem contato</button>
-                    <button class="segment" data-status="unknown" type="button">Sem status</button>
-                    <button class="segment" data-status="paused" type="button">Pausado</button>
-                  </div>
-                </div>
-                <label class="search-field">
-                  <span>Buscar</span>
-                  <input id="searchInput" type="search" placeholder="Nome, IP, tag ou ambiente" />
-                </label>
-                <div class="filter-grid">
-                  <label>
-                    Ambiente
-                    <select id="environmentFilter" aria-label="Filtrar por ambiente">
-                      <option value="all">Todos ambientes</option>
-                      <option value="production">Producao</option>
-                      <option value="staging">Homologacao</option>
-                      <option value="development">Desenvolvimento</option>
-                    </select>
-                  </label>
-                  <label>
-                    Empresa
-                    <select id="groupFilter" aria-label="Filtrar por empresa">
-                      <option value="all">Todas empresas</option>
-                      <option value="none">Sem empresa</option>
-                    </select>
-                  </label>
-                </div>
-                <div class="filter-actions">
-                  <button class="ghost-button compact" id="clearFilters" type="button">Limpar filtros</button>
-                </div>
-              </div>
-            </details>
-          </div>
+          <details class="dashboard-details" id="dashboardDetails">
+            <summary>
+              <span>Visao operacional detalhada</span>
+              <small>Filtros, lista completa e investigacao tecnica</small>
+            </summary>
 
-          <div class="server-layout">
-            <section class="server-panel">
+            <section class="executive-dashboard" id="executiveDashboard" aria-label="Dashboard executivo">
               <div class="panel-title">
-                <h2>Servidores por empresa</h2>
-                <span id="serverCount">0 itens</span>
+                <div>
+                  <h2>Visao executiva</h2>
+                  <span>Prioridades operacionais do dia</span>
+                </div>
               </div>
-              <div class="server-list" id="serverList"></div>
+              <div class="executive-grid" id="executiveGrid"></div>
             </section>
 
-            <aside class="detail-panel" id="detailPanel">
+            <div class="toolbar">
+              <details class="filter-menu" id="filterMenu">
+                <summary class="filter-toggle">
+                  <span>Filtrar</span>
+                  <small id="activeFilterCount">Todos</small>
+                </summary>
+                <div class="filter-panel" aria-label="Filtros de servidores">
+                  <div>
+                    <span class="filter-label">Status</span>
+                    <div class="segmented" role="group" aria-label="Filtro de status">
+                      <button class="segment active" data-status="all" type="button">Todos</button>
+                      <button class="segment" data-status="online" type="button">Online</button>
+                      <button class="segment" data-status="offline" type="button">Offline</button>
+                      <button class="segment" data-status="dependency_down" type="button">Afetado pelo host</button>
+                      <button class="segment" data-status="probe_stale" type="button">Probe sem contato</button>
+                      <button class="segment" data-status="unknown" type="button">Sem status</button>
+                      <button class="segment" data-status="paused" type="button">Pausado</button>
+                    </div>
+                  </div>
+                  <label class="search-field">
+                    <span>Buscar</span>
+                    <input id="searchInput" type="search" placeholder="Nome, IP, tag ou ambiente" />
+                  </label>
+                  <div class="filter-grid">
+                    <label>
+                      Ambiente
+                      <select id="environmentFilter" aria-label="Filtrar por ambiente">
+                        <option value="all">Todos ambientes</option>
+                        <option value="production">Producao</option>
+                        <option value="staging">Homologacao</option>
+                        <option value="development">Desenvolvimento</option>
+                      </select>
+                    </label>
+                    <label>
+                      Empresa
+                      <select id="groupFilter" aria-label="Filtrar por empresa">
+                        <option value="all">Todas empresas</option>
+                        <option value="none">Sem empresa</option>
+                      </select>
+                    </label>
+                  </div>
+                  <div class="filter-actions">
+                    <button class="ghost-button compact" id="clearFilters" type="button">Limpar filtros</button>
+                  </div>
+                </div>
+              </details>
+            </div>
+
+            <div class="server-layout">
+              <section class="server-panel">
+                <div class="panel-title">
+                  <h2>Servidores por empresa</h2>
+                  <div class="panel-title-actions">
+                    <span id="serverCount">0 itens</span>
+                    <button class="ghost-button compact" id="toggleTopologyAll" type="button" hidden>Expandir todos</button>
+                  </div>
+                </div>
+                <div class="server-list" id="serverList"></div>
+              </section>
+
+              <aside class="detail-panel" id="detailPanel">
+                <div class="empty-state">
+                  <strong>Nenhum servidor selecionado</strong>
+                  <span>Selecione um item para ver latencia, historico recente e acoes.</span>
+                </div>
+              </aside>
+            </div>
+          </details>
+        </section>
+
+        <section class="view" id="serversView">
+          <div class="server-profile-layout">
+            <aside class="server-directory-panel">
+              <div class="panel-title compact-title">
+                <div>
+                  <h2>Inventario</h2>
+                  <span id="serverDirectoryCount">0 servidores</span>
+                </div>
+              </div>
+              <div class="server-directory-list" id="serverDirectoryList"></div>
+            </aside>
+
+            <section class="server-profile-panel" id="serverProfilePanel">
               <div class="empty-state">
                 <strong>Nenhum servidor selecionado</strong>
-                <span>Selecione um item para ver latencia, historico recente e acoes.</span>
+                <span>Selecione um servidor para abrir a ficha operacional completa.</span>
               </div>
-            </aside>
+            </section>
+          </div>
+        </section>
+
+        <section class="view" id="networksView">
+          <div class="wide-panel">
+            <div class="panel-title">
+              <div>
+                <h2>Redes e links</h2>
+                <span id="networkLinkCount">0 links monitorados</span>
+              </div>
+              <div class="panel-title-actions admin-only">
+                <a class="ghost-button compact download-link" href="/downloads/linkprobe/windows-amd64" download>LinkProbe Windows</a>
+                <a class="ghost-button compact download-link" href="/downloads/linkprobe/linux-amd64" download>LinkProbe Linux</a>
+                <button class="ghost-button compact" id="openNetworkDeviceForm" type="button">Adicionar dispositivo</button>
+                <button class="primary-button compact" id="openNetworkLinkForm" type="button">Adicionar link</button>
+              </div>
+            </div>
+
+            <section class="install-command network-install-command admin-only">
+              <div class="install-command-header">
+                <div>
+                  <strong>Comando Linux LinkProbe</strong>
+                  <span>Instale uma instancia por link/WAN e ajuste agent-id, nome e alvos conforme a policy route.</span>
+                </div>
+                <button class="ghost-button compact" id="copyLinkProbeInstallCommand" type="button">Copiar comando</button>
+              </div>
+              <code id="linkProbeInstallCommand"></code>
+            </section>
+
+            <div class="network-summary-grid" aria-label="Resumo dos links">
+              <article class="network-summary-card">
+                <span>Online</span>
+                <strong id="networkOnlineCount">0</strong>
+                <small>links respondendo</small>
+              </article>
+              <article class="network-summary-card warning">
+                <span>Degradados</span>
+                <strong id="networkDegradedCount">0</strong>
+                <small>latencia ou perda alta</small>
+              </article>
+              <article class="network-summary-card danger">
+                <span>Offline</span>
+                <strong id="networkOfflineCount">0</strong>
+                <small>falha confirmada</small>
+              </article>
+              <article class="network-summary-card warning">
+                <span>Agente sem contato</span>
+                <strong id="networkProbeStaleCount">0</strong>
+                <small>coleta indisponivel</small>
+              </article>
+            </div>
+
+            <div class="network-layout">
+              <section class="network-list-panel">
+                <div class="panel-title compact-title">
+                  <h3>Links por cliente</h3>
+                  <span id="networkDeviceCount">0 dispositivos</span>
+                </div>
+                <div class="network-link-list" id="networkLinksList"></div>
+              </section>
+
+              <aside class="network-detail-panel" id="networkDetailPanel">
+                <div class="empty-state compact-empty">
+                  <strong>Nenhum link selecionado</strong>
+                  <span>Selecione um link para ver alvo, probe, latencia, perda e ultimos eventos.</span>
+                </div>
+              </aside>
+            </div>
+          </div>
+        </section>
+
+        <section class="view" id="adminView">
+          <div class="wide-panel">
+            <div class="panel-title">
+              <div>
+                <h2>Painel administrativo</h2>
+                <span>Cadastros, coleta e configuracoes do sistema</span>
+              </div>
+            </div>
+            <div class="admin-grid">
+              <button class="admin-card" type="button" data-admin-view="groups">
+                <span>Empresas</span>
+                <strong>Clientes e grupos</strong>
+                <small>Cadastre empresas, organize servidores e mantenha a estrutura operacional.</small>
+              </button>
+              <button class="admin-card" type="button" data-admin-view="probes">
+                <span>Probes</span>
+                <strong>Collectors e instaladores</strong>
+                <small>Token, comandos de instalacao, collectors recebidos e alvos vinculados.</small>
+              </button>
+              <button class="admin-card" type="button" data-admin-view="users">
+                <span>Usuarios</span>
+                <strong>Acessos do sistema</strong>
+                <small>Crie usuarios, altere papeis e desative contas quando necessario.</small>
+              </button>
+            </div>
           </div>
         </section>
 
@@ -236,7 +374,14 @@
                 </div>
                 <div class="install-command">
                   <div class="install-command-header">
-                    <strong>Comando Linux</strong>
+                    <div>
+                      <strong id="probeInstallCommandTitle">Comando Linux</strong>
+                      <span id="probeInstallCommandHint">Use em distribuicoes Linux com sudo.</span>
+                    </div>
+                    <div class="install-target-toggle" role="group" aria-label="Tipo de instalacao Linux">
+                      <button class="install-target-button active" data-probe-install-target="linux" type="button">Linux</button>
+                      <button class="install-target-button" data-probe-install-target="proxmox" type="button">Proxmox</button>
+                    </div>
                     <button class="ghost-button compact" id="copyProbeInstallCommand" type="button">Copiar comando</button>
                   </div>
                   <code id="probeInstallCommand"></code>
@@ -254,7 +399,7 @@
               <section class="probe-list-panel">
                 <div class="panel-title compact-title">
                   <h3>Probes recebidos</h3>
-                  <span>Ultimo contato</span>
+                  <button class="ghost-button compact" type="button" id="updateOutdatedProbes">Atualizar desatualizados</button>
                 </div>
                 <div class="probes-list" id="probesList"></div>
               </section>
@@ -316,7 +461,7 @@
                 <span>Identidade visual</span>
               </div>
             </div>
-            <form class="settings-form" id="brandingForm">
+            <form class="settings-form admin-only" id="brandingForm">
               <div class="brand-preview">
                 <span class="brand-mark brand-logo" id="brandPreviewLogo" aria-hidden="true">
                   <span class="brand-initials" id="brandPreviewInitials">SW</span>
@@ -344,6 +489,19 @@
               </label>
               <small class="field-hint">Use PNG, JPG, WEBP ou SVG com ate aproximadamente 500 KB.</small>
 
+              <div class="dialog-actions">
+                <button class="ghost-button" id="removeBrandLogo" type="button">Remover logo</button>
+                <button class="primary-button" type="submit">Salvar identidade</button>
+              </div>
+            </form>
+
+            <form class="settings-form settings-block" id="themeSettingsForm">
+              <div class="panel-title compact-title">
+                <div>
+                  <h2>Tema</h2>
+                  <span>Preferencia da interface</span>
+                </div>
+              </div>
               <fieldset class="theme-options">
                 <legend>Tema da interface</legend>
                 <label class="theme-option">
@@ -361,10 +519,8 @@
                   </span>
                 </label>
               </fieldset>
-
               <div class="dialog-actions">
-                <button class="ghost-button" id="removeBrandLogo" type="button">Remover logo</button>
-                <button class="primary-button" type="submit">Salvar identidade</button>
+                <button class="primary-button" type="submit">Salvar tema</button>
               </div>
             </form>
 
@@ -435,8 +591,38 @@
         <section class="view" id="alertsView">
           <div class="wide-panel">
             <div class="panel-title">
-              <h2>Alertas</h2>
-              <button class="ghost-button compact" id="markAlertsRead" type="button">Marcar como lidos</button>
+              <div>
+                <h2>Alertas</h2>
+                <span id="alertCount">0 alertas</span>
+              </div>
+              <div class="panel-title-actions">
+                <button class="ghost-button compact" id="markAlertsRead" type="button">Marcar como lidos</button>
+                <button class="danger-button compact admin-only" id="clearAlertsHistory" type="button">Limpar historico</button>
+              </div>
+            </div>
+            <div class="alert-filters">
+              <label>
+                Empresa
+                <select id="alertGroupFilter">
+                  <option value="all">Todas empresas</option>
+                </select>
+              </label>
+              <label>
+                Estado
+                <select id="alertStatusFilter">
+                  <option value="all">Todos alertas</option>
+                  <option value="open">Abertos</option>
+                  <option value="read">Reconhecidos</option>
+                </select>
+              </label>
+              <label>
+                Tipo
+                <select id="alertTypeFilter">
+                  <option value="all">Todos tipos</option>
+                  <option value="down">Offline</option>
+                  <option value="up">Recuperado</option>
+                </select>
+              </label>
             </div>
             <div class="alerts-list" id="alertsList"></div>
           </div>
@@ -480,6 +666,36 @@
             </select>
           </label>
           <label>
+            Tipo
+            <select id="serverNodeType">
+              <option value="server">Servidor</option>
+              <option value="physical">Host fisico</option>
+              <option value="hypervisor">Virtualizador</option>
+              <option value="vm">VM</option>
+              <option value="service">Servico</option>
+            </select>
+          </label>
+          <label>
+            Plataforma infra
+            <select id="serverInfrastructurePlatform">
+              <option value="none">Nao definida</option>
+              <option value="proxmox">Proxmox</option>
+              <option value="vmware">VMware</option>
+              <option value="hyper-v">Hyper-V</option>
+              <option value="bare-metal">Bare metal</option>
+              <option value="cloud">Cloud</option>
+              <option value="linux">Linux</option>
+              <option value="windows">Windows</option>
+              <option value="other">Outra</option>
+            </select>
+          </label>
+          <label>
+            Host pai / virtualizador
+            <select id="serverParentId">
+              <option value="">Sem dependencia</option>
+            </select>
+          </label>
+          <label>
             Empresa / grupo
             <select id="serverGroup">
               <option value="">Sem empresa</option>
@@ -498,6 +714,16 @@
             <input id="serverThreshold" type="number" min="1" max="10" value="2" />
           </label>
         </div>
+
+        <fieldset class="virtualizer-children-options" id="virtualizerChildrenOptions" hidden>
+          <legend>VMs deste virtualizador</legend>
+          <div class="virtualizer-children-header">
+            <strong>Servidores vinculados como VM</strong>
+            <span>Marque uma ou mais maquinas</span>
+          </div>
+          <div class="virtualizer-child-list" id="serverChildIds"></div>
+          <small class="field-hint">Ao marcar um servidor aqui, ele passa a depender deste virtualizador e o tipo muda automaticamente para VM.</small>
+        </fieldset>
 
         <fieldset id="probeOptions">
           <legend>Probe collector</legend>
@@ -521,6 +747,164 @@
         <div class="dialog-actions">
           <button class="ghost-button" type="button" id="cancelForm">Cancelar</button>
           <button class="primary-button" type="submit">Salvar servidor</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog class="server-dialog" id="networkDeviceDialog">
+      <form method="dialog" id="networkDeviceForm">
+        <div class="dialog-header">
+          <div>
+            <p class="eyebrow">Redes</p>
+            <h2 id="networkDeviceDialogTitle">Adicionar dispositivo</h2>
+          </div>
+          <button class="icon-button" value="cancel" type="button" id="closeNetworkDeviceDialog" title="Fechar">x</button>
+        </div>
+
+        <input type="hidden" id="networkDeviceId" />
+        <div class="form-grid">
+          <label>
+            Nome
+            <input id="networkDeviceName" required placeholder="MikroTik Matriz" />
+          </label>
+          <label>
+            Fabricante
+            <select id="networkDeviceVendor">
+              <option value="mikrotik">MikroTik</option>
+              <option value="pfsense">pfSense</option>
+              <option value="fortigate">Fortigate</option>
+              <option value="generic">Generico</option>
+              <option value="other">Outro</option>
+            </select>
+          </label>
+          <label>
+            Modelo
+            <input id="networkDeviceModel" placeholder="RB4011, CCR, Fortigate 60F" />
+          </label>
+          <label>
+            IP de gerenciamento
+            <input id="networkDeviceManagementIp" placeholder="192.168.88.1" />
+          </label>
+          <label>
+            Empresa
+            <select id="networkDeviceGroup">
+              <option value="">Sem empresa</option>
+            </select>
+          </label>
+          <label>
+            Probe responsavel
+            <select id="networkDeviceProbe"></select>
+          </label>
+        </div>
+
+        <label>
+          Observacoes
+          <textarea id="networkDeviceNotes" rows="3" placeholder="Contexto operacional ou acesso local"></textarea>
+        </label>
+
+        <div class="dialog-actions">
+          <button class="ghost-button" type="button" id="cancelNetworkDeviceForm">Cancelar</button>
+          <button class="primary-button" type="submit">Salvar dispositivo</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog class="server-dialog" id="networkLinkDialog">
+      <form method="dialog" id="networkLinkForm">
+        <div class="dialog-header">
+          <div>
+            <p class="eyebrow">Links</p>
+            <h2 id="networkLinkDialogTitle">Adicionar link</h2>
+          </div>
+          <button class="icon-button" value="cancel" type="button" id="closeNetworkLinkDialog" title="Fechar">x</button>
+        </div>
+
+        <input type="hidden" id="networkLinkId" />
+        <div class="form-grid">
+          <label>
+            Nome do link
+            <input id="networkLinkName" required placeholder="Vivo Fibra" />
+          </label>
+          <label>
+            Operadora
+            <input id="networkLinkProvider" placeholder="Vivo, Claro, Algar" />
+          </label>
+          <label>
+            Dispositivo
+            <select id="networkLinkDevice">
+              <option value="">Sem dispositivo</option>
+            </select>
+          </label>
+          <label>
+            Tipo
+            <select id="networkLinkType">
+              <option value="internet">Internet</option>
+              <option value="mpls">MPLS</option>
+              <option value="vpn">VPN</option>
+              <option value="fiber">Fibra</option>
+              <option value="radio">Radio</option>
+              <option value="cellular">Celular</option>
+              <option value="other">Outro</option>
+            </select>
+          </label>
+          <section class="form-section full-span">
+            <div class="form-section-title">
+              <div>
+                <strong>Links monitorados</strong>
+                <span>Cadastre ate 10 links para identificar qual esta ativo.</span>
+              </div>
+              <button class="ghost-button compact" id="addNetworkTarget" type="button">+</button>
+            </div>
+            <div class="network-target-editor" id="networkLinkTarget"></div>
+          </section>
+          <label>
+            Interface
+            <input id="networkLinkInterface" placeholder="wan1, ether1, pppoe-out1" />
+          </label>
+          <label>
+            IP/Gateway WAN
+            <input id="networkLinkExpectedPublicIp" placeholder="200.0.40.217" />
+          </label>
+          <label>
+            Mascara WAN
+            <input id="networkLinkExpectedPrefix" inputmode="numeric" placeholder="/30" />
+          </label>
+          <label>
+            Empresa
+            <select id="networkLinkGroup">
+              <option value="">Sem empresa</option>
+            </select>
+          </label>
+          <label>
+            Probe responsavel
+            <select id="networkLinkProbe"></select>
+          </label>
+          <label>
+            Intervalo (segundos)
+            <input id="networkLinkInterval" type="number" min="10" max="3600" value="10" />
+          </label>
+          <label>
+            Falhas para offline
+            <input id="networkLinkThreshold" type="number" min="3" max="10" value="3" />
+          </label>
+          <label>
+            Latencia degradada (ms)
+            <input id="networkLinkLatencyLimit" type="number" min="1" max="10000" value="120" />
+          </label>
+          <label>
+            Perda degradada (%)
+            <input id="networkLinkLossLimit" type="number" min="0" max="100" value="10" />
+          </label>
+        </div>
+
+        <label>
+          Observacoes
+          <textarea id="networkLinkNotes" rows="3" placeholder="Contrato, IP publico esperado ou observacoes"></textarea>
+        </label>
+
+        <div class="dialog-actions">
+          <button class="ghost-button" type="button" id="cancelNetworkLinkForm">Cancelar</button>
+          <button class="primary-button" type="submit">Salvar link</button>
         </div>
       </form>
     </dialog>
@@ -601,7 +985,41 @@
       </form>
     </dialog>
 
+    <dialog class="server-dialog forced-password-dialog" id="passwordChangeDialog">
+      <form id="passwordChangeForm">
+        <div class="dialog-header">
+          <div>
+            <p class="eyebrow">Seguranca</p>
+            <h2>Trocar senha inicial</h2>
+          </div>
+        </div>
+
+        <p class="dialog-note">
+          A conta administrativa inicial usa credenciais padrao. Defina uma nova senha para liberar o dashboard.
+        </p>
+
+        <label>
+          Senha atual
+          <input id="currentPassword" type="password" autocomplete="current-password" required />
+        </label>
+        <label>
+          Nova senha
+          <input id="newPassword" type="password" autocomplete="new-password" minlength="8" required />
+        </label>
+        <label>
+          Confirmar nova senha
+          <input id="confirmNewPassword" type="password" autocomplete="new-password" minlength="8" required />
+        </label>
+
+        <div class="form-error" id="passwordChangeError" role="alert"></div>
+
+        <div class="dialog-actions">
+          <button class="primary-button" type="submit">Salvar nova senha</button>
+        </div>
+      </form>
+    </dialog>
+
     <div class="toast-stack" id="toastStack" aria-live="polite"></div>
-    <script src="/app.js" type="module"></script>
+    <script src="/app.js?v=20260605-linkprobe" type="module"></script>
   </body>
 </html>

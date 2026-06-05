@@ -1,0 +1,16 @@
+{
+  "_comment": "Copie para config.json e ajuste para cada link. O JSON usa campos _comment porque comentarios nativos nao sao validos em JSON.",
+  "agent_id": "link1-empresa",
+  "link_name": "Link 1 - Empresa",
+  "interface": "",
+  "source_ip": "",
+  "ping_targets": ["8.8.8.8", "1.1.1.1", "9.9.9.9", "208.67.222.222", "4.2.2.2", "1.0.0.1"],
+  "ping_count": 4,
+  "ping_timeout": 5,
+  "check_interval": 60,
+  "online_threshold": 0.5,
+  "ip_check_urls": ["https://api.ipify.org", "https://ifconfig.me/ip", "http://icanhazip.com"],
+  "backend_url": "http://192.168.0.187:3000",
+  "token": "TOKEN_DO_PROBE",
+  "log_file": ""
+}

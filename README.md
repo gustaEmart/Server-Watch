@@ -22,9 +22,13 @@ Senha: admin123
 
 Para trocar esses valores antes da primeira execucao, defina `SERVERWATCH_ADMIN_EMAIL` e `SERVERWATCH_ADMIN_PASSWORD`.
 
+Importante: quando o administrador inicial for criado automaticamente, o primeiro login exigira a troca imediata da senha antes de liberar o dashboard.
+
 Para requisitos de implantacao, ambiente recomendado, portas, firewall e proximos passos de producao, veja `IMPLEMENTACAO.md`.
 
 Para monitorar clientes em redes diferentes sem VPN, veja `docs/PROBE_COLLECTOR.md`.
+
+Para planejar monitoramento de links, roteadores e firewalls, veja `docs/NETWORK_MONITORING.md`.
 
 Para usar MongoDB no backend, veja `docs/MONGODB.md`.
 
@@ -42,7 +46,10 @@ http://SEU-IP-DA-LAN:3000
 
 ## Como rodar com Docker
 
+Para um servidor novo, use o Docker Compose. Ele sobe o ServerWatch e um MongoDB local em containers separados:
+
 ```bash
+cp .env.example .env
 docker compose up -d --build
 ```
 
@@ -58,7 +65,25 @@ Para alterar a porta externa, copie `.env.example` para `.env` e ajuste:
 SERVERWATCH_PORT=3000
 ```
 
-O Docker Compose cria um volume chamado `serverwatch_data` para persistir os dados.
+Antes de expor fora da rede local, ajuste no `.env` pelo menos:
+
+```text
+MONGO_INITDB_ROOT_PASSWORD=uma-senha-forte
+MONGODB_URI=mongodb://serverwatch:uma-senha-forte@mongodb:27017/serverwatch?authSource=admin
+SERVERWATCH_ADMIN_EMAIL=seu-email
+SERVERWATCH_ADMIN_PASSWORD=uma-senha-inicial-forte
+SERVERWATCH_PROBE_TOKEN=um-token-forte-para-os-probes
+```
+
+O Compose cria os volumes `serverwatch_data` e `mongodb_data`. Em deploys novos, os dados da aplicacao ficam no MongoDB. A pasta local `downloads/` e montada em `/app/downloads` para servir artefatos grandes do Probe Collector, como o instalador Windows e runtimes Node.js, sem precisar rebuildar a imagem.
+
+Comandos uteis:
+
+```bash
+docker compose ps
+docker compose logs -f serverwatch
+docker compose logs -f mongodb
+```
 
 ## Como rodar no Linux com systemd
 
@@ -98,25 +123,9 @@ Resposta esperada:
 }
 ```
 
-## O que esta implementado
+## Versoes e historico
 
-- Cadastro, edicao, ativacao e desativacao de servidores
-- Exclusao logica de servidores, removendo o item do monitoramento sem apagar o historico interno
-- Cadastro de empresas/grupos e associacao de servidores a uma empresa
-- Dashboard geral com servidores agrupados por empresa e grafico de rosca por status
-- Atalhos laterais para visualizar todos os servidores ou filtrar por empresa
-- Monitoramento automatico via ping com intervalo por servidor
-- Monitoramento direto pelo ServerWatch central ou por Probe Collector instalado na rede do cliente
-- UI local para configurar o Probe Collector em `http://localhost:8777/setup`
-- Instalador Windows `.exe` com UI para o Probe Collector
-- Tela de login e cadastro de usuarios por administrador
-- Tolerancia a falhas consecutivas antes de marcar offline
-- Dashboard com filtros por status, ambiente e busca
-- Atualizacao em tempo real via WebSocket
-- Historico de transicoes online/offline
-- Alertas internos e notificacoes do navegador para queda abrupta
-- Persistencia local em `data/serverwatch.json` ou no caminho definido por `DATA_DIR`
-- Dockerfile e Docker Compose para execucao em container
+O historico de recursos, correcoes e versoes estaveis fica centralizado em `CHANGELOG.md`.
 
 ## Observacoes
 

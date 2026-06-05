@@ -17,6 +17,25 @@ MONGODB_DB=serverwatch
 
 Se `MONGODB_URI` estiver definido, a aplicacao usa MongoDB automaticamente, mesmo sem `SERVERWATCH_STORAGE`.
 
+## Deploy novo com Docker Compose
+
+Para uma instalacao limpa em outro servidor, use o Compose da raiz do projeto:
+
+```bash
+cp .env.example .env
+docker compose up -d --build
+```
+
+No Docker Compose, o MongoDB fica acessivel pela aplicacao usando o hostname interno `mongodb`:
+
+```bash
+SERVERWATCH_STORAGE=mongodb
+MONGODB_URI=mongodb://serverwatch:troque-essa-senha@mongodb:27017/serverwatch?authSource=admin
+MONGODB_DB=serverwatch
+```
+
+Troque `MONGO_INITDB_ROOT_PASSWORD` e mantenha a mesma senha dentro de `MONGODB_URI` antes do primeiro `docker compose up`. O volume `mongodb_data` guarda os dados do MongoDB entre reinicios.
+
 ## Migracao do JSON para MongoDB
 
 Sempre faca backup antes:

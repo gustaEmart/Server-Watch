@@ -1,20 +1,27 @@
 using System.Diagnostics;
+using System.IO.Compression;
 using System.Reflection;
 using System.Security.Principal;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Text.RegularExpressions;
 
 namespace ServerWatchProbeSetup;
 
 internal static class Program
 {
     private const string TaskName = "ServerWatch Probe Collector";
-    private const string ProbeCollectorVersion = "0.2.0";
+    private const string NodeRuntimeDownloadPath = "/downloads/probe/node-runtime-windows-x64";
+    private static readonly Lazy<string> EmbeddedProbeCollectorVersion = new(ReadEmbeddedProbeCollectorVersion);
+    private static string ProbeCollectorVersion => EmbeddedProbeCollectorVersion.Value;
     private static readonly string InstallDir = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
         "ServerWatchProbe"
     );
     private static readonly string ConfigPath = Path.Combine(InstallDir, "config.json");
+    private static readonly string NodeRuntimeDir = Path.Combine(InstallDir, "node");
+    private static readonly string NodePath = Path.Combine(NodeRuntimeDir, "node.exe");
+    private static readonly string LegacyNodePath = Path.Combine(InstallDir, "node.exe");
 
     [STAThread]
     private static void Main()
@@ -52,6 +59,21 @@ internal static class Program
         using var identity = WindowsIdentity.GetCurrent();
         var principal = new WindowsPrincipal(identity);
         return principal.IsInRole(WindowsBuiltInRole.Administrator);
+    }
+
+    private static string ReadEmbeddedProbeCollectorVersion()
+    {
+        var assembly = Assembly.GetExecutingAssembly();
+        using var stream = assembly.GetManifestResourceStream("collector.js");
+        if (stream is null)
+        {
+            return "unknown";
+        }
+
+        using var reader = new StreamReader(stream);
+        var collectorSource = reader.ReadToEnd();
+        var match = Regex.Match(collectorSource, """const\s+VERSION\s*=\s*["'](?<version>[^"']+)["']""");
+        return match.Success ? match.Groups["version"].Value : "unknown";
     }
 
     private sealed class InstallerForm : Form
@@ -345,12 +367,14 @@ internal static class Program
                     SetProgress(20, "Copiando arquivos do collector...");
                     WriteResource("collector.js", Path.Combine(InstallDir, "collector.js"));
                     WriteResource("setup-server.js", Path.Combine(InstallDir, "setup-server.js"));
-                    WriteResource("node.exe", Path.Combine(InstallDir, "node.exe"));
-                    SetProgress(45, "Salvando configuracao...");
+                    RemoveLegacyNodeRuntime();
+                    SetProgress(35, "Preparando runtime Node.js...");
+                    EnsureNodeRuntime(values);
+                    SetProgress(55, "Salvando configuracao...");
                     WriteConfig(values);
-                    SetProgress(65, "Configurando tarefa agendada...");
+                    SetProgress(70, "Configurando tarefa agendada...");
                     RegisterTask();
-                    SetProgress(80, "Iniciando Probe Collector...");
+                    SetProgress(82, "Iniciando Probe Collector...");
                     RunTask();
                     RegisterProbe(values);
                     RemoveBackup(backupDir);
@@ -489,9 +513,8 @@ internal static class Program
 
         private static void RegisterTask()
         {
-            var nodePath = Path.Combine(InstallDir, "node.exe");
             var collectorPath = Path.Combine(InstallDir, "collector.js");
-            var taskCommand = $"\"{nodePath}\" \"{collectorPath}\" --config \"{ConfigPath}\"";
+            var taskCommand = $"\"{NodePath}\" \"{collectorPath}\" --config \"{ConfigPath}\"";
             RunProcess(
                 "schtasks.exe",
                 $"/Create /TN \"{TaskName}\" /SC ONSTART /RU SYSTEM /RL HIGHEST /TR \"{taskCommand}\" /F"
@@ -507,20 +530,152 @@ internal static class Program
         {
             SetProgress(12, "Parando instalacao anterior, se existir...");
             RunProcess("schtasks.exe", $"/End /TN \"{TaskName}\"", allowFailure: true);
-            var nodePath = Path.Combine(InstallDir, "node.exe");
+            var managedNodePaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            {
+                NodePath,
+                LegacyNodePath
+            };
             foreach (var process in Process.GetProcessesByName("node"))
             {
                 try
                 {
-                    if (string.Equals(process.MainModule?.FileName, nodePath, StringComparison.OrdinalIgnoreCase))
+                    if (process.MainModule?.FileName is string processPath && managedNodePaths.Contains(processPath))
                     {
                         process.Kill(true);
                     }
                 }
                 catch
                 {
-                    // Best effort cleanup before overwriting bundled runtime.
+                    // Best effort cleanup before updating the managed runtime.
                 }
+            }
+        }
+
+        private void EnsureNodeRuntime(ProbeConfig config)
+        {
+            if (File.Exists(NodePath))
+            {
+                ValidateNodeRuntime();
+                SetProgress(48, "Runtime Node.js existente validado.");
+                return;
+            }
+
+            var tempRoot = Path.Combine(Path.GetTempPath(), $"ServerWatchProbeNode.{Guid.NewGuid():N}");
+            var zipPath = Path.Combine(tempRoot, "node-runtime.zip");
+            var extractDir = Path.Combine(tempRoot, "extract");
+            try
+            {
+                Directory.CreateDirectory(tempRoot);
+                SetProgress(38, "Baixando runtime Node.js do ServerWatch...");
+                DownloadRuntime(config, zipPath);
+
+                SetProgress(45, "Extraindo runtime Node.js...");
+                ZipFile.ExtractToDirectory(zipPath, extractDir);
+                var extractedNode = Directory.GetFiles(extractDir, "node.exe", SearchOption.AllDirectories).FirstOrDefault();
+                if (string.IsNullOrWhiteSpace(extractedNode))
+                {
+                    throw new InvalidOperationException("O pacote do runtime Node.js nao contem node.exe.");
+                }
+
+                var extractedNodeDir = Path.GetDirectoryName(extractedNode)
+                    ?? throw new InvalidOperationException("Nao foi possivel localizar a pasta do runtime Node.js.");
+                if (Directory.Exists(NodeRuntimeDir))
+                {
+                    Directory.Delete(NodeRuntimeDir, true);
+                }
+                CopyDirectory(extractedNodeDir, NodeRuntimeDir);
+                ValidateNodeRuntime();
+            }
+            catch (Exception error)
+            {
+                throw new InvalidOperationException(
+                    $"Nao foi possivel preparar o runtime Node.js. Confirme se o ServerWatch possui o runtime Windows publicado. Detalhe: {error.Message}"
+                );
+            }
+            finally
+            {
+                try
+                {
+                    if (Directory.Exists(tempRoot))
+                    {
+                        Directory.Delete(tempRoot, true);
+                    }
+                }
+                catch
+                {
+                    // Temporary files can be cleaned by Windows later if antivirus/indexing holds a handle.
+                }
+            }
+        }
+
+        private static void DownloadRuntime(ProbeConfig config, string destination)
+        {
+            var url = CombineUrl(config.ServerUrl, NodeRuntimeDownloadPath);
+            using var client = new HttpClient { Timeout = TimeSpan.FromMinutes(5) };
+            using var request = new HttpRequestMessage(HttpMethod.Get, url);
+            request.Headers.TryAddWithoutValidation("Authorization", $"Bearer {config.Token}");
+            request.Headers.TryAddWithoutValidation("X-ServerWatch-Probe-Token", config.Token);
+            using var response = client.Send(request, HttpCompletionOption.ResponseHeadersRead);
+            if (!response.IsSuccessStatusCode)
+            {
+                throw new InvalidOperationException($"Download retornou HTTP {(int)response.StatusCode}.");
+            }
+
+            using var input = response.Content.ReadAsStream();
+            using var output = File.Create(destination);
+            input.CopyTo(output);
+        }
+
+        private static string CombineUrl(string serverUrl, string path)
+        {
+            return $"{serverUrl.TrimEnd('/')}/{path.TrimStart('/')}";
+        }
+
+        private static void ValidateNodeRuntime()
+        {
+            if (!File.Exists(NodePath))
+            {
+                throw new InvalidOperationException("node.exe nao foi encontrado no runtime baixado.");
+            }
+
+            using var process = Process.Start(new ProcessStartInfo
+            {
+                FileName = NodePath,
+                Arguments = "--version",
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardError = true,
+                RedirectStandardOutput = true
+            }) ?? throw new InvalidOperationException("Nao foi possivel validar node.exe.");
+
+            var output = process.StandardOutput.ReadToEnd().Trim();
+            var error = process.StandardError.ReadToEnd().Trim();
+            process.WaitForExit();
+            if (process.ExitCode != 0)
+            {
+                throw new InvalidOperationException(string.IsNullOrWhiteSpace(error) ? "node.exe retornou erro." : error);
+            }
+
+            var version = output.TrimStart('v');
+            var majorText = version.Split('.', StringSplitOptions.RemoveEmptyEntries).FirstOrDefault();
+            if (!int.TryParse(majorText, out var major) || major < 20)
+            {
+                throw new InvalidOperationException($"Runtime Node.js incompativel: {output}. Use Node.js 20 ou superior.");
+            }
+        }
+
+        private static void RemoveLegacyNodeRuntime()
+        {
+            try
+            {
+                if (File.Exists(LegacyNodePath))
+                {
+                    File.Delete(LegacyNodePath);
+                }
+            }
+            catch
+            {
+                // Best effort cleanup; the new scheduled task uses the runtime under the node folder.
             }
         }
 

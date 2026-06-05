@@ -1,10 +1,33 @@
 import { createServer } from "node:http";
-import { createHash, randomUUID, scryptSync, timingSafeEqual } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
-import { readFile } from "node:fs/promises";
-import { extname, join, resolve } from "node:path";
+import { join, resolve } from "node:path";
 import os from "node:os";
+import { createAlertsHandler } from "./routes/alerts.js";
+import { createDownloadHandler } from "./routes/downloads.js";
+import { createGroupsHandler } from "./routes/groups.js";
+import { createHealthHandler } from "./routes/health.js";
+import { createMetaHandler } from "./routes/meta.js";
+import { createNetworkHandler } from "./routes/network.js";
+import { createProbesHandler } from "./routes/probes.js";
+import { createServerCheckHandler, createServerCreateHandler, createServerMutationHandler, createServerReadHandler } from "./routes/servers.js";
+import { createSettingsHandler } from "./routes/settings.js";
+import { createStaticHandler } from "./routes/static.js";
+import { createUsersHandler } from "./routes/users.js";
 import { createStorage } from "./storage/index.js";
+import { createAlertService } from "./services/alert.js";
+import {
+  clearSessionCookie,
+  hashPassword,
+  normalizeEmail,
+  parseCookies,
+  publicUser,
+  setSessionCookie,
+  verifyPassword
+} from "./services/auth.js";
+import { getRouteParts, notFound, readBody, sendJson } from "./services/http.js";
+import { applyMonitorResult } from "./services/monitor.js";
+import { createWebSocketHub } from "./ws/handler.js";
 
 const PORT = Number(process.env.PORT || 3000);
 const HOST = process.env.HOST || "0.0.0.0";
@@ -17,6 +40,7 @@ const DOWNLOADS = {
     path: resolve("tools/probe/install-linux.sh"),
     filename: "serverwatch-probe-install-linux.sh",
     contentType: "text/x-shellscript; charset=utf-8",
+    public: true,
     allowProbeToken: true
   },
   "/downloads/probe/collector.js": {
@@ -31,30 +55,82 @@ const DOWNLOADS = {
     contentType: "text/javascript; charset=utf-8",
     allowProbeToken: true
   },
+  "/downloads/probe/node-runtime-windows-x64": {
+    path: resolve(process.env.SERVERWATCH_WINDOWS_NODE_RUNTIME_PATH || "downloads/node-v20.19.2-win-x64.zip"),
+    filename: "serverwatch-node-runtime-win-x64.zip",
+    contentType: "application/zip",
+    allowProbeToken: true
+  },
+  "/downloads/probe/node-runtime-linux-x64": {
+    path: resolve(process.env.SERVERWATCH_LINUX_X64_NODE_RUNTIME_PATH || "downloads/node-v20.19.2-linux-x64.tar.xz"),
+    filename: "serverwatch-node-runtime-linux-x64.tar.xz",
+    contentType: "application/x-xz",
+    allowProbeToken: true
+  },
+  "/downloads/probe/node-runtime-linux-arm64": {
+    path: resolve(process.env.SERVERWATCH_LINUX_ARM64_NODE_RUNTIME_PATH || "downloads/node-v20.19.2-linux-arm64.tar.xz"),
+    filename: "serverwatch-node-runtime-linux-arm64.tar.xz",
+    contentType: "application/x-xz",
+    allowProbeToken: true
+  },
   "/downloads/probe/windows-installer": {
     path: resolve(process.env.SERVERWATCH_WINDOWS_INSTALLER_PATH || "downloads/ServerWatchProbeSetup.exe"),
     filename: "ServerWatchProbeSetup.exe",
     contentType: "application/vnd.microsoft.portable-executable"
+  },
+  "/downloads/linkprobe/windows-amd64": {
+    path: resolve(process.env.SERVERWATCH_LINKPROBE_WINDOWS_AMD64_PATH || "downloads/linkprobe-windows-amd64.exe"),
+    filename: "linkprobe-windows-amd64.exe",
+    contentType: "application/vnd.microsoft.portable-executable",
+    allowProbeToken: true
+  },
+  "/downloads/linkprobe/linux-amd64": {
+    path: resolve(process.env.SERVERWATCH_LINKPROBE_LINUX_AMD64_PATH || "downloads/linkprobe-linux-amd64"),
+    filename: "linkprobe-linux-amd64",
+    contentType: "application/octet-stream",
+    allowProbeToken: true
+  },
+  "/downloads/linkprobe/linux-arm64": {
+    path: resolve(process.env.SERVERWATCH_LINKPROBE_LINUX_ARM64_PATH || "downloads/linkprobe-linux-arm64"),
+    filename: "linkprobe-linux-arm64",
+    contentType: "application/octet-stream",
+    allowProbeToken: true
+  },
+  "/downloads/linkprobe/linux-installer": {
+    path: resolve("tools/linkprobe/install-linux.sh"),
+    filename: "serverwatch-linkprobe-install-linux.sh",
+    contentType: "text/x-shellscript; charset=utf-8",
+    public: true,
+    allowProbeToken: true
   }
 };
 const CHECK_LOOP_MS = 1000;
 const MAX_HISTORY_PER_SERVER = 500;
 const CHECK_SOURCES = new Set(["serverwatch", "probe"]);
+const NODE_TYPES = new Set(["server", "physical", "hypervisor", "vm", "service"]);
+const INFRASTRUCTURE_PLATFORMS = new Set(["none", "proxmox", "vmware", "hyper-v", "bare-metal", "cloud", "linux", "windows", "other"]);
+const NETWORK_DEVICE_VENDORS = new Set(["mikrotik", "pfsense", "fortigate", "generic", "other"]);
+const NETWORK_LINK_TYPES = new Set(["internet", "mpls", "vpn", "radio", "fiber", "cellular", "other"]);
+const NETWORK_LINK_STATUSES = new Set(["online", "degraded", "offline", "unknown"]);
 const SESSION_COOKIE = "sw_session";
 const SESSION_TTL_MS = 8 * 60 * 60 * 1000;
 const DEFAULT_ADMIN_EMAIL = process.env.SERVERWATCH_ADMIN_EMAIL || "admin@serverwatch.local";
 const DEFAULT_ADMIN_PASSWORD = process.env.SERVERWATCH_ADMIN_PASSWORD || "admin123";
-const PROBE_COLLECTOR_VERSION = "0.5.0";
+const PROBE_COLLECTOR_VERSION = "0.6.7";
+const PROBE_UPDATE_SUPPORTED_PLATFORMS = new Set(["linux"]);
 
-const sockets = new Set();
 const sessions = new Map();
 let state = {
   servers: [],
   groups: [],
   probes: [],
+  networkDevices: [],
+  networkLinks: [],
+  networkEvents: [],
   users: [],
   events: [],
   alerts: [],
+  probeUpdateRequests: [],
   settings: {
     defaultInterval: 10,
     defaultFailureThreshold: 2,
@@ -75,21 +151,15 @@ let state = {
 };
 let saveTimer = null;
 let probeStalenessCheckRunning = false;
+let addEvent;
+let addAdministrativeEvent;
+let addProbeEvent;
 const storage = createStorage({
   type: STORAGE_TYPE,
   dataFile: DATA_FILE,
   mongoUri: process.env.MONGODB_URI,
   mongoDb: process.env.MONGODB_DB || "serverwatch"
 });
-
-const mimeTypes = {
-  ".html": "text/html; charset=utf-8",
-  ".css": "text/css; charset=utf-8",
-  ".js": "text/javascript; charset=utf-8",
-  ".json": "application/json; charset=utf-8",
-  ".svg": "image/svg+xml",
-  ".ico": "image/x-icon"
-};
 
 function nowIso() {
   return new Date().toISOString();
@@ -110,6 +180,38 @@ function normalizeCheckSource(value, fallback = "serverwatch") {
   return CHECK_SOURCES.has(source) ? source : "serverwatch";
 }
 
+function normalizeNodeType(value, fallback = "server") {
+  const type = String(value || fallback || "server").trim().toLowerCase();
+  return NODE_TYPES.has(type) ? type : "server";
+}
+
+function normalizeChildIds(value) {
+  if (Array.isArray(value)) {
+    return [...new Set(value.map((item) => String(item || "").trim()).filter(Boolean))];
+  }
+  if (typeof value === "string") {
+    return [...new Set(value.split(",").map((item) => item.trim()).filter(Boolean))];
+  }
+  return [];
+}
+
+function normalizeInfrastructurePlatform(value, fallback = "none") {
+  const platform = String(value || fallback || "none").trim().toLowerCase();
+  return INFRASTRUCTURE_PLATFORMS.has(platform) ? platform : "none";
+}
+
+function isDescendantServer(candidateId, ancestorId) {
+  let current = state.servers.find((server) => server.id === candidateId && !server.deletedAt);
+  const visited = new Set();
+  while (current?.parentId) {
+    if (current.parentId === ancestorId) return true;
+    if (visited.has(current.parentId)) return false;
+    visited.add(current.parentId);
+    current = state.servers.find((server) => server.id === current.parentId && !server.deletedAt);
+  }
+  return false;
+}
+
 function normalizeServer(payload, existing = {}) {
   const hostname = String(payload.hostname || existing.hostname || "").trim();
   if (!hostname) {
@@ -124,12 +226,19 @@ function normalizeServer(payload, existing = {}) {
     throw error;
   }
 
-  const interval = Number(payload.checkInterval ?? payload.check_interval ?? existing.checkInterval ?? state.settings.defaultInterval);
-  const threshold = Number(payload.failureThreshold ?? payload.failure_threshold ?? existing.failureThreshold ?? state.settings.defaultFailureThreshold);
+  const interval = Number(payload.checkInterval ?? payload.check_interval ?? existing.checkInterval ?? 10);
+  const threshold = Number(payload.failureThreshold ?? payload.failure_threshold ?? existing.failureThreshold ?? 3);
   const rawGroupId = payload.groupId ?? payload.group_id ?? existing.groupId ?? null;
-  const groupId = rawGroupId && rawGroupId !== "none" ? String(rawGroupId) : null;
+  let groupId = rawGroupId && rawGroupId !== "none" ? String(rawGroupId) : null;
   const checkSource = normalizeCheckSource(payload.checkSource ?? payload.check_source, existing.checkSource);
   const probeId = String(payload.probeId ?? payload.probe_id ?? existing.probeId ?? "").trim();
+  const nodeType = normalizeNodeType(payload.nodeType ?? payload.node_type, existing.nodeType);
+  const infrastructurePlatform = normalizeInfrastructurePlatform(
+    payload.infrastructurePlatform ?? payload.infrastructure_platform,
+    existing.infrastructurePlatform
+  );
+  const rawParentId = payload.parentId ?? payload.parent_id ?? existing.parentId ?? null;
+  const parentId = rawParentId && rawParentId !== "none" ? String(rawParentId) : null;
 
   if (groupId && !listedGroups().some((group) => group.id === groupId)) {
     const error = new Error("Empresa/grupo informado nao existe.");
@@ -150,6 +259,33 @@ function normalizeServer(payload, existing = {}) {
     }
   }
 
+  if (parentId) {
+    if (parentId === existing.id) {
+      const error = new Error("Um servidor nao pode depender dele mesmo.");
+      error.statusCode = 400;
+      throw error;
+    }
+    const parent = listedServers().find((server) => server.id === parentId);
+    if (!parent) {
+      const error = new Error("Host pai/virtualizador nao encontrado.");
+      error.statusCode = 400;
+      throw error;
+    }
+    if (parent.nodeType !== "hypervisor") {
+      const error = new Error("Host pai deve estar marcado como virtualizador.");
+      error.statusCode = 400;
+      throw error;
+    }
+    if (existing.id && isDescendantServer(parentId, existing.id)) {
+      const error = new Error("Dependencia invalida: isso criaria um ciclo na topologia.");
+      error.statusCode = 400;
+      throw error;
+    }
+    if (parent.groupId) {
+      groupId = parent.groupId;
+    }
+  }
+
   return {
     ...existing,
     name: String(payload.name || existing.name || hostname).trim(),
@@ -158,6 +294,9 @@ function normalizeServer(payload, existing = {}) {
     checkMethod: "ping",
     checkSource,
     probeId: checkSource === "probe" ? probeId : null,
+    nodeType,
+    infrastructurePlatform,
+    parentId,
     checkInterval: Math.max(3, Math.min(3600, Number.isFinite(interval) ? interval : state.settings.defaultInterval)),
     failureThreshold: Math.max(1, Math.min(10, Number.isFinite(threshold) ? threshold : state.settings.defaultFailureThreshold)),
     environment: String(payload.environment || existing.environment || "production"),
@@ -167,6 +306,259 @@ function normalizeServer(payload, existing = {}) {
     isActive: Boolean(payload.isActive ?? payload.is_active ?? existing.isActive ?? true),
     updatedAt: nowIso()
   };
+}
+
+function normalizeNetworkVendor(value, fallback = "generic") {
+  const vendor = String(value || fallback || "generic").trim().toLowerCase();
+  return NETWORK_DEVICE_VENDORS.has(vendor) ? vendor : "generic";
+}
+
+function normalizeNetworkLinkType(value, fallback = "internet") {
+  const type = String(value || fallback || "internet").trim().toLowerCase();
+  return NETWORK_LINK_TYPES.has(type) ? type : "internet";
+}
+
+function normalizeOptionalHost(value, fieldName = "host") {
+  const host = String(value || "").trim();
+  if (!host) return "";
+  if (!/^[a-zA-Z0-9._:-]+$/.test(host)) {
+    const error = new Error(`${fieldName} invalido. Use apenas letras, numeros, ponto, hifen, underline ou dois-pontos.`);
+    error.statusCode = 400;
+    throw error;
+  }
+  return host;
+}
+
+function normalizeHostList(value, fallback = []) {
+  const rawItems = Array.isArray(value)
+    ? value
+    : String(value || "")
+        .split(/[\n,;]+/)
+        .map((item) => item.trim());
+  const fallbackItems = Array.isArray(fallback) ? fallback : [fallback];
+  const items = rawItems.length ? rawItems : fallbackItems;
+  return [...new Set(
+    items
+      .map((item) => normalizeOptionalHost(item, "Alvo do link"))
+      .filter(Boolean)
+  )];
+}
+
+function parseNetworkTargetLine(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return null;
+  const namedMatch = raw.match(/^(.+?)\s*(?:\||=>|=)\s*([a-zA-Z0-9._:-]+)$/);
+  if (namedMatch) {
+    return {
+      name: namedMatch[1].trim(),
+      host: normalizeOptionalHost(namedMatch[2], "Alvo do link")
+    };
+  }
+  return {
+    name: "",
+    host: normalizeOptionalHost(raw, "Alvo do link")
+  };
+}
+
+function normalizeNetworkTargets(value, fallback = []) {
+  const rawItems = Array.isArray(value)
+    ? value
+    : String(value || "")
+        .split(/[\n,;]+/)
+        .map((item) => item.trim())
+        .filter(Boolean);
+  const fallbackItems = Array.isArray(fallback) ? fallback : [fallback];
+  const items = rawItems.length ? rawItems : fallbackItems;
+  const targets = [];
+  const seen = new Set();
+
+  for (const item of items) {
+    const parsed = typeof item === "object" && item !== null
+      ? {
+          name: String(item.name || item.label || "").trim(),
+          host: normalizeOptionalHost(item.host || item.targetHost || item.target_host, "Alvo do link"),
+          prefixLength: normalizeNetworkPrefixLength(item.prefixLength ?? item.prefix_length ?? item.subnetPrefix ?? item.subnet_prefix)
+        }
+      : parseNetworkTargetLine(item);
+    if (!parsed?.host || seen.has(parsed.host)) continue;
+    seen.add(parsed.host);
+    targets.push(parsed);
+  }
+
+  return targets;
+}
+
+function normalizeNetworkPrefixLength(value) {
+  const raw = String(value ?? "").trim().replace(/^\//, "");
+  if (!raw) return null;
+  const prefixLength = Number(raw);
+  if (!Number.isInteger(prefixLength) || prefixLength < 1 || prefixLength > 32) {
+    const error = new Error("Mascara do alvo invalida. Use valores como /30, /29 ou /28.");
+    error.statusCode = 400;
+    throw error;
+  }
+  return prefixLength;
+}
+
+function normalizeNetworkDevice(payload, existing = {}) {
+  const name = String(payload.name || existing.name || "").trim();
+  if (!name) {
+    const error = new Error("Informe o nome do dispositivo de rede.");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const rawGroupId = payload.groupId ?? payload.group_id ?? existing.groupId ?? null;
+  const groupId = rawGroupId && rawGroupId !== "none" ? String(rawGroupId) : null;
+  if (groupId && !listedGroups().some((group) => group.id === groupId)) {
+    const error = new Error("Empresa/grupo informado nao existe.");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const rawProbeId = payload.probeId ?? payload.probe_id ?? existing.probeId ?? "";
+  const probeId = String(rawProbeId || "").trim();
+  if (probeId && !state.probes.some((probe) => probe.id === probeId && !probe.deletedAt)) {
+    const error = new Error("Probe collector nao encontrado.");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  return {
+    name,
+    vendor: normalizeNetworkVendor(payload.vendor, existing.vendor),
+    model: String(payload.model || existing.model || "").trim(),
+    managementIp: normalizeOptionalHost(payload.managementIp ?? payload.management_ip ?? existing.managementIp, "IP de gerenciamento"),
+    groupId,
+    probeId: probeId || null,
+    environment: String(payload.environment || existing.environment || "production").trim() || "production",
+    tags: normalizeTags(payload.tags ?? existing.tags ?? []),
+    notes: String(payload.notes || existing.notes || "").trim(),
+    isActive: payload.isActive ?? payload.is_active ?? existing.isActive ?? true
+  };
+}
+
+function normalizeNetworkLink(payload, existing = {}) {
+  const name = String(payload.name || existing.name || "").trim();
+  if (!name) {
+    const error = new Error("Informe o nome do link.");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const rawDeviceId = payload.networkDeviceId ?? payload.network_device_id ?? existing.networkDeviceId ?? null;
+  const networkDeviceId = rawDeviceId && rawDeviceId !== "none" ? String(rawDeviceId) : null;
+  const device = networkDeviceId
+    ? (state.networkDevices || []).find((item) => item.id === networkDeviceId && !item.deletedAt)
+    : null;
+  if (networkDeviceId && !device) {
+    const error = new Error("Dispositivo de rede informado nao existe.");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const rawGroupId = payload.groupId ?? payload.group_id ?? existing.groupId ?? device?.groupId ?? null;
+  const groupId = rawGroupId && rawGroupId !== "none" ? String(rawGroupId) : null;
+  if (groupId && !listedGroups().some((group) => group.id === groupId)) {
+    const error = new Error("Empresa/grupo informado nao existe.");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const probeId = String(payload.probeId ?? payload.probe_id ?? existing.probeId ?? device?.probeId ?? "").trim();
+  if (!probeId) {
+    const error = new Error("Selecione um probe para monitorar este link.");
+    error.statusCode = 400;
+    throw error;
+  }
+  if (!state.probes.some((probe) => probe.id === probeId && !probe.deletedAt)) {
+    const error = new Error("Probe collector nao encontrado.");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const fallbackTargets = existing.targets?.length
+    ? existing.targets
+    : (existing.targetHosts?.length ? existing.targetHosts : [existing.targetHost]);
+  const targets = normalizeNetworkTargets(
+    payload.targets ?? payload.targetTargets ?? payload.target_hosts ?? payload.targetHosts ?? payload.targetHost ?? payload.target_host,
+    fallbackTargets
+  );
+  const targetHosts = targets.map((target) => target.host);
+  if (!targetHosts.length) {
+    const error = new Error("Informe o alvo de monitoramento do link.");
+    error.statusCode = 400;
+    throw error;
+  }
+  const targetHost = targetHosts[0];
+
+  const interval = Number(payload.checkInterval ?? payload.check_interval ?? existing.checkInterval ?? state.settings.defaultInterval);
+  const threshold = Number(payload.failureThreshold ?? payload.failure_threshold ?? existing.failureThreshold ?? state.settings.defaultFailureThreshold);
+  const degradedLatencyMs = Number(payload.degradedLatencyMs ?? payload.degraded_latency_ms ?? existing.degradedLatencyMs ?? 120);
+  const degradedPacketLossPercent = Number(
+    payload.degradedPacketLossPercent ?? payload.degraded_packet_loss_percent ?? existing.degradedPacketLossPercent ?? 10
+  );
+  const degradedJitterMs = Number(payload.degradedJitterMs ?? payload.degraded_jitter_ms ?? existing.degradedJitterMs ?? 40);
+
+  return {
+    name,
+    networkDeviceId,
+    groupId,
+    provider: String(payload.provider || existing.provider || "").trim(),
+    linkType: normalizeNetworkLinkType(payload.linkType ?? payload.link_type, existing.linkType),
+    interfaceName: String(payload.interfaceName ?? payload.interface_name ?? existing.interfaceName ?? "").trim(),
+    targetHost,
+    targetHosts,
+    targets,
+    expectedPublicIp: normalizeOptionalHost(payload.expectedPublicIp ?? payload.expected_public_ip ?? existing.expectedPublicIp, "IP publico esperado"),
+    expectedPublicPrefixLength: normalizeNetworkPrefixLength(
+      payload.expectedPublicPrefixLength ?? payload.expected_public_prefix_length ?? payload.expectedPrefixLength ?? payload.expected_prefix_length ?? existing.expectedPublicPrefixLength
+    ),
+    contractedDownloadMbps: Math.max(0, Number(payload.contractedDownloadMbps ?? payload.contracted_download_mbps ?? existing.contractedDownloadMbps ?? 0) || 0),
+    contractedUploadMbps: Math.max(0, Number(payload.contractedUploadMbps ?? payload.contracted_upload_mbps ?? existing.contractedUploadMbps ?? 0) || 0),
+    probeId,
+    checkInterval: Math.max(10, Math.min(3600, Number.isFinite(interval) ? interval : 10)),
+    failureThreshold: Math.max(3, Math.min(10, Number.isFinite(threshold) ? threshold : 3)),
+    degradedLatencyMs: Math.max(1, Math.min(10000, Number.isFinite(degradedLatencyMs) ? degradedLatencyMs : 120)),
+    degradedPacketLossPercent: Math.max(0, Math.min(100, Number.isFinite(degradedPacketLossPercent) ? degradedPacketLossPercent : 10)),
+    degradedJitterMs: Math.max(0, Math.min(10000, Number.isFinite(degradedJitterMs) ? degradedJitterMs : 40)),
+    sampleCount: 1,
+    isActive: payload.isActive ?? payload.is_active ?? existing.isActive ?? true,
+    notes: String(payload.notes || existing.notes || "").trim()
+  };
+}
+
+function syncVirtualizerChildren(parent, childIds = [], actorName = "Sistema") {
+  if (!parent || parent.deletedAt || parent.nodeType !== "hypervisor") return 0;
+  const selected = new Set(normalizeChildIds(childIds));
+  let updated = 0;
+
+  for (const server of listedServers()) {
+    if (server.id === parent.id || server.nodeType === "hypervisor") continue;
+    if (isDescendantServer(parent.id, server.id)) continue;
+
+    const alreadyChild = server.parentId === parent.id;
+    const canAttach = !server.parentId || alreadyChild;
+    const shouldAttach = selected.has(server.id) && canAttach;
+    const shouldDetach = !selected.has(server.id) && alreadyChild;
+    if (!shouldAttach && !shouldDetach) continue;
+
+    server.parentId = shouldAttach ? parent.id : null;
+    server.nodeType = shouldAttach ? "vm" : normalizeNodeType(server.nodeType);
+    if (shouldAttach && parent.groupId) {
+      server.groupId = parent.groupId;
+    }
+    server.updatedAt = nowIso();
+    addAdministrativeEvent(
+      server,
+      "server_edited",
+      shouldAttach ? `Servidor vinculado como VM de ${parent.name}.` : `Servidor desvinculado de ${parent.name}.`,
+      actorName
+    );
+    updated += 1;
+  }
+
+  return updated;
 }
 
 function normalizeGroup(payload, existing = {}) {
@@ -265,37 +657,6 @@ function normalizeAlertSettings(payload = {}, existing = {}) {
   };
 }
 
-function normalizeEmail(value) {
-  return String(value || "").trim().toLowerCase();
-}
-
-function hashPassword(password) {
-  const salt = randomUUID().replaceAll("-", "");
-  const hash = scryptSync(String(password), salt, 32).toString("base64");
-  return `scrypt:${salt}:${hash}`;
-}
-
-function verifyPassword(password, storedHash) {
-  const [scheme, salt, hash] = String(storedHash || "").split(":");
-  if (scheme !== "scrypt" || !salt || !hash) return false;
-  const expected = Buffer.from(hash, "base64");
-  const actual = scryptSync(String(password), salt, expected.length);
-  return expected.length === actual.length && timingSafeEqual(expected, actual);
-}
-
-function publicUser(user) {
-  return {
-    id: user.id,
-    name: user.name,
-    email: user.email,
-    role: user.role,
-    isActive: user.isActive !== false,
-    createdAt: user.createdAt,
-    updatedAt: user.updatedAt,
-    lastLoginAt: user.lastLoginAt || null
-  };
-}
-
 function listedUsers() {
   return (state.users || []).filter((user) => !user.deletedAt);
 }
@@ -314,6 +675,7 @@ function ensureDefaultAdmin() {
     email: normalizeEmail(DEFAULT_ADMIN_EMAIL),
     role: "admin",
     passwordHash: hashPassword(DEFAULT_ADMIN_PASSWORD),
+    mustChangePassword: true,
     isActive: true,
     createdAt: now,
     updatedAt: now,
@@ -367,6 +729,7 @@ function normalizeUser(payload, existing = {}) {
     role,
     isActive: Boolean(payload.isActive ?? existing.isActive ?? true),
     passwordHash: password ? hashPassword(password) : existing.passwordHash,
+    mustChangePassword: Boolean(payload.mustChangePassword ?? existing.mustChangePassword ?? false),
     updatedAt: nowIso()
   };
 }
@@ -384,6 +747,9 @@ function createSeedState() {
         checkMethod: "ping",
         checkSource: "serverwatch",
         probeId: null,
+        nodeType: "server",
+        infrastructurePlatform: "none",
+        parentId: null,
         checkInterval: 5,
         failureThreshold: 1,
         environment: "production",
@@ -405,6 +771,9 @@ function createSeedState() {
       }
     ],
     groups: [],
+    networkDevices: [],
+    networkLinks: [],
+    networkEvents: [],
     users: [],
     events: [],
     alerts: []
@@ -425,6 +794,10 @@ async function loadState() {
     ...parsed,
     groups: Array.isArray(parsed.groups) ? parsed.groups : [],
     probes: Array.isArray(parsed.probes) ? parsed.probes : [],
+    networkDevices: Array.isArray(parsed.networkDevices) ? parsed.networkDevices : [],
+    networkLinks: Array.isArray(parsed.networkLinks) ? parsed.networkLinks : [],
+    networkEvents: Array.isArray(parsed.networkEvents) ? parsed.networkEvents : [],
+    probeUpdateRequests: Array.isArray(parsed.probeUpdateRequests) ? parsed.probeUpdateRequests : [],
     users: Array.isArray(parsed.users) ? parsed.users : [],
     settings: { ...state.settings, ...(parsed.settings || {}) }
   };
@@ -450,17 +823,52 @@ async function loadState() {
     checkMethod: "ping",
     checkSource: normalizeCheckSource(server.checkSource),
     probeId: server.checkSource === "probe" ? server.probeId || null : null,
+    nodeType: normalizeNodeType(server.nodeType),
+    infrastructurePlatform: normalizeInfrastructurePlatform(server.infrastructurePlatform),
+    parentId: server.parentId || null,
     groupId: server.groupId || null,
     nextCheckAt: now + Math.floor(Math.random() * 1500),
     consecutiveFailures: server.consecutiveFailures || 0
   }));
+  state.users = state.users.map((user) => ({
+    ...user,
+    mustChangePassword: user.mustChangePassword === true
+  }));
+  state.networkDevices = (state.networkDevices || []).map((device) => ({
+    ...device,
+    vendor: normalizeNetworkVendor(device.vendor),
+    groupId: device.groupId || null,
+    probeId: device.probeId || null,
+    isActive: device.isActive !== false
+  }));
+  state.networkLinks = (state.networkLinks || []).map((link) => {
+    const targets = normalizeNetworkTargets(link.targets?.length ? link.targets : (link.targetHosts?.length ? link.targetHosts : [link.targetHost]));
+    return {
+      ...link,
+      networkDeviceId: link.networkDeviceId || null,
+      groupId: link.groupId || null,
+      probeId: link.probeId || null,
+      targetHost: targets[0]?.host || link.targetHost,
+      targetHosts: targets.map((target) => target.host),
+      targets,
+      linkType: normalizeNetworkLinkType(link.linkType),
+      currentStatus: NETWORK_LINK_STATUSES.has(link.currentStatus) ? link.currentStatus : "unknown",
+      previousStatus: NETWORK_LINK_STATUSES.has(link.previousStatus) ? link.previousStatus : "unknown",
+      consecutiveFailures: link.consecutiveFailures || 0,
+      checkInterval: Math.max(10, Number(link.checkInterval || 10)),
+      failureThreshold: Math.max(3, Number(link.failureThreshold || 3)),
+      sampleCount: Math.max(1, Number(link.sampleCount || 1)),
+      isActive: link.isActive !== false
+    };
+  });
   if (needsSave) await persistState();
 }
 
 async function persistState() {
   const payload = {
     ...state,
-    servers: state.servers.map(({ nextCheckAt, nextProbeFallbackCheckAt, ...server }) => server)
+    servers: state.servers.map(({ nextCheckAt, nextProbeFallbackCheckAt, ...server }) => server),
+    networkLinks: (state.networkLinks || []).map(({ nextCheckAt, ...link }) => link)
   };
   await storage.saveState(payload);
 }
@@ -470,110 +878,6 @@ function scheduleSave() {
   saveTimer = setTimeout(() => {
     persistState().catch((error) => console.error("Falha ao salvar estado", error));
   }, 250);
-}
-
-function downtimeDurationMs(serverId, recoveredAt) {
-  const recoveredMs = new Date(recoveredAt || nowIso()).getTime();
-  const lastOffline = state.events.find(
-    (event) =>
-      event.serverId === serverId &&
-      event.category === "technical" &&
-      event.kind === "server_offline" &&
-      new Date(event.createdAt).getTime() <= recoveredMs
-  );
-  if (!lastOffline) return null;
-  const startedMs = new Date(lastOffline.createdAt).getTime();
-  return Number.isFinite(startedMs) && Number.isFinite(recoveredMs) ? Math.max(0, recoveredMs - startedMs) : null;
-}
-
-function recordEvent(event) {
-  const payload = {
-    id: randomUUID(),
-    category: event.category || "technical",
-    kind: event.kind || "status_changed",
-    serverId: event.serverId || null,
-    serverName: event.serverName || null,
-    previousStatus: event.previousStatus || null,
-    currentStatus: event.currentStatus || null,
-    latencyMs: event.latencyMs ?? null,
-    durationMs: event.durationMs ?? null,
-    actorName: event.actorName || null,
-    message: event.message || null,
-    createdAt: event.createdAt || nowIso()
-  };
-  state.events.unshift(payload);
-  state.events = trimEvents(state.events);
-  broadcast({ type: "event_created", event: payload, summary: summary() });
-  return payload;
-}
-
-function alertSeverityForServer(server, currentStatus) {
-  if (currentStatus !== "offline") return "info";
-  const byEnvironment = state.settings.alertSeverityByEnvironment || {};
-  return byEnvironment[server.environment] || byEnvironment.production || "critical";
-}
-
-function addEvent(server, previousStatus, currentStatus, latencyMs, message) {
-  const createdAt = nowIso();
-  const event = recordEvent({
-    category: "technical",
-    kind: currentStatus === "offline" ? "server_offline" : currentStatus === "online" ? "server_recovered" : "status_changed",
-    serverId: server.id,
-    serverName: server.name,
-    previousStatus,
-    currentStatus,
-    latencyMs,
-    durationMs: currentStatus === "online" && previousStatus === "offline" ? downtimeDurationMs(server.id, createdAt) : null,
-    message: message || null,
-    createdAt
-  });
-
-  if (previousStatus !== currentStatus && currentStatus !== "unknown" && previousStatus !== "unknown") {
-    const alert = {
-      id: randomUUID(),
-      serverId: server.id,
-      serverName: server.name,
-      type: currentStatus === "offline" ? "down" : "recovery",
-      severity: alertSeverityForServer(server, currentStatus),
-      message:
-        currentStatus === "offline"
-          ? `${server.name} parou de responder em ${server.hostname}.`
-          : `${server.name} voltou a responder em ${server.hostname}.`,
-      createdAt,
-      read: false,
-      acknowledgedAt: null,
-      acknowledgedBy: null,
-      acknowledgmentNote: ""
-    };
-    state.alerts.unshift(alert);
-    state.alerts = state.alerts.slice(0, 200);
-    broadcast({ type: "alert", alert });
-  }
-
-  broadcast({ type: "status_changed", event, server: publicServer(server) });
-}
-
-function addAdministrativeEvent(server, kind, message, actorName = null) {
-  return recordEvent({
-    category: "administrative",
-    kind,
-    serverId: server.id,
-    serverName: server.name,
-    currentStatus: server.currentStatus || "unknown",
-    actorName,
-    message
-  });
-}
-
-function addProbeEvent(server, kind, message) {
-  return recordEvent({
-    category: "technical",
-    kind,
-    serverId: server.id,
-    serverName: server.name,
-    currentStatus: server.currentStatus || "unknown",
-    message
-  });
 }
 
 function probeStaleAfterMs(server) {
@@ -606,6 +910,44 @@ function probeConnection(server) {
   };
 }
 
+function dependencyInfo(server) {
+  if (!server?.parentId) {
+    return {
+      parentId: null,
+      parentName: null,
+      parentStatus: null,
+      dependencyStatus: "independent",
+      dependencyReason: null
+    };
+  }
+
+  const parent = state.servers.find((item) => item.id === server.parentId && !item.deletedAt);
+  if (!parent) {
+    return {
+      parentId: server.parentId,
+      parentName: null,
+      parentStatus: "missing",
+      dependencyStatus: "orphan",
+      dependencyReason: "Host pai removido ou nao encontrado."
+    };
+  }
+
+  const parentProbe = probeConnection(parent);
+  const parentStatus = !parent.isActive
+    ? "paused"
+    : parentProbe.status === "stale"
+    ? "probe_stale"
+    : parent.currentStatus || "unknown";
+  const affected = parentStatus === "offline" || parentStatus === "probe_stale";
+  return {
+    parentId: parent.id,
+    parentName: parent.name,
+    parentStatus,
+    dependencyStatus: affected ? "affected" : "ok",
+    dependencyReason: affected ? `${parent.name} esta ${parentStatus === "probe_stale" ? "com probe sem contato" : "offline"}.` : null
+  };
+}
+
 function trimEvents(events) {
   const byServer = new Map();
   const trimmed = [];
@@ -622,6 +964,7 @@ function trimEvents(events) {
 function publicServer(server) {
   const group = server.groupId ? listedGroups().find((item) => item.id === server.groupId) : null;
   const probe = probeConnection(server);
+  const dependency = dependencyInfo(server);
   const linkedProbe = server.checkSource === "probe"
     ? (state.probes || []).find((item) => item.id === server.probeId && !item.deletedAt)
     : null;
@@ -633,6 +976,13 @@ function publicServer(server) {
     checkMethod: server.checkMethod,
     checkSource: server.checkSource || "serverwatch",
     probeId: server.probeId || null,
+    nodeType: server.nodeType || "server",
+    infrastructurePlatform: server.infrastructurePlatform || "none",
+    parentId: dependency.parentId,
+    parentName: dependency.parentName,
+    parentStatus: dependency.parentStatus,
+    dependencyStatus: dependency.dependencyStatus,
+    dependencyReason: dependency.dependencyReason,
     checkInterval: server.checkInterval,
     failureThreshold: server.failureThreshold,
     environment: server.environment,
@@ -652,6 +1002,8 @@ function publicServer(server) {
     probeLastSeenAt: probe.lastSeenAt,
     probeStaleAfterSeconds: probe.staleAfterSeconds,
     probeCheckRequestedAt: server.probeCheckRequestedAt || null,
+    probeFallbackStatus: server.probeFallbackStatus || null,
+    probeFallbackCheckedAt: server.probeFallbackCheckedAt || null,
     probeHostMetrics: linkedProbe?.hostMetrics || null,
     probeHostMetricsUpdatedAt: linkedProbe?.hostMetricsUpdatedAt || null,
     probeHostName: linkedProbe?.hostName || null,
@@ -676,6 +1028,8 @@ function listedGroups() {
 function publicGroup(group) {
   const servers = listedServers().filter((server) => server.groupId === group.id);
   const activeServers = servers.filter((server) => server.isActive);
+  const networkDevices = listedNetworkDevices().filter((device) => device.groupId === group.id);
+  const networkLinks = listedNetworkLinks().filter((link) => link.groupId === group.id);
   return {
     id: group.id,
     name: group.name,
@@ -684,10 +1038,504 @@ function publicGroup(group) {
     serverCount: servers.length,
     activeServerCount: activeServers.length,
     offlineCount: activeServers.filter((server) => server.currentStatus === "offline").length,
+    networkDeviceCount: networkDevices.length,
+    networkLinkCount: networkLinks.length,
     createdAt: group.createdAt,
     updatedAt: group.updatedAt,
     deletedAt: group.deletedAt || null
   };
+}
+
+function listedNetworkDevices() {
+  return (state.networkDevices || []).filter((device) => !device.deletedAt);
+}
+
+function listedNetworkLinks() {
+  return (state.networkLinks || []).filter((link) => !link.deletedAt);
+}
+
+function networkLinkStaleAfterMs(link) {
+  const intervalMs = Math.max(5, Number(link.checkInterval || state.settings.defaultInterval || 10)) * 1000;
+  const threshold = Math.max(1, Number(link.failureThreshold || state.settings.defaultFailureThreshold || 2));
+  const graceMs = Math.max(15, Number(state.settings.probeStaleGraceSeconds || 45)) * 1000;
+  return Math.max(graceMs, intervalMs * (threshold + 1) + 15000);
+}
+
+function networkProbeConnection(link) {
+  const probe = (state.probes || []).find((item) => item.id === link.probeId && !item.deletedAt);
+  const lastSeenMs = newestTimestamp(probe?.lastSeenAt, link.lastProbeSeenAt);
+  const staleAfterMs = networkLinkStaleAfterMs(link);
+  return {
+    status: lastSeenMs && Date.now() - lastSeenMs > staleAfterMs ? "stale" : lastSeenMs ? "online" : "unknown",
+    lastSeenAt: lastSeenMs ? new Date(lastSeenMs).toISOString() : null,
+    staleAfterSeconds: Math.round(staleAfterMs / 1000)
+  };
+}
+
+function publicNetworkDevice(device) {
+  const group = device.groupId ? listedGroups().find((item) => item.id === device.groupId) : null;
+  const links = listedNetworkLinks().filter((link) => link.networkDeviceId === device.id);
+  return {
+    id: device.id,
+    name: device.name,
+    vendor: device.vendor || "generic",
+    model: device.model || "",
+    managementIp: device.managementIp || "",
+    groupId: device.groupId || null,
+    groupName: group?.name || null,
+    probeId: device.probeId || null,
+    environment: device.environment || "production",
+    tags: Array.isArray(device.tags) ? device.tags : [],
+    notes: device.notes || "",
+    isActive: device.isActive !== false,
+    linkCount: links.length,
+    offlineLinkCount: links.filter((link) => publicNetworkLink(link).displayStatus === "offline").length,
+    degradedLinkCount: links.filter((link) => publicNetworkLink(link).displayStatus === "degraded").length,
+    createdAt: device.createdAt,
+    updatedAt: device.updatedAt,
+    deletedAt: device.deletedAt || null
+  };
+}
+
+function publicNetworkLink(link) {
+  const group = link.groupId ? listedGroups().find((item) => item.id === link.groupId) : null;
+  const device = link.networkDeviceId ? listedNetworkDevices().find((item) => item.id === link.networkDeviceId) : null;
+  const probe = (state.probes || []).find((item) => item.id === link.probeId && !item.deletedAt);
+  const probeConnection = networkProbeConnection(link);
+  const expectedActive = expectedWanDetection(link);
+  const displayStatus = link.isActive === false
+    ? "paused"
+    : probeConnection.status === "stale"
+    ? "probe_unreachable"
+    : link.currentStatus || "unknown";
+  return {
+    id: link.id,
+    name: link.name,
+    networkDeviceId: link.networkDeviceId || null,
+    networkDeviceName: device?.name || null,
+    vendor: device?.vendor || "generic",
+    groupId: link.groupId || null,
+    groupName: group?.name || null,
+    provider: link.provider || "",
+    linkType: link.linkType || "internet",
+    interfaceName: link.interfaceName || "",
+    targetHost: link.targetHost,
+    targetHosts: Array.isArray(link.targetHosts) && link.targetHosts.length ? link.targetHosts : [link.targetHost].filter(Boolean),
+    targets: Array.isArray(link.targets) && link.targets.length
+      ? link.targets
+      : (Array.isArray(link.targetHosts) && link.targetHosts.length ? link.targetHosts : [link.targetHost].filter(Boolean)).map((host) => ({ name: "", host })),
+    activeTargetHost: expectedActive?.activeTargetHost || link.activeTargetHost || null,
+    activeTargetName: expectedActive?.activeTargetName || link.activeTargetName || "",
+    activeDetection: expectedActive?.activeDetection || link.activeDetection || "",
+    observedPublicIp: link.observedPublicIp || null,
+    expectedPublicIp: link.expectedPublicIp || "",
+    expectedPublicPrefixLength: link.expectedPublicPrefixLength || null,
+    contractedDownloadMbps: link.contractedDownloadMbps || 0,
+    contractedUploadMbps: link.contractedUploadMbps || 0,
+    monitorSource: link.monitorSource || (link.linkProbeAgentId ? "linkprobe" : "probe"),
+    linkProbeAgentId: link.linkProbeAgentId || null,
+    linkProbeVersion: link.linkProbeVersion || null,
+    linkProbeSourceIp: link.linkProbeSourceIp || "",
+    linkProbeSuccessRate: link.linkProbeSuccessRate ?? null,
+    linkProbeIpChanged: link.linkProbeIpChanged === true,
+    probeId: link.probeId || null,
+    probeName: probe?.name || link.probeId || null,
+    probeStatus: probeConnection.status,
+    probeLastSeenAt: probeConnection.lastSeenAt,
+    probeStaleAfterSeconds: probeConnection.staleAfterSeconds,
+    checkInterval: link.checkInterval,
+    failureThreshold: link.failureThreshold,
+    degradedLatencyMs: link.degradedLatencyMs,
+    degradedPacketLossPercent: link.degradedPacketLossPercent,
+    degradedJitterMs: link.degradedJitterMs,
+    currentStatus: link.currentStatus || "unknown",
+    displayStatus,
+    previousStatus: link.previousStatus || "unknown",
+    statusChangedAt: link.statusChangedAt || link.createdAt,
+    lastCheckedAt: link.lastCheckedAt || null,
+    lastLatencyMs: link.lastLatencyMs ?? null,
+    lastPacketLossPercent: link.lastPacketLossPercent ?? null,
+    lastJitterMs: link.lastJitterMs ?? null,
+    targetResults: Array.isArray(link.targetResults) ? link.targetResults : [],
+    lastError: link.lastError || null,
+    lastProbeSeenAt: link.lastProbeSeenAt || null,
+    consecutiveFailures: link.consecutiveFailures || 0,
+    forceCheckAt: link.forceCheckAt || null,
+    isActive: link.isActive !== false,
+    notes: link.notes || "",
+    createdAt: link.createdAt,
+    updatedAt: link.updatedAt,
+    deletedAt: link.deletedAt || null
+  };
+}
+
+function networkSummary() {
+  const links = listedNetworkLinks().filter((link) => link.isActive !== false);
+  const publicLinks = links.map(publicNetworkLink);
+  return {
+    totalLinks: links.length,
+    online: publicLinks.filter((link) => link.displayStatus === "online").length,
+    degraded: publicLinks.filter((link) => link.displayStatus === "degraded").length,
+    offline: publicLinks.filter((link) => link.displayStatus === "offline").length,
+    probeUnreachable: publicLinks.filter((link) => link.displayStatus === "probe_unreachable").length,
+    devices: listedNetworkDevices().filter((device) => device.isActive !== false).length,
+    lastEventAt: state.networkEvents?.[0]?.createdAt || null
+  };
+}
+
+function addNetworkEvent(link, previousStatus, currentStatus, message) {
+  const device = link.networkDeviceId ? listedNetworkDevices().find((item) => item.id === link.networkDeviceId) : null;
+  const group = link.groupId ? listedGroups().find((item) => item.id === link.groupId) : null;
+  const event = {
+    id: randomUUID(),
+    category: "network",
+    kind: currentStatus === "offline" ? "network_link_offline" : currentStatus === "online" ? "network_link_recovered" : "network_link_degraded",
+    linkId: link.id,
+    linkName: link.name,
+    deviceId: device?.id || null,
+    deviceName: device?.name || null,
+    groupId: group?.id || null,
+    groupName: group?.name || null,
+    previousStatus,
+    currentStatus,
+    latencyMs: link.lastLatencyMs ?? null,
+    packetLossPercent: link.lastPacketLossPercent ?? null,
+    jitterMs: link.lastJitterMs ?? null,
+    message: message || null,
+    createdAt: nowIso()
+  };
+  state.networkEvents.unshift(event);
+  state.networkEvents = state.networkEvents.slice(0, 5000);
+  broadcast({ type: "network_event_created", event, networkSummary: networkSummary() });
+  return event;
+}
+
+function ipv4ToNumber(value) {
+  const parts = String(value || "").trim().split(".");
+  if (parts.length !== 4) return null;
+  const octets = parts.map((part) => Number(part));
+  if (octets.some((octet) => !Number.isInteger(octet) || octet < 0 || octet > 255)) return null;
+  return octets.reduce((acc, octet) => ((acc << 8) | octet) >>> 0, 0);
+}
+
+function sameIpv4Subnet(left, right, prefixLength) {
+  const leftNumber = ipv4ToNumber(left);
+  const rightNumber = ipv4ToNumber(right);
+  const prefix = Number(prefixLength);
+  if (leftNumber === null || rightNumber === null || !Number.isInteger(prefix) || prefix < 1 || prefix > 32) return false;
+  const mask = prefix === 0 ? 0 : (0xffffffff << (32 - prefix)) >>> 0;
+  return (leftNumber & mask) === (rightNumber & mask);
+}
+
+function expectedWanDetection(link, observedPublicIp = link?.observedPublicIp) {
+  const observed = String(observedPublicIp || "").trim();
+  const expected = String(link?.expectedPublicIp || "").trim();
+  const prefixLength = link?.expectedPublicPrefixLength ?? null;
+  if (!observed || !expected) return null;
+  if (observed === expected) {
+    return {
+      activeTargetHost: expected,
+      activeTargetName: "Rede WAN",
+      activeDetection: "expected_public_ip"
+    };
+  }
+  if (prefixLength && sameIpv4Subnet(observed, expected, prefixLength)) {
+    return {
+      activeTargetHost: expected,
+      activeTargetName: "Rede WAN",
+      activeDetection: "expected_public_subnet"
+    };
+  }
+  return null;
+}
+
+function reconcileNetworkLinkResult(link, result) {
+  const targetResults = Array.isArray(result.targetResults) ? result.targetResults.slice(0, 20) : [];
+  const targets = Array.isArray(link.targets) ? link.targets : [];
+  const observedPublicIp = String(result.observedPublicIp || "").trim();
+  const expected = expectedWanDetection(link, observedPublicIp);
+  const enrichedResults = targetResults.map((target) => {
+    const meta = targets.find((item) => item.host === target.targetHost || item.targetHost === target.targetHost) || {};
+    const prefixLength = target.prefixLength ?? meta.prefixLength ?? meta.prefix_length ?? null;
+    const egressActive = Boolean(observedPublicIp && observedPublicIp === target.targetHost);
+    const egressSubnetActive = Boolean(!egressActive && observedPublicIp && prefixLength && sameIpv4Subnet(observedPublicIp, target.targetHost, prefixLength));
+    return {
+      ...target,
+      targetName: target.targetName || meta.name || meta.label || "",
+      prefixLength,
+      egressActive,
+      egressSubnetActive,
+      egressSubnetPrefix: egressSubnetActive ? Number(prefixLength) : target.egressSubnetPrefix ?? null
+    };
+  });
+  const exact = enrichedResults.find((target) => target.egressActive);
+  const subnet = enrichedResults.find((target) => target.egressSubnetActive);
+  const active = exact || subnet || null;
+  return {
+    ...result,
+    targetResults: enrichedResults,
+    activeTargetHost: expected?.activeTargetHost || active?.targetHost || result.activeTargetHost || null,
+    activeTargetName: expected?.activeTargetName || active?.targetName || result.activeTargetName || "",
+    activeDetection: expected?.activeDetection || (exact ? "egress_ip" : subnet ? "egress_subnet" : result.activeDetection || ""),
+    jitterMs: enrichedResults.length > 1 ? null : result.jitterMs ?? null
+  };
+}
+
+function networkCandidateStatus(link, result) {
+  const packetLoss = Number(result.packetLossPercent ?? (result.online ? 0 : 100));
+  const latency = Number(result.latencyMs ?? 0);
+  const hasMultipleTargets = Array.isArray(result.targetResults) && result.targetResults.length > 1;
+  const jitter = hasMultipleTargets ? 0 : Number(result.jitterMs ?? 0);
+  if (!result.online || packetLoss >= 100) return "offline";
+  if (
+    packetLoss > Number(link.degradedPacketLossPercent || 10) ||
+    latency > Number(link.degradedLatencyMs || 120) ||
+    jitter > Number(link.degradedJitterMs || 40)
+  ) {
+    return "degraded";
+  }
+  return "online";
+}
+
+function applyNetworkLinkResult(link, result, probeId) {
+  if (!link || link.deletedAt || link.probeId !== probeId) return false;
+  const adjustedResult = reconcileNetworkLinkResult(link, result);
+  const checkedAt = result.checkedAt || nowIso();
+  const previousStatus = link.currentStatus || "unknown";
+  const candidate = networkCandidateStatus(link, adjustedResult);
+  link.lastProbeSeenAt = nowIso();
+  link.lastCheckedAt = checkedAt;
+  link.lastLatencyMs = adjustedResult.latencyMs ?? null;
+  link.lastPacketLossPercent = adjustedResult.packetLossPercent ?? (adjustedResult.online ? 0 : 100);
+  link.lastJitterMs = adjustedResult.jitterMs ?? null;
+  link.lastError = adjustedResult.error || null;
+  link.activeTargetHost = adjustedResult.activeTargetHost || null;
+  link.activeTargetName = adjustedResult.activeTargetName || "";
+  link.activeDetection = adjustedResult.activeDetection || "";
+  link.observedPublicIp = adjustedResult.observedPublicIp || null;
+  link.targetResults = adjustedResult.targetResults;
+  link.forceCheckAt = null;
+
+  if (candidate === "offline") {
+    link.consecutiveFailures = (link.consecutiveFailures || 0) + 1;
+    if (link.consecutiveFailures >= Math.max(1, Number(link.failureThreshold || 1))) {
+      link.currentStatus = "offline";
+    }
+  } else {
+    link.consecutiveFailures = 0;
+    link.currentStatus = candidate;
+  }
+
+  const changed = (link.currentStatus || "unknown") !== previousStatus;
+  if (changed) {
+    link.previousStatus = previousStatus;
+    link.statusChangedAt = checkedAt;
+    addNetworkEvent(
+      link,
+      previousStatus,
+      link.currentStatus,
+      link.lastError || `Resultado recebido do probe ${probeId}.`
+    );
+  }
+  link.updatedAt = nowIso();
+  return true;
+}
+
+function normalizeLinkProbePayload(payload) {
+  const agentId = String(payload.agent_id || payload.agentId || "").trim();
+  if (!agentId) {
+    const error = new Error("Informe agent_id.");
+    error.statusCode = 400;
+    throw error;
+  }
+  const pingResults = Array.isArray(payload.ping_results)
+    ? payload.ping_results
+    : Array.isArray(payload.pingResults)
+    ? payload.pingResults
+    : [];
+  if (!pingResults.length) {
+    const error = new Error("Informe ping_results.");
+    error.statusCode = 400;
+    throw error;
+  }
+  const targets = pingResults
+    .map((item) => ({
+      name: String(item.name || item.target_name || item.targetName || "").trim(),
+      host: normalizeOptionalHost(item.target || item.targetHost || item.host, "Alvo do LinkProbe")
+    }))
+    .filter((item) => item.host);
+  if (!targets.length) {
+    const error = new Error("Nenhum alvo valido recebido do LinkProbe.");
+    error.statusCode = 400;
+    throw error;
+  }
+  const successRate = Math.max(0, Math.min(1, Number(payload.success_rate ?? payload.successRate ?? 0) || 0));
+  const publicIp = normalizeOptionalHost(payload.public_ip ?? payload.publicIp ?? "", "IP publico observado");
+  const timestamp = payload.timestamp ? new Date(payload.timestamp) : new Date();
+  return {
+    agentId,
+    linkName: String(payload.link_name || payload.linkName || agentId).trim() || agentId,
+    timestamp: Number.isNaN(timestamp.getTime()) ? nowIso() : timestamp.toISOString(),
+    isOnline: payload.is_online ?? payload.isOnline ?? false,
+    successRate,
+    publicIp,
+    ipChanged: Boolean(payload.ip_changed ?? payload.ipChanged),
+    version: String(payload.version || "").trim(),
+    sourceIp: normalizeOptionalHost(payload.source_ip ?? payload.sourceIp ?? "", "Source IP"),
+    interfaceName: String(payload.interface || payload.interfaceName || payload.interface_name || "").trim(),
+    targets,
+    pingResults
+  };
+}
+
+function averagePingLatency(pingResults) {
+  const values = pingResults
+    .map((item) => Number(item.avg_rtt_ms ?? item.avgRTTMs ?? item.avgRttMs ?? item.latencyMs))
+    .filter((value) => Number.isFinite(value) && value >= 0);
+  if (!values.length) return null;
+  return Math.round((values.reduce((sum, value) => sum + value, 0) / values.length) * 10) / 10;
+}
+
+function linkProbeTargetResults(data) {
+  return data.pingResults.slice(0, 20).map((item) => {
+    const targetHost = String(item.target || item.targetHost || item.host || "").trim();
+    const sent = Math.max(0, Number(item.sent || 0) || 0);
+    const received = Math.max(0, Number(item.received || 0) || 0);
+    const lostPct = Number(item.lost_pct ?? item.lostPct ?? (sent ? ((sent - received) / sent) * 100 : received ? 0 : 100));
+    return {
+      targetHost,
+      targetName: String(item.name || item.target_name || item.targetName || "").trim(),
+      online: Boolean(item.reachable ?? item.online ?? received > 0),
+      latencyMs: Number(item.avg_rtt_ms ?? item.avgRTTMs ?? item.avgRttMs ?? item.latencyMs ?? 0) || null,
+      minLatencyMs: Number(item.min_rtt_ms ?? item.minRTTMs ?? item.minRttMs ?? 0) || null,
+      maxLatencyMs: Number(item.max_rtt_ms ?? item.maxRTTMs ?? item.maxRttMs ?? 0) || null,
+      sent,
+      received,
+      packetLossPercent: Math.round(Math.max(0, Math.min(100, lostPct)) * 10) / 10,
+      error: item.error ? String(item.error).slice(0, 300) : null
+    };
+  }).filter((item) => item.targetHost);
+}
+
+function findOrCreateLinkProbeLink(data) {
+  const existing = listedNetworkLinks().find((link) => link.linkProbeAgentId === data.agentId);
+  if (existing) return { link: existing, created: false };
+  const createdAt = nowIso();
+  const link = {
+    id: randomUUID(),
+    name: data.linkName,
+    networkDeviceId: null,
+    groupId: null,
+    provider: "",
+    linkType: "internet",
+    interfaceName: data.interfaceName,
+    targetHost: data.targets[0]?.host,
+    targetHosts: data.targets.map((target) => target.host),
+    targets: data.targets,
+    expectedPublicIp: "",
+    expectedPublicPrefixLength: null,
+    contractedDownloadMbps: 0,
+    contractedUploadMbps: 0,
+    probeId: null,
+    monitorSource: "linkprobe",
+    linkProbeAgentId: data.agentId,
+    linkProbeVersion: data.version || null,
+    linkProbeSourceIp: data.sourceIp,
+    linkProbeSuccessRate: null,
+    linkProbeIpChanged: false,
+    checkInterval: 60,
+    failureThreshold: 1,
+    degradedLatencyMs: 120,
+    degradedPacketLossPercent: 10,
+    degradedJitterMs: 40,
+    sampleCount: 1,
+    currentStatus: "unknown",
+    previousStatus: "unknown",
+    statusChangedAt: createdAt,
+    lastCheckedAt: null,
+    lastLatencyMs: null,
+    lastPacketLossPercent: null,
+    lastJitterMs: null,
+    targetResults: [],
+    lastError: null,
+    lastProbeSeenAt: null,
+    consecutiveFailures: 0,
+    isActive: true,
+    notes: "Criado automaticamente pelo LinkProbe.",
+    createdAt,
+    updatedAt: createdAt,
+    deletedAt: null
+  };
+  state.networkLinks.unshift(link);
+  return { link, created: true };
+}
+
+function applyLinkProbeStatus(payload, req) {
+  const data = normalizeLinkProbePayload(payload);
+  const { link, created } = findOrCreateLinkProbeLink(data);
+  const previousStatus = link.currentStatus || "unknown";
+  const targetResults = linkProbeTargetResults(data);
+  const packetLossPercent = Math.round((1 - data.successRate) * 1000) / 10;
+  const latencyMs = averagePingLatency(data.pingResults);
+  const result = {
+    online: Boolean(data.isOnline),
+    packetLossPercent,
+    latencyMs,
+    jitterMs: null,
+    targetResults,
+    activeTargetHost: null,
+    activeTargetName: "",
+    activeDetection: "",
+    observedPublicIp: data.publicIp || null,
+    checkedAt: data.timestamp,
+    error: data.isOnline ? null : "LinkProbe reportou o link como offline."
+  };
+  const adjustedResult = reconcileNetworkLinkResult(link, result);
+  const candidate = networkCandidateStatus(link, adjustedResult);
+
+  link.name = data.linkName || link.name;
+  link.monitorSource = "linkprobe";
+  link.linkProbeAgentId = data.agentId;
+  link.linkProbeVersion = data.version || link.linkProbeVersion || null;
+  link.linkProbeSourceIp = data.sourceIp || link.linkProbeSourceIp || "";
+  link.linkProbeSuccessRate = data.successRate;
+  link.linkProbeIpChanged = data.ipChanged;
+  link.interfaceName = data.interfaceName || link.interfaceName || "";
+  link.targetHost = data.targets[0]?.host || link.targetHost;
+  link.targetHosts = data.targets.map((target) => target.host);
+  link.targets = data.targets;
+  link.lastProbeSeenAt = nowIso();
+  link.lastCheckedAt = data.timestamp;
+  link.lastLatencyMs = latencyMs;
+  link.lastPacketLossPercent = packetLossPercent;
+  link.lastJitterMs = null;
+  link.lastError = adjustedResult.error || null;
+  link.activeTargetHost = adjustedResult.activeTargetHost || null;
+  link.activeTargetName = adjustedResult.activeTargetName || "";
+  link.activeDetection = adjustedResult.activeDetection || "";
+  link.observedPublicIp = data.publicIp || null;
+  link.targetResults = adjustedResult.targetResults;
+  link.forceCheckAt = null;
+  link.consecutiveFailures = data.isOnline ? 0 : (link.consecutiveFailures || 0) + 1;
+  link.currentStatus = data.isOnline ? candidate : "offline";
+  link.updatedAt = nowIso();
+
+  if (created || link.currentStatus !== previousStatus || data.ipChanged) {
+    link.previousStatus = previousStatus;
+    link.statusChangedAt = data.timestamp;
+    addNetworkEvent(
+      link,
+      previousStatus,
+      link.currentStatus,
+      data.ipChanged
+        ? `LinkProbe ${data.agentId} detectou troca de IP de saida para ${data.publicIp || "desconhecido"}.`
+        : `Resultado recebido do LinkProbe ${data.agentId}${req?.socket?.remoteAddress ? ` (${req.socket.remoteAddress})` : ""}.`
+    );
+  }
+
+  scheduleSave();
+  broadcastSnapshot();
+  return publicNetworkLink(link);
 }
 
 function summary() {
@@ -710,6 +1558,7 @@ function summary() {
     inactive: servers.length - total,
     availability24h,
     alertsOpen: state.alerts.filter((alert) => !alert.read && alert.type === "down").length,
+    network: networkSummary(),
     groups: listedGroups().length,
     lastEventAt: state.events[0]?.createdAt || null
   };
@@ -721,6 +1570,9 @@ function snapshot(currentUser = null) {
     summary: summary(),
     servers: listedServers().map(publicServer),
     groups: listedGroups().map(publicGroup),
+    networkDevices: listedNetworkDevices().map(publicNetworkDevice),
+    networkLinks: listedNetworkLinks().map(publicNetworkLink),
+    networkEvents: (state.networkEvents || []).slice(0, 100),
     probes: currentUser?.role === "admin" ? (state.probes || []).filter((probe) => !probe.deletedAt).map(publicProbe) : [],
     users: currentUser?.role === "admin" ? listedUsers().map(publicUser) : [],
     currentUser: currentUser ? publicUser(currentUser) : null,
@@ -889,26 +1741,13 @@ function pingHost(hostname, timeoutMs = 2500) {
 async function checkServer(server) {
   if (!server.isActive) return;
   if (server.checkSource === "probe") return;
-  const previousStatus = server.currentStatus || "unknown";
   const result = await pingHost(server.hostname);
-  server.lastCheckedAt = nowIso();
-  server.lastLatencyMs = result.latencyMs;
-  server.lastError = result.error;
+  const transition = applyMonitorResult(server, result, { checkedAt: nowIso() });
 
-  if (result.online) {
-    server.consecutiveFailures = 0;
-    server.currentStatus = "online";
-  } else {
-    server.consecutiveFailures = (server.consecutiveFailures || 0) + 1;
-    if (server.consecutiveFailures >= server.failureThreshold) {
-      server.currentStatus = "offline";
-    }
-  }
-
-  if (server.currentStatus !== previousStatus) {
-    server.previousStatus = previousStatus;
+  if (transition.statusChanged) {
+    server.previousStatus = transition.previousStatus;
     server.statusChangedAt = server.lastCheckedAt;
-    addEvent(server, previousStatus, server.currentStatus, result.latencyMs, result.error);
+    addEvent(server, transition.previousStatus, server.currentStatus, result.latencyMs, result.error);
   } else {
     broadcast({ type: "server_checked", server: publicServer(server), summary: summary() });
   }
@@ -945,26 +1784,42 @@ async function checkProbeStaleness(nowMs = Date.now()) {
         addProbeEvent(server, "probe_stale", baseMessage);
       }
 
-      if (isLocalNetworkTarget(server.hostname)) {
-        const result = await pingHost(server.hostname);
-        const message = result.online
-          ? `${baseMessage} Servidor respondeu ao ping da central.`
-          : `${baseMessage} Ping da central falhou: ${result.error || "sem resposta"}`;
-
+      const result = await pingHost(server.hostname);
+      const localTarget = isLocalNetworkTarget(server.hostname);
+      if (result.online) {
+        const message = `${baseMessage} Servidor respondeu ao ping da central.`;
         server.lastCheckedAt = checkedAt;
         server.lastLatencyMs = result.latencyMs;
         server.lastError = message;
         server.probeCheckRequestedAt = null;
-
-        if (result.online) {
-          server.consecutiveFailures = 0;
-          server.currentStatus = "online";
+        server.probeFallbackStatus = "confirmed_online";
+        server.probeFallbackCheckedAt = checkedAt;
+        server.consecutiveFailures = 0;
+        server.currentStatus = "online";
+        if (server.currentStatus !== previousStatus) {
+          server.previousStatus = previousStatus;
+          server.statusChangedAt = checkedAt;
+          addEvent(server, previousStatus, server.currentStatus, result.latencyMs, message);
         } else {
-          server.consecutiveFailures = (server.consecutiveFailures || 0) + 1;
-          if (server.consecutiveFailures >= server.failureThreshold) {
-            server.currentStatus = "offline";
-          }
+          broadcast({ type: "server_checked", server: publicServer(server), summary: summary() });
         }
+        changed = true;
+        continue;
+      }
+
+      if (localTarget) {
+        const wasOffline = previousStatus === "offline";
+        const message = wasOffline
+          ? `${baseMessage} Servidor permanece offline ate confirmacao de retorno. Ping da central nao confirmou retorno: ${result.error || "sem resposta"}.`
+          : `${baseMessage} Ping da central nao confirmou o status: ${result.error || "sem resposta"}. Aguardando retorno do probe ou confirmacao por outro probe da mesma rede.`;
+        server.lastCheckedAt = checkedAt;
+        server.lastLatencyMs = null;
+        server.lastError = message;
+        server.probeCheckRequestedAt = null;
+        server.probeFallbackStatus = wasOffline ? "confirmed_offline" : "central_failed";
+        server.probeFallbackCheckedAt = checkedAt;
+        server.consecutiveFailures = wasOffline ? Math.max(server.consecutiveFailures || 0, server.failureThreshold || 1) : 0;
+        if (!wasOffline) server.currentStatus = "unknown";
 
         if (server.currentStatus !== previousStatus) {
           server.previousStatus = previousStatus;
@@ -977,11 +1832,26 @@ async function checkProbeStaleness(nowMs = Date.now()) {
         continue;
       }
 
-      const message = `${baseMessage} A central aguardara outro probe da mesma rede confirmar o status.`;
+      const wasOffline = previousStatus === "offline";
+      const message = wasOffline
+        ? `${baseMessage} Servidor permanece offline ate confirmacao de retorno. Ping da central tambem nao confirmou retorno: ${result.error || "sem resposta"}.`
+        : `${baseMessage} Ping da central tambem nao confirmou o status: ${result.error || "sem resposta"}. Aguardando retorno do probe ou confirmacao por outro probe da mesma rede.`;
       if (server.lastError !== message || requested) {
         server.lastError = message;
+        server.lastCheckedAt = checkedAt;
+        server.lastLatencyMs = null;
         server.probeCheckRequestedAt = null;
-        broadcast({ type: "server_checked", server: publicServer(server), summary: summary() });
+        server.probeFallbackStatus = wasOffline ? "confirmed_offline" : "unconfirmed";
+        server.probeFallbackCheckedAt = checkedAt;
+        server.consecutiveFailures = wasOffline ? Math.max(server.consecutiveFailures || 0, server.failureThreshold || 1) : 0;
+        if (!wasOffline) server.currentStatus = "unknown";
+        if (server.currentStatus !== previousStatus) {
+          server.previousStatus = previousStatus;
+          server.statusChangedAt = checkedAt;
+          addEvent(server, previousStatus, server.currentStatus, result.latencyMs, message);
+        } else {
+          broadcast({ type: "server_checked", server: publicServer(server), summary: summary() });
+        }
         changed = true;
       }
     }
@@ -1042,10 +1912,41 @@ function probeVersionStatus(probe) {
   return compareVersions(probe.version, PROBE_COLLECTOR_VERSION) < 0 ? "outdated" : "current";
 }
 
+function probeUpdateSupported(probe) {
+  return PROBE_UPDATE_SUPPORTED_PLATFORMS.has(normalizeProbePlatform(probe.platform, null));
+}
+
+function activeProbeUpdateRequest(probeId) {
+  return (state.probeUpdateRequests || []).find(
+    (request) => request.probeId === probeId && ["pending", "running"].includes(request.status)
+  ) || null;
+}
+
+function latestProbeUpdateRequest(probeId) {
+  return (state.probeUpdateRequests || [])
+    .filter((request) => request.probeId === probeId)
+    .sort((left, right) => new Date(right.requestedAt || 0).getTime() - new Date(left.requestedAt || 0).getTime())[0] || null;
+}
+
+function publicProbeUpdateRequest(request) {
+  if (!request) return null;
+  return {
+    id: request.id,
+    probeId: request.probeId,
+    targetVersion: request.targetVersion,
+    status: request.status,
+    requestedAt: request.requestedAt || null,
+    startedAt: request.startedAt || null,
+    finishedAt: request.finishedAt || null,
+    error: request.error || null
+  };
+}
+
 function publicProbe(probe) {
   const servers = listedServers().filter((server) => server.checkSource === "probe" && server.probeId === probe.id);
   const staleServers = servers.filter((server) => probeConnection(server).status === "stale").length;
   const versionStatus = probeVersionStatus(probe);
+  const updateRequest = activeProbeUpdateRequest(probe.id) || latestProbeUpdateRequest(probe.id);
   return {
     id: probe.id,
     name: probe.name || probe.id,
@@ -1053,6 +1954,8 @@ function publicProbe(probe) {
     latestVersion: PROBE_COLLECTOR_VERSION,
     versionStatus,
     updateAvailable: versionStatus === "outdated",
+    updateSupported: probeUpdateSupported(probe),
+    updateRequest: publicProbeUpdateRequest(updateRequest),
     hostName: probe.hostName || null,
     primaryAddress: probe.primaryAddress || null,
     addresses: Array.isArray(probe.addresses) ? probe.addresses : [],
@@ -1143,6 +2046,11 @@ function normalizeNumber(value) {
   return Number.isFinite(number) ? number : null;
 }
 
+function metricText(value, maxLength = 200) {
+  const text = String(value || "").trim();
+  return text ? text.slice(0, maxLength) : null;
+}
+
 function normalizeHostMetrics(value, fallback = null) {
   let metrics = value;
   if (!metrics) return fallback || null;
@@ -1187,6 +2095,97 @@ function normalizeHostMetrics(value, fallback = null) {
         .filter((item) => item.name || item.addresses.length || item.mac)
         .slice(0, 24)
     : [];
+  const diskPartitions = Array.isArray(metrics.diskPartitions)
+    ? metrics.diskPartitions
+        .map((item) => ({
+          mount: metricText(item?.mount, 120),
+          label: metricText(item?.label, 120),
+          filesystem: metricText(item?.filesystem, 80),
+          totalBytes: normalizeNumber(item?.totalBytes),
+          usedBytes: normalizeNumber(item?.usedBytes),
+          freeBytes: normalizeNumber(item?.freeBytes),
+          usedPercent: normalizeNumber(item?.usedPercent)
+        }))
+        .filter((item) => item.mount || item.filesystem)
+        .slice(0, 24)
+    : [];
+  const listeningPorts = Array.isArray(metrics.listeningPorts)
+    ? metrics.listeningPorts
+        .map((item) => ({
+          protocol: metricText(item?.protocol, 16) || "tcp",
+          address: metricText(item?.address, 120),
+          port: normalizeNumber(item?.port),
+          processId: normalizeNumber(item?.processId)
+        }))
+        .filter((item) => item.port !== null && item.port > 0 && item.port <= 65535)
+        .slice(0, 64)
+    : [];
+  const services = Array.isArray(metrics.services)
+    ? metrics.services
+        .map((item) => ({
+          name: metricText(item?.name, 120),
+          displayName: metricText(item?.displayName, 160),
+          status: metricText(item?.status, 80),
+          active: metricText(item?.active, 80),
+          load: metricText(item?.load, 80),
+          startType: metricText(item?.startType, 80)
+        }))
+        .filter((item) => item.name || item.displayName)
+        .slice(0, 32)
+    : [];
+  const topProcesses = Array.isArray(metrics.topProcesses)
+    ? metrics.topProcesses
+        .map((item) => ({
+          name: metricText(item?.name, 120),
+          processId: normalizeNumber(item?.processId),
+          cpuPercent: normalizeNumber(item?.cpuPercent),
+          cpuSeconds: normalizeNumber(item?.cpuSeconds),
+          memoryPercent: normalizeNumber(item?.memoryPercent),
+          memoryBytes: normalizeNumber(item?.memoryBytes)
+        }))
+        .filter((item) => item.name)
+        .slice(0, 10)
+    : [];
+  const criticalEvents = Array.isArray(metrics.criticalEvents)
+    ? metrics.criticalEvents
+        .map((item) => ({
+          createdAt: metricText(item?.createdAt, 80),
+          source: metricText(item?.source, 160),
+          eventId: normalizeNumber(item?.eventId),
+          level: metricText(item?.level, 80),
+          message: metricText(item?.message, 500)
+        }))
+        .filter((item) => item.message || item.source)
+        .slice(0, 10)
+    : [];
+  const virtualization = Array.isArray(metrics.virtualization)
+    ? metrics.virtualization
+        .map((item) => ({
+          type: metricText(item?.type, 40),
+          id: metricText(item?.id, 80),
+          name: metricText(item?.name, 160),
+          state: metricText(item?.state, 80),
+          memoryBytes: normalizeNumber(item?.memoryBytes),
+          memoryMb: normalizeNumber(item?.memoryMb),
+          cpuCount: normalizeNumber(item?.cpuCount)
+        }))
+        .filter((item) => item.name || item.id)
+        .slice(0, 64)
+    : [];
+  const proxmoxStorage = Array.isArray(metrics.proxmoxStorage)
+    ? metrics.proxmoxStorage
+        .map((item) => ({
+          name: metricText(item?.name, 120),
+          type: metricText(item?.type, 80),
+          status: metricText(item?.status, 80),
+          totalBytes: normalizeNumber(item?.totalBytes),
+          usedBytes: normalizeNumber(item?.usedBytes),
+          availableBytes: normalizeNumber(item?.availableBytes),
+          usedPercent: normalizeNumber(item?.usedPercent)
+        }))
+        .filter((item) => item.name)
+        .slice(0, 32)
+    : [];
 
   return {
     collectedAt: String(metrics.collectedAt || nowIso()),
@@ -1206,6 +2205,13 @@ function normalizeHostMetrics(value, fallback = null) {
     },
     disk,
     networkInterfaces,
+    diskPartitions,
+    listeningPorts,
+    services,
+    topProcesses,
+    criticalEvents,
+    virtualization,
+    proxmoxStorage,
     system: {
       uptimeSeconds: normalizeNumber(metrics.system?.uptimeSeconds),
       arch: String(metrics.system?.arch || "").trim() || null,
@@ -1225,6 +2231,46 @@ function recordProbeVersionChange(probeId, previousVersion, nextVersion) {
   const server = linkedServerForProbe(probeId);
   if (!server) return;
   addProbeEvent(server, "probe_updated", `Probe atualizado de ${previousVersion} para ${nextVersion}.`);
+}
+
+function finishProbeUpdateIfCurrent(probe) {
+  if (!probe?.version) return false;
+  const request = activeProbeUpdateRequest(probe.id);
+  if (!request || compareVersions(probe.version, request.targetVersion) < 0) return false;
+  request.status = "succeeded";
+  request.finishedAt = nowIso();
+  request.error = null;
+  const server = linkedServerForProbe(probe.id);
+  if (server) addProbeEvent(server, "probe_update_succeeded", `Atualizacao do probe concluida em ${probe.version}.`);
+  return true;
+}
+
+function createProbeUpdateRequest(probe, requestedBy = "Sistema") {
+  if (!probe) return { error: "Probe nao encontrado.", status: 404 };
+  if (!probeUpdateSupported(probe)) {
+    return { error: "Atualizacao remota automatica esta disponivel apenas para probes Linux.", status: 409 };
+  }
+  if (probeVersionStatus(probe) !== "outdated") {
+    return { error: "Este probe ja esta na versao atual.", status: 409 };
+  }
+  const active = activeProbeUpdateRequest(probe.id);
+  if (active) return { request: active, created: false };
+  const request = {
+    id: randomUUID(),
+    probeId: probe.id,
+    targetVersion: PROBE_COLLECTOR_VERSION,
+    status: "pending",
+    requestedAt: nowIso(),
+    requestedBy,
+    startedAt: null,
+    finishedAt: null,
+    error: null
+  };
+  state.probeUpdateRequests.unshift(request);
+  state.probeUpdateRequests = state.probeUpdateRequests.slice(0, 500);
+  const server = linkedServerForProbe(probe.id);
+  if (server) addProbeEvent(server, "probe_update_requested", `Atualizacao do probe solicitada para ${PROBE_COLLECTOR_VERSION}.`);
+  return { request, created: true };
 }
 
 function upsertProbe({ probeId, name, version, hostName, primaryAddress, addresses, platform, primaryMac, macAddresses, hostMetrics, remoteAddress }) {
@@ -1254,7 +2300,7 @@ function upsertProbe({ probeId, name, version, hostName, primaryAddress, address
   };
   if (existing) {
     const previousVersion = existing.version || null;
-    const changed =
+    let changed =
       existing.name !== payload.name ||
       existing.version !== payload.version ||
       existing.hostName !== payload.hostName ||
@@ -1269,10 +2315,12 @@ function upsertProbe({ probeId, name, version, hostName, primaryAddress, address
       existing.deletedAt !== payload.deletedAt;
     Object.assign(existing, payload);
     recordProbeVersionChange(existing.id, previousVersion, existing.version || null);
+    if (finishProbeUpdateIfCurrent(existing)) changed = true;
     return { probe: existing, changed };
   }
   const probe = { createdAt: nowIso(), ...payload };
   state.probes.push(probe);
+  finishProbeUpdateIfCurrent(probe);
   return { probe, changed: true };
 }
 
@@ -1281,12 +2329,22 @@ function ensureProbeServer(probe) {
   if (!hostname) return { server: null, changed: false };
 
   const serverName = String(probe.name || probe.hostName || probe.id).trim();
-  const existing = state.servers.find(
+  const existing =
+    state.servers.find(
     (server) => !server.deletedAt && server.checkSource === "probe" && server.probeId === probe.id
-  );
+    ) ||
+    state.servers.find(
+      (server) => server.deletedAt && server.autoCreatedByProbe && server.checkSource === "probe" && server.probeId === probe.id
+    );
 
   if (existing) {
     let changed = false;
+    const seenAt = probe.lastSeenAt || nowIso();
+    const previousStatus = existing.currentStatus || "unknown";
+    if (existing.deletedAt) {
+      existing.deletedAt = null;
+      changed = true;
+    }
     if (existing.autoCreatedByProbe && existing.hostname !== hostname) {
       existing.hostname = hostname;
       changed = true;
@@ -1311,6 +2369,24 @@ function ensureProbeServer(probe) {
       existing.macAddresses = Array.isArray(probe.macAddresses) ? probe.macAddresses : [];
       changed = true;
     }
+    if (existing.lastProbeSeenAt !== seenAt) {
+      existing.lastProbeSeenAt = seenAt;
+      changed = true;
+    }
+    existing.probeEventStatus = "online";
+    existing.probeFallbackStatus = null;
+    existing.probeFallbackCheckedAt = null;
+    if (existing.currentStatus !== "online") {
+      existing.currentStatus = "online";
+      existing.consecutiveFailures = 0;
+      existing.lastCheckedAt = seenAt;
+      existing.lastLatencyMs = existing.lastLatencyMs ?? 0;
+      existing.lastError = null;
+      existing.previousStatus = previousStatus;
+      existing.statusChangedAt = seenAt;
+      addEvent(existing, previousStatus, "online", existing.lastLatencyMs, `Contato recebido do probe ${probe.id}.`);
+      changed = true;
+    }
     if (changed) existing.updatedAt = nowIso();
     return { server: existing, changed };
   }
@@ -1331,13 +2407,17 @@ function ensureProbeServer(probe) {
     location: "",
     tags: ["probe"],
     isActive: true,
-    currentStatus: "unknown",
+    nodeType: "server",
+    infrastructurePlatform: "none",
+    parentId: null,
+    currentStatus: "online",
     previousStatus: "unknown",
     statusChangedAt: createdAt,
-    lastCheckedAt: null,
-    lastLatencyMs: null,
+    lastCheckedAt: probe.lastSeenAt || createdAt,
+    lastLatencyMs: 0,
     lastError: null,
     lastProbeSeenAt: probe.lastSeenAt || createdAt,
+    probeEventStatus: "online",
     platform: probe.platform || null,
     primaryMac: probe.primaryMac || null,
     macAddresses: Array.isArray(probe.macAddresses) ? probe.macAddresses : [],
@@ -1352,6 +2432,7 @@ function ensureProbeServer(probe) {
 
 function probeTargets(probeId) {
   const probe = (state.probes || []).find((item) => item.id === probeId);
+  const updateRequest = activeProbeUpdateRequest(probeId);
   const toTarget = (server, verification = false) => ({
     id: server.id,
     name: server.name,
@@ -1374,43 +2455,70 @@ function probeTargets(probeId) {
         .filter((server) => canProbeVerifyServer(probe, server))
         .map((server) => toTarget(server, true))
     : [];
+  const networkLinks = listedNetworkLinks()
+    .filter((link) => link.isActive !== false && link.probeId === probeId)
+    .map((link) => ({
+      id: link.id,
+      name: link.name,
+      targetHost: link.targetHost,
+      targetHosts: Array.isArray(link.targetHosts) && link.targetHosts.length ? link.targetHosts : [link.targetHost].filter(Boolean),
+      targets: Array.isArray(link.targets) && link.targets.length
+        ? link.targets
+        : (Array.isArray(link.targetHosts) && link.targetHosts.length ? link.targetHosts : [link.targetHost].filter(Boolean)).map((host) => ({ name: "", host })),
+      checkMethod: "ping",
+      checkInterval: link.checkInterval,
+      failureThreshold: link.failureThreshold,
+      degradedLatencyMs: link.degradedLatencyMs,
+      degradedPacketLossPercent: link.degradedPacketLossPercent,
+      degradedJitterMs: link.degradedJitterMs,
+      sampleCount: link.sampleCount || 3,
+      forceCheck: Boolean(
+        link.forceCheckAt &&
+          (!link.lastCheckedAt || new Date(link.forceCheckAt).getTime() > new Date(link.lastCheckedAt).getTime())
+      )
+    }));
 
-  return [...ownedTargets, ...verificationTargets];
+  return {
+    targets: [...ownedTargets, ...verificationTargets],
+    networkLinks,
+    updateRequest:
+      updateRequest?.status === "pending"
+        ? {
+            id: updateRequest.id,
+            probeId: updateRequest.probeId,
+            targetVersion: updateRequest.targetVersion,
+            requestedAt: updateRequest.requestedAt
+          }
+        : null
+  };
 }
 
 function applyProbeResult(server, result, probeId, options = {}) {
-  const previousStatus = server.currentStatus || "unknown";
   const verification = Boolean(options.verification);
   const wasProbeStale = !verification && server.probeEventStatus === "stale";
-  server.lastCheckedAt = result.checkedAt || nowIso();
   if (!verification) {
     server.lastProbeSeenAt = nowIso();
     server.probeEventStatus = "online";
+    server.probeFallbackStatus = null;
+    server.probeFallbackCheckedAt = null;
+  } else {
+    server.probeFallbackStatus = result.online ? "confirmed_online" : "confirmed_offline";
+    server.probeFallbackCheckedAt = result.checkedAt || nowIso();
   }
   server.probeCheckRequestedAt = null;
-  server.lastLatencyMs = result.latencyMs ?? null;
-  server.lastError = verification
+  const resultError = verification
     ? result.online
       ? `Probe local sem contato; servidor respondeu via probe ${probeId}.`
       : `Probe local sem contato; servidor nao respondeu via probe ${probeId}. ${result.error || "Sem resposta ao ping."}`
     : result.error || null;
+  const transition = applyMonitorResult(server, { ...result, error: resultError }, { checkedAt: result.checkedAt || nowIso() });
 
-  if (result.online) {
-    server.consecutiveFailures = 0;
-    server.currentStatus = "online";
-  } else {
-    server.consecutiveFailures = (server.consecutiveFailures || 0) + 1;
-    if (server.consecutiveFailures >= server.failureThreshold) {
-      server.currentStatus = "offline";
-    }
-  }
-
-  if (server.currentStatus !== previousStatus) {
-    server.previousStatus = previousStatus;
+  if (transition.statusChanged) {
+    server.previousStatus = transition.previousStatus;
     server.statusChangedAt = server.lastCheckedAt;
     addEvent(
       server,
-      previousStatus,
+      transition.previousStatus,
       server.currentStatus,
       server.lastLatencyMs,
       server.lastError || `Resultado recebido do probe ${probeId}.`
@@ -1422,36 +2530,6 @@ function applyProbeResult(server, result, probeId, options = {}) {
   if (wasProbeStale) {
     addProbeEvent(server, "probe_recovered", `Probe ${probeId} voltou a se comunicar.`);
   }
-}
-
-async function readBody(req) {
-  const chunks = [];
-  for await (const chunk of req) chunks.push(chunk);
-  if (!chunks.length) return {};
-  const raw = Buffer.concat(chunks).toString("utf8");
-  return raw ? JSON.parse(raw) : {};
-}
-
-function sendJson(res, statusCode, payload) {
-  const body = JSON.stringify(payload);
-  res.writeHead(statusCode, {
-    "Content-Type": "application/json; charset=utf-8",
-    "Content-Length": Buffer.byteLength(body),
-    "Cache-Control": "no-store"
-  });
-  res.end(body);
-}
-
-function parseCookies(req) {
-  return String(req.headers.cookie || "")
-    .split(";")
-    .map((item) => item.trim())
-    .filter(Boolean)
-    .reduce((cookies, item) => {
-      const index = item.indexOf("=");
-      if (index > 0) cookies[item.slice(0, index)] = decodeURIComponent(item.slice(index + 1));
-      return cookies;
-    }, {});
 }
 
 function getSession(req) {
@@ -1468,14 +2546,6 @@ function getSession(req) {
     return null;
   }
   return { token, user };
-}
-
-function setSessionCookie(res, token) {
-  res.setHeader("Set-Cookie", `${SESSION_COOKIE}=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${Math.floor(SESSION_TTL_MS / 1000)}`);
-}
-
-function clearSessionCookie(res) {
-  res.setHeader("Set-Cookie", `${SESSION_COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`);
 }
 
 function requireSession(req, res) {
@@ -1497,55 +2567,21 @@ function requireAdmin(req, res) {
   return session;
 }
 
-function notFound(res) {
-  sendJson(res, 404, { error: "Recurso nao encontrado." });
-}
-
-async function serveDownload(req, res) {
-  const { pathname } = getRouteParts(req);
-  const download = DOWNLOADS[pathname];
-  if (!download) return notFound(res);
-  const session = getSession(req);
-  const hasAdminSession = session?.user?.role === "admin";
-  const hasProbeToken = download.allowProbeToken && authorizeProbe(req);
-  if (!download.public && !hasAdminSession && !hasProbeToken) {
-    sendJson(res, session ? 403 : 401, { error: session ? "Apenas administradores podem baixar este arquivo." : "Autenticacao necessaria." });
-    return;
-  }
-
-  try {
-    const content = await readFile(download.path);
-    res.writeHead(200, {
-      "Content-Type": download.contentType,
-      "Content-Length": content.length,
-      "Content-Disposition": `attachment; filename="${download.filename}"`,
-      "Cache-Control": "no-store"
-    });
-    res.end(content);
-  } catch {
-    notFound(res);
-  }
-}
-
-function getRouteParts(req) {
-  const url = new URL(req.url, `http://${req.headers.host}`);
-  return {
-    url,
-    pathname: decodeURIComponent(url.pathname),
-    parts: url.pathname.split("/").filter(Boolean)
-  };
-}
-
 async function handleApi(req, res) {
   const { parts, url } = getRouteParts(req);
   try {
     if (req.method === "GET" && parts.length === 1 && parts[0] === "health") {
-      return sendJson(res, 200, {
-        status: "ok",
-        service: "serverwatch",
-        timestamp: nowIso(),
-        uptimeSeconds: Math.round(process.uptime())
-      });
+      return sendJson(res, 200, healthPayload());
+    }
+
+    if (parts[1] === "link-status") {
+      if (req.method !== "POST") return notFound(res);
+      if (!authorizeProbe(req)) {
+        return sendJson(res, 401, { error: "Token do LinkProbe invalido." });
+      }
+      const payload = await readBody(req);
+      const link = applyLinkProbeStatus(payload, req);
+      return sendJson(res, 202, { ok: true, link });
     }
 
     if (parts[1] === "auth") {
@@ -1570,14 +2606,37 @@ async function handleApi(req, res) {
         user.lastLoginAt = nowIso();
         user.updatedAt = user.updatedAt || user.lastLoginAt;
         scheduleSave();
-        setSessionCookie(res, token);
-        return sendJson(res, 200, { user: publicUser(user) });
+        setSessionCookie(res, SESSION_COOKIE, token, SESSION_TTL_MS);
+        return sendJson(res, 200, { user: publicUser(user), requirePasswordChange: user.mustChangePassword === true });
+      }
+
+      if (req.method === "POST" && parts[2] === "password") {
+        const session = requireSession(req, res);
+        if (!session) return;
+        const payload = await readBody(req);
+        const currentPassword = String(payload.currentPassword || "");
+        const newPassword = String(payload.newPassword || "");
+        if (!verifyPassword(currentPassword, session.user.passwordHash)) {
+          return sendJson(res, 401, { error: "Senha atual invalida." });
+        }
+        if (newPassword.length < 8) {
+          return sendJson(res, 400, { error: "A nova senha deve ter pelo menos 8 caracteres." });
+        }
+        if (verifyPassword(newPassword, session.user.passwordHash)) {
+          return sendJson(res, 400, { error: "A nova senha deve ser diferente da senha atual." });
+        }
+        session.user.passwordHash = hashPassword(newPassword);
+        session.user.mustChangePassword = false;
+        session.user.updatedAt = nowIso();
+        scheduleSave();
+        broadcastSnapshot();
+        return sendJson(res, 200, { user: publicUser(session.user), requirePasswordChange: false });
       }
 
       if (req.method === "POST" && parts[2] === "logout") {
         const session = getSession(req);
         if (session) sessions.delete(session.token);
-        clearSessionCookie(res);
+        clearSessionCookie(res, SESSION_COOKIE);
         return sendJson(res, 200, { ok: true });
       }
     }
@@ -1616,9 +2675,12 @@ async function handleApi(req, res) {
         const ensuredServer = ensureProbeServer(registered.probe);
         scheduleSave();
         if (registered.changed || ensuredServer.changed) broadcastSnapshot();
+        const probeWork = probeTargets(registered.probe.id);
         return sendJson(res, 200, {
           probe: publicProbe(registered.probe),
-          targets: probeTargets(registered.probe.id)
+          targets: probeWork.targets,
+          networkLinks: probeWork.networkLinks,
+          updateRequest: probeWork.updateRequest
         });
       }
 
@@ -1641,6 +2703,7 @@ async function handleApi(req, res) {
         const probe = registered.probe;
         const ensuredServer = ensureProbeServer(probe);
         const results = Array.isArray(payload.results) ? payload.results : [];
+        const networkResults = Array.isArray(payload.networkResults) ? payload.networkResults : [];
         let accepted = 0;
         for (const result of results) {
           const server = state.servers.find(
@@ -1656,421 +2719,272 @@ async function handleApi(req, res) {
           applyProbeResult(server, result, probe.id, { verification: verifiesPeer });
           accepted += 1;
         }
+        let acceptedNetworkResults = 0;
+        for (const result of networkResults) {
+          const link = (state.networkLinks || []).find((item) => item.id === result.linkId && !item.deletedAt);
+          if (!link || link.probeId !== probe.id) continue;
+          if (applyNetworkLinkResult(link, result, probe.id)) acceptedNetworkResults += 1;
+        }
         scheduleSave();
-        if (registered.changed || ensuredServer.changed || accepted > 0) broadcastSnapshot();
-        return sendJson(res, 200, { ok: true, accepted });
+        if (registered.changed || ensuredServer.changed || accepted > 0 || acceptedNetworkResults > 0) broadcastSnapshot();
+        return sendJson(res, 200, { ok: true, accepted, acceptedNetworkResults });
+      }
+
+      if (req.method === "POST" && parts[2] === "update-status") {
+        const payload = await readBody(req);
+        const probeId = String(payload.probeId || "").trim();
+        const requestId = String(payload.requestId || "").trim();
+        const status = String(payload.status || "").trim();
+        const request = (state.probeUpdateRequests || []).find(
+          (item) => item.id === requestId && item.probeId === probeId
+        );
+        if (!request) return sendJson(res, 404, { error: "Solicitacao de atualizacao nao encontrada." });
+        if (!["running", "failed", "unsupported", "succeeded"].includes(status)) {
+          return sendJson(res, 400, { error: "Status de atualizacao invalido." });
+        }
+        request.status = status;
+        request.error = payload.error ? String(payload.error).slice(0, 500) : null;
+        if (status === "running") request.startedAt = request.startedAt || nowIso();
+        if (["failed", "unsupported", "succeeded"].includes(status)) request.finishedAt = nowIso();
+        const server = linkedServerForProbe(probeId);
+        if (server && status !== "running") {
+          addProbeEvent(
+            server,
+            `probe_update_${status}`,
+            status === "succeeded"
+              ? `Atualizacao do probe concluida em ${request.targetVersion}.`
+              : `Atualizacao do probe nao foi concluida: ${request.error || status}.`
+          );
+        }
+        scheduleSave();
+        broadcastSnapshot();
+        return sendJson(res, 200, { ok: true, request: publicProbeUpdateRequest(request) });
       }
     }
 
     const session = requireSession(req, res);
     if (!session) return;
 
-    if (req.method === "GET" && parts[1] === "summary") {
-      return sendJson(res, 200, summary());
-    }
-
-    if (req.method === "GET" && parts[1] === "snapshot") {
-      return sendJson(res, 200, snapshot(session.user));
-    }
+    if (handleMeta(req, res, { parts, session })) return;
 
     if (parts[1] === "probes") {
-      if (!requireAdmin(req, res)) return;
-      if (req.method === "GET" && parts.length === 2) {
-        return sendJson(res, 200, (state.probes || []).filter((probe) => !probe.deletedAt).map(publicProbe));
-      }
-
-      const id = parts[2];
-      const probe = (state.probes || []).find((item) => item.id === id && !item.deletedAt);
-      if (!probe) return notFound(res);
-
-      if (req.method === "DELETE" && parts.length === 3) {
-        const linkedServers = listedServers().filter((server) => server.checkSource === "probe" && server.probeId === probe.id);
-        if (linkedServers.length) {
-          return sendJson(res, 409, { error: "Reatribua ou remova os servidores vinculados antes de excluir este probe." });
-        }
-        probe.deletedAt = nowIso();
-        probe.updatedAt = probe.deletedAt;
-        scheduleSave();
-        broadcastSnapshot();
-        return sendJson(res, 200, publicProbe(probe));
-      }
+      if (handleProbes(req, res, { parts, session })) return;
     }
 
     if (parts[1] === "settings") {
-      if (!requireAdmin(req, res)) return;
-
-      if (req.method === "PUT" && parts[2] === "branding") {
-        const payload = await readBody(req);
-        state.settings = normalizeBranding(payload, state.settings);
-        scheduleSave();
-        broadcastSnapshot();
-        return sendJson(res, 200, publicSettings(session.user));
-      }
-
-      if (req.method === "PUT" && parts[2] === "alerts") {
-        const payload = await readBody(req);
-        state.settings = normalizeAlertSettings(payload, state.settings);
-        scheduleSave();
-        broadcastSnapshot();
-        return sendJson(res, 200, publicSettings(session.user));
-      }
+      if (await handleSettings(req, res, { parts, session })) return;
     }
 
     if (parts[1] === "users") {
-      if (!requireAdmin(req, res)) return;
-
-      if (req.method === "GET" && parts.length === 2) {
-        return sendJson(res, 200, listedUsers().map(publicUser));
-      }
-
-      if (req.method === "POST" && parts.length === 2) {
-        const payload = await readBody(req);
-        const createdAt = nowIso();
-        const user = {
-          id: randomUUID(),
-          createdAt,
-          lastLoginAt: null,
-          ...normalizeUser(payload)
-        };
-        state.users.unshift(user);
-        scheduleSave();
-        return sendJson(res, 201, publicUser(user));
-      }
-
-      const id = parts[2];
-      const user = listedUsers().find((item) => item.id === id);
-      if (!user) return notFound(res);
-
-      if (req.method === "PUT" && parts.length === 3) {
-        const payload = await readBody(req);
-        const nextRole = String(payload.role || user.role);
-        const nextActive = Boolean(payload.isActive ?? user.isActive ?? true);
-        if (user.role === "admin" && (!nextActive || nextRole !== "admin") && activeAdminCount() <= 1) {
-          return sendJson(res, 409, { error: "Mantenha pelo menos um administrador ativo." });
-        }
-        Object.assign(user, normalizeUser(payload, user));
-        scheduleSave();
-        return sendJson(res, 200, publicUser(user));
-      }
-
-      if (req.method === "DELETE" && parts.length === 3) {
-        if (user.id === session.user.id) {
-          return sendJson(res, 409, { error: "Voce nao pode excluir o proprio usuario logado." });
-        }
-        if (user.role === "admin" && activeAdminCount() <= 1) {
-          return sendJson(res, 409, { error: "Mantenha pelo menos um administrador ativo." });
-        }
-        user.deletedAt = nowIso();
-        user.updatedAt = user.deletedAt;
-        scheduleSave();
-        return sendJson(res, 200, publicUser(user));
-      }
+      if (await handleUsers(req, res, { parts, session })) return;
     }
 
     if (parts[1] === "groups") {
-      if (req.method === "GET" && parts.length === 2) {
-        return sendJson(res, 200, listedGroups().map(publicGroup));
-      }
+      if (await handleGroups(req, res, { parts, session })) return;
+    }
 
-      if (req.method !== "GET" && !requireAdmin(req, res)) return;
-
-      if (req.method === "POST" && parts.length === 2) {
-        const payload = await readBody(req);
-        const createdAt = nowIso();
-        const group = {
-          id: randomUUID(),
-          createdAt,
-          ...normalizeGroup(payload)
-        };
-        state.groups.unshift(group);
-        scheduleSave();
-        broadcastSnapshot();
-        return sendJson(res, 201, publicGroup(group));
-      }
-
-      const id = parts[2];
-      const group = state.groups.find((item) => item.id === id && !item.deletedAt);
-      if (!group) return notFound(res);
-
-      if (req.method === "GET" && parts.length === 3) {
-        return sendJson(res, 200, publicGroup(group));
-      }
-
-      if (req.method === "PUT" && parts.length === 3) {
-        const payload = await readBody(req);
-        Object.assign(group, normalizeGroup(payload, group));
-        scheduleSave();
-        broadcastSnapshot();
-        return sendJson(res, 200, publicGroup(group));
-      }
-
-      if (req.method === "DELETE" && parts.length === 3) {
-        const hasServers = listedServers().some((server) => server.groupId === group.id);
-        if (hasServers) {
-          const error = new Error("Remova ou reatribua os servidores antes de excluir esta empresa/grupo.");
-          error.statusCode = 409;
-          throw error;
-        }
-        group.deletedAt = nowIso();
-        group.updatedAt = nowIso();
-        scheduleSave();
-        broadcastSnapshot();
-        return sendJson(res, 200, publicGroup(group));
-      }
+    if (parts[1] === "network") {
+      if (await handleNetwork(req, res, { parts, session })) return;
     }
 
     if (parts[1] === "servers") {
-      if (req.method === "GET" && parts.length === 2) {
-        return sendJson(res, 200, listedServers().map(publicServer));
-      }
-
-      if (req.method === "GET" && parts.length === 3) {
-        const id = parts[2];
-        const server = state.servers.find((item) => item.id === id && !item.deletedAt);
-        if (!server) return notFound(res);
-        return sendJson(res, 200, publicServer(server));
-      }
-
-      if (req.method === "GET" && parts[3] === "history") {
-        const id = parts[2];
-        const server = state.servers.find((item) => item.id === id && !item.deletedAt);
-        if (!server) return notFound(res);
-        const limit = Number(url.searchParams.get("limit") || 100);
-        const events = state.events.filter((event) => event.serverId === id).slice(0, Math.min(limit, 500));
-        return sendJson(res, 200, events);
-      }
+      if (handleServerRead(req, res, { parts, url })) return;
 
       if (!requireAdmin(req, res)) return;
 
-      if (req.method === "POST" && parts.length === 2) {
-        const payload = await readBody(req);
-        const createdAt = nowIso();
-        const server = {
-          id: randomUUID(),
-          currentStatus: "unknown",
-          previousStatus: "unknown",
-          statusChangedAt: createdAt,
-          lastCheckedAt: null,
-          lastLatencyMs: null,
-          lastError: null,
-          consecutiveFailures: 0,
-          createdAt,
-          nextCheckAt: Date.now() + 300,
-          ...normalizeServer(payload)
-        };
-        state.servers.unshift(server);
-        addAdministrativeEvent(server, "server_created", "Servidor cadastrado.", session.user.name);
-        scheduleSave();
-        broadcastSnapshot();
-        return sendJson(res, 201, publicServer(server));
-      }
-
-      const id = parts[2];
-      const server = state.servers.find((item) => item.id === id && !item.deletedAt);
-      if (!server) return notFound(res);
-
-      if (req.method === "PUT" && parts.length === 3) {
-        const payload = await readBody(req);
-        const manuallyRenamedAutoServer =
-          server.autoCreatedByProbe &&
-          (String(payload.name || "").trim() !== String(server.name || "").trim() ||
-            String(payload.hostname || "").trim() !== String(server.hostname || "").trim());
-        Object.assign(server, normalizeServer(payload, server));
-        if (manuallyRenamedAutoServer) {
-          server.autoCreatedByProbe = false;
-        }
-        addAdministrativeEvent(server, "server_edited", "Cadastro do servidor editado.", session.user.name);
-        scheduleSave();
-        broadcastSnapshot();
-        return sendJson(res, 200, publicServer(server));
-      }
-
-      if (req.method === "DELETE" && parts.length === 3) {
-        server.isActive = false;
-        server.deletedAt = nowIso();
-        server.updatedAt = nowIso();
-        addAdministrativeEvent(server, "server_deleted", "Servidor removido do monitoramento.", session.user.name);
-        scheduleSave();
-        broadcastSnapshot();
-        return sendJson(res, 200, publicServer(server));
-      }
-
-      if (req.method === "POST" && parts[3] === "toggle") {
-        server.isActive = !server.isActive;
-        server.updatedAt = nowIso();
-        server.nextCheckAt = Date.now() + 300;
-        addAdministrativeEvent(
-          server,
-          server.isActive ? "server_reactivated" : "server_paused",
-          server.isActive ? "Monitoramento reativado." : "Monitoramento pausado.",
-          session.user.name
-        );
-        scheduleSave();
-        broadcastSnapshot();
-        return sendJson(res, 200, publicServer(server));
-      }
-
-      if (req.method === "POST" && parts[3] === "check") {
-        if (!server.isActive) {
-          return sendJson(res, 409, { error: "Reative o servidor antes de solicitar uma checagem." });
-        }
-        addAdministrativeEvent(server, "manual_check_requested", "Checagem manual solicitada.", session.user.name);
-        if (server.checkSource === "probe") {
-          server.probeCheckRequestedAt = nowIso();
-          scheduleSave();
-          broadcast({ type: "server_checked", server: publicServer(server), summary: summary() });
-          return sendJson(res, 202, { status: "probe_queued", server: publicServer(server) });
-        }
-        server.nextCheckAt = Date.now();
-        await checkServer(server);
-        return sendJson(res, 200, { status: "checked", server: publicServer(server) });
-      }
+      if (await handleServerCreate(req, res, { parts, session })) return;
+      if (await handleServerMutation(req, res, { parts, session })) return;
+      if (await handleServerCheck(req, res, { parts, session })) return;
+      return notFound(res);
     }
 
-    if (req.method === "GET" && parts[1] === "alerts") {
-      return sendJson(res, 200, state.alerts.slice(0, 100));
-    }
-
-    if (req.method === "POST" && parts[1] === "alerts" && parts[3] === "ack") {
-      const alert = state.alerts.find((item) => item.id === parts[2]);
-      if (!alert) return notFound(res);
-      const payload = await readBody(req);
-      alert.read = true;
-      alert.acknowledgedAt = nowIso();
-      alert.acknowledgedBy = session.user.name;
-      alert.acknowledgmentNote = String(payload.note || "").trim().slice(0, 500);
-      scheduleSave();
-      broadcastSnapshot();
-      return sendJson(res, 200, alert);
-    }
-
-    if (req.method === "POST" && parts[1] === "alerts" && parts[2] === "read") {
-      const acknowledgedAt = nowIso();
-      state.alerts = state.alerts.map((alert) => ({
-        ...alert,
-        read: true,
-        acknowledgedAt: alert.acknowledgedAt || acknowledgedAt,
-        acknowledgedBy: alert.acknowledgedBy || session.user.name
-      }));
-      scheduleSave();
-      broadcastSnapshot();
-      return sendJson(res, 200, { ok: true });
-    }
-
-    if (req.method === "GET" && parts[1] === "events") {
-      return sendJson(res, 200, state.events.slice(0, 200));
+    if (parts[1] === "alerts") {
+      if (await handleAlerts(req, res, { parts, session })) return;
     }
 
     notFound(res);
   } catch (error) {
+    if (res.headersSent) {
+      console.error(error);
+      return;
+    }
     sendJson(res, error.statusCode || 500, { error: error.message || "Erro interno." });
   }
 }
 
-function withInitialTheme(content) {
-  const theme = state.settings.theme === "dark" ? "dark" : "light";
-  return String(content).replace(
-    '<html lang="pt-BR">',
-    `<html lang="pt-BR" data-theme="${theme}" style="color-scheme: ${theme};">`
-  );
-}
-
-async function serveStatic(req, res) {
-  const { pathname } = getRouteParts(req);
-  const safePath = pathname === "/" ? "/index.html" : pathname;
-  const filePath = resolve(PUBLIC_DIR, `.${safePath}`);
-  if (!filePath.startsWith(PUBLIC_DIR)) return notFound(res);
-
-  try {
-    const content = await readFile(filePath);
-    const ext = extname(filePath);
-    const body = ext === ".html" ? withInitialTheme(content) : content;
-    res.writeHead(200, {
-      "Content-Type": mimeTypes[ext] || "application/octet-stream",
-      "Cache-Control": "no-store"
-    });
-    res.end(body);
-  } catch {
-    if (!extname(filePath)) {
-      req.url = "/";
-      return serveStatic(req, res);
-    }
-    notFound(res);
-  }
-}
-
-function encodeWebSocketFrame(payload) {
-  const data = Buffer.from(JSON.stringify(payload));
-  if (data.length < 126) {
-    return Buffer.concat([Buffer.from([0x81, data.length]), data]);
-  }
-  if (data.length < 65536) {
-    const header = Buffer.alloc(4);
-    header[0] = 0x81;
-    header[1] = 126;
-    header.writeUInt16BE(data.length, 2);
-    return Buffer.concat([header, data]);
-  }
-  const header = Buffer.alloc(10);
-  header[0] = 0x81;
-  header[1] = 127;
-  header.writeBigUInt64BE(BigInt(data.length), 2);
-  return Buffer.concat([header, data]);
-}
-
-function broadcast(payload) {
-  const frame = encodeWebSocketFrame(payload);
-  for (const client of sockets) {
-    const socket = client.socket || client;
-    if (!socket.destroyed) socket.write(frame);
-  }
-}
-
-function broadcastSnapshot() {
-  for (const client of sockets) {
-    const socket = client.socket || client;
-    if (!socket.destroyed) socket.write(encodeWebSocketFrame(snapshot(client.user || null)));
-  }
-}
-
-function handleUpgrade(req, socket) {
-  if (req.url !== "/ws") {
-    socket.destroy();
-    return;
-  }
-  const session = getSession(req);
-  if (!session) {
-    socket.destroy();
-    return;
-  }
-
-  const key = req.headers["sec-websocket-key"];
-  if (!key) {
-    socket.destroy();
-    return;
-  }
-
-  const accept = createHash("sha1")
-    .update(`${key}258EAFA5-E914-47DA-95CA-C5AB0DC85B11`)
-    .digest("base64");
-
-  socket.write(
-    [
-      "HTTP/1.1 101 Switching Protocols",
-      "Upgrade: websocket",
-      "Connection: Upgrade",
-      `Sec-WebSocket-Accept: ${accept}`,
-      "",
-      ""
-    ].join("\r\n")
-  );
-
-  const client = { socket, user: session.user };
-  sockets.add(client);
-  socket.write(encodeWebSocketFrame(snapshot(session.user)));
-  socket.on("close", () => sockets.delete(client));
-  socket.on("error", () => sockets.delete(client));
-}
+const webSocketHub = createWebSocketHub({ getSession, snapshot });
+const { broadcast, broadcastSnapshot, handleUpgrade } = webSocketHub;
+const healthPayload = createHealthHandler({
+  nowIso,
+  uptimeSeconds: () => Math.round(process.uptime())
+});
+const serveDownload = createDownloadHandler({
+  downloads: DOWNLOADS,
+  getSession,
+  authorizeProbe,
+  sendJson,
+  notFound
+});
+const handleSettings = createSettingsHandler({
+  readBody,
+  sendJson,
+  requireAdmin,
+  getSettings: () => state.settings,
+  setSettings: (settings) => {
+    state.settings = settings;
+  },
+  normalizeBranding,
+  normalizeAlertSettings,
+  publicSettings,
+  scheduleSave,
+  broadcastSnapshot
+});
+const handleUsers = createUsersHandler({
+  randomId: randomUUID,
+  nowIso,
+  readBody,
+  sendJson,
+  notFound,
+  requireAdmin,
+  listedUsers: () => state.users.filter((user) => !user.deletedAt),
+  addUser: (user) => state.users.unshift(user),
+  publicUser,
+  normalizeUser,
+  activeAdminCount,
+  scheduleSave
+});
+const handleGroups = createGroupsHandler({
+  randomId: randomUUID,
+  nowIso,
+  readBody,
+  sendJson,
+  notFound,
+  requireAdmin,
+  listedGroups,
+  listedServers,
+  listedNetworkDevices,
+  listedNetworkLinks,
+  publicGroup,
+  normalizeGroup,
+  addGroup: (group) => state.groups.unshift(group),
+  scheduleSave,
+  broadcastSnapshot
+});
+const handleNetwork = createNetworkHandler({
+  randomId: randomUUID,
+  nowIso,
+  readBody,
+  sendJson,
+  notFound,
+  requireAdmin,
+  getDevices: () => state.networkDevices || [],
+  getLinks: () => state.networkLinks || [],
+  publicDevice: publicNetworkDevice,
+  publicLink: publicNetworkLink,
+  normalizeDevice: normalizeNetworkDevice,
+  normalizeLink: normalizeNetworkLink,
+  addDevice: (device) => state.networkDevices.unshift(device),
+  addLink: (link) => state.networkLinks.unshift(link),
+  scheduleSave,
+  broadcastSnapshot
+});
+const handleAlerts = createAlertsHandler({
+  nowIso,
+  readBody,
+  sendJson,
+  notFound,
+  requireAdmin,
+  getAlerts: () => state.alerts,
+  setAlerts: (alerts) => {
+    state.alerts = alerts;
+  },
+  scheduleSave,
+  broadcastSnapshot
+});
+const handleMeta = createMetaHandler({
+  sendJson,
+  summary,
+  snapshot,
+  getEvents: () => state.events
+});
+const handleProbes = createProbesHandler({
+  sendJson,
+  notFound,
+  requireAdmin,
+  getProbes: () => state.probes || [],
+  listedServers,
+  publicProbe,
+  publicProbeUpdateRequest,
+  probeVersionStatus,
+  probeUpdateSupported,
+  createProbeUpdateRequest,
+  nowIso,
+  scheduleSave,
+  broadcastSnapshot
+});
+const handleServerRead = createServerReadHandler({
+  sendJson,
+  notFound,
+  listedServers,
+  publicServer,
+  getEvents: () => state.events
+});
+const handleServerCreate = createServerCreateHandler({
+  randomId: randomUUID,
+  nowIso,
+  nowMs: Date.now,
+  readBody,
+  sendJson,
+  normalizeServer,
+  addServer: (server) => state.servers.unshift(server),
+  addAdministrativeEvent,
+  syncVirtualizerChildren,
+  scheduleSave,
+  broadcastSnapshot,
+  publicServer
+});
+const handleServerMutation = createServerMutationHandler({
+  nowIso,
+  nowMs: Date.now,
+  readBody,
+  sendJson,
+  notFound,
+  getServer: (id) => state.servers.find((item) => item.id === id && !item.deletedAt),
+  normalizeServer,
+  addAdministrativeEvent,
+  syncVirtualizerChildren,
+  scheduleSave,
+  broadcastSnapshot,
+  publicServer
+});
+const handleServerCheck = createServerCheckHandler({
+  nowIso,
+  nowMs: Date.now,
+  sendJson,
+  notFound,
+  getServer: (id) => state.servers.find((item) => item.id === id && !item.deletedAt),
+  publicServer,
+  addAdministrativeEvent,
+  scheduleSave,
+  broadcast,
+  summary,
+  checkServer
+});
+const serveStatic = createStaticHandler({
+  publicDir: PUBLIC_DIR,
+  getTheme: () => (state.settings.theme === "dark" ? "dark" : "light"),
+  notFound
+});
+const alertService = createAlertService({
+  getState: () => state,
+  randomId: randomUUID,
+  nowIso,
+  trimEvents,
+  broadcast,
+  summary,
+  publicServer
+});
+({ addEvent, addAdministrativeEvent, addProbeEvent } = alertService);
 
 function printStartup() {
   const interfaces = os.networkInterfaces();
