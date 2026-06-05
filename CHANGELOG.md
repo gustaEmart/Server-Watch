@@ -4,6 +4,8 @@ Resumo das versoes estaveis publicadas do ServerWatch.
 
 ## Unreleased
 
+- Adiciona o agente LinkProbe em Go para monitoramento de links de dentro para fora com `source_ip`/interface, deteccao de IP de saida e envio para `POST /api/link-status`.
+- Adiciona recebimento backend de status do LinkProbe, criando ou atualizando links automaticamente pelo `agent_id`.
 - Corrige o instalador Windows do Probe Collector para registrar a versao real do `collector.js` embutido e publicar automaticamente o `.exe` recompilado em `downloads`.
 - Organiza alfabeticamente listas e seletores operacionais de empresas, servidores, VMs, probes, usuarios, dispositivos e links.
 - Permite remover empresas escolhendo entre desvincular servidores/links/dispositivos ou excluir tambem os cadastros vinculados.

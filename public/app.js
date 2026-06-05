@@ -3193,7 +3193,7 @@ function networkStatusLabel(status) {
     online: "Online",
     degraded: "Degradado",
     offline: "Offline",
-    probe_unreachable: "Probe sem contato",
+    probe_unreachable: "Agente sem contato",
     paused: "Pausado",
     unknown: "Sem status"
   }[status] || "Sem status";
@@ -3316,6 +3316,7 @@ function activeNetworkTargetLabel(link) {
 
 function activeDetectionLabel(value) {
   return {
+    linkprobe_source_ip: "LinkProbe source IP",
     egress_ip: "IP publico de saida",
     egress_subnet: "mesma sub-rede WAN",
     single_reachable: "unico gateway respondendo",
@@ -3325,7 +3326,7 @@ function activeDetectionLabel(value) {
 }
 
 function activeTargetTitle(link) {
-  return ["egress_ip", "egress_subnet", "single_reachable"].includes(link?.activeDetection) ? "Link ativo" : "Melhor resposta";
+  return ["linkprobe_source_ip", "egress_ip", "egress_subnet", "single_reachable"].includes(link?.activeDetection) ? "Link ativo" : "Melhor resposta";
 }
 
 function networkTargetReason(target) {
@@ -3356,6 +3357,9 @@ function renderNetworkDetail(link) {
   const events = networkEventsForLink(link.id);
   const status = link.displayStatus || link.currentStatus || "unknown";
   const targetLabels = networkTargetsForLink(link).map(networkTargetLabel);
+  const isLinkProbe = link.monitorSource === "linkprobe" || Boolean(link.linkProbeAgentId);
+  const collectorLabel = isLinkProbe ? "LinkProbe" : "Probe Collector";
+  const collectorId = isLinkProbe ? link.linkProbeAgentId : link.probeName || link.probeId;
   els.networkDetailPanel.innerHTML = `
     <div class="network-detail-header">
       <div>
@@ -3368,8 +3372,12 @@ function renderNetworkDetail(link) {
       <div><span>${escapeHtml(activeTargetTitle(link))}</span><strong>${escapeHtml(activeNetworkTargetLabel(link))}</strong></div>
       <div><span>Metodo do ativo</span><strong>${escapeHtml(link.activeTargetHost ? activeDetectionLabel(link.activeDetection) : "-")}</strong></div>
       <div><span>IP publico observado</span><strong>${escapeHtml(link.observedPublicIp || "-")}</strong></div>
-      <div><span>Alvos</span><strong>${escapeHtml(targetLabels.join(", ") || "-")}</strong></div>
-      <div><span>Probe</span><strong>${escapeHtml(link.probeName || link.probeId || "-")}</strong></div>
+      <div><span>Alvos externos</span><strong>${escapeHtml(targetLabels.join(", ") || "-")}</strong></div>
+      <div><span>Coletor</span><strong>${escapeHtml(collectorLabel)}</strong></div>
+      <div><span>ID do agente</span><strong>${escapeHtml(collectorId || "-")}</strong></div>
+      <div><span>Source IP</span><strong>${escapeHtml(link.linkProbeSourceIp || "-")}</strong></div>
+      <div><span>Sucesso</span><strong>${link.linkProbeSuccessRate === null || link.linkProbeSuccessRate === undefined ? "-" : `${Math.round(Number(link.linkProbeSuccessRate) * 100)}%`}</strong></div>
+      <div><span>Versao do agente</span><strong>${escapeHtml(link.linkProbeVersion || "-")}</strong></div>
       <div><span>Latencia</span><strong>${link.lastLatencyMs ?? "-"} ms</strong></div>
       <div><span>Perda</span><strong>${link.lastPacketLossPercent ?? "-"}%</strong></div>
       <div><span>Jitter</span><strong>${link.lastJitterMs ?? "-"} ms</strong></div>

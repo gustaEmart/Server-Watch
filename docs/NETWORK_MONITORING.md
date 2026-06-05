@@ -15,16 +15,72 @@ Criar uma pagina `Redes` separada do dashboard de servidores, focada em:
 
 ## Principio de arquitetura
 
-A coleta deve acontecer preferencialmente pelo Probe Collector dentro da rede do cliente.
+A coleta de links deve acontecer preferencialmente pelo **LinkProbe** dentro da rede do cliente, com uma instancia por link/WAN quando for necessario determinar exatamente qual saida esta ativa.
 
 Motivos:
 
 - o ServerWatch central pode estar fora da rede do cliente;
 - muitos roteadores/firewalls nao devem ficar expostos na internet;
 - SNMP e APIs de roteadores normalmente ficam restritos a LAN/VPN;
-- o probe ja resolve o problema de alcance local.
+- o teste de dentro para fora permite forcar `source_ip` ou interface de saida;
+- o roteador/firewall pode aplicar policy routing para garantir que aquele source saia pelo link correto.
 
 O backend central deve apenas orquestrar configuracoes, receber resultados e exibir historico.
+
+## Fase atual - LinkProbe de dentro para fora
+
+O LinkProbe fica em `tools/linkprobe` e envia resultados para:
+
+```text
+POST /api/link-status
+Authorization: Bearer <token-do-probe>
+```
+
+Fluxo recomendado:
+
+1. Separar um `source_ip` por link monitorado, por exemplo `192.168.10.50` para WAN1 e `192.168.10.51` para WAN2.
+2. Configurar policy routing no MikroTik, pfSense/OPNsense ou Fortigate para que cada `source_ip` saia pela WAN correta.
+3. Rodar uma instancia do LinkProbe por link, cada uma com seu `agent_id`, `link_name`, `source_ip` e lista de `ping_targets`.
+4. O LinkProbe pinga alvos externos, detecta o IP de saida via HTTP usando `net.Dialer.LocalAddr` e envia o payload para o ServerWatch.
+5. O ServerWatch cria ou atualiza automaticamente o link com base no `agent_id`.
+
+Este modelo substitui a tentativa anterior de descobrir o link real apenas a partir de pings feitos pelo Probe Collector contra gateways/IPs publicos. O cadastro antigo continua existindo para compatibilidade, mas a forma mais confiavel para WAN e o LinkProbe.
+
+Exemplo de payload recebido pelo backend:
+
+```json
+{
+  "agent_id": "hcrv-vivo-wan1",
+  "link_name": "Vivo Fibra - HCRV",
+  "timestamp": "2026-06-04T14:30:00Z",
+  "is_online": true,
+  "success_rate": 0.833,
+  "public_ip": "200.0.40.218",
+  "ip_changed": false,
+  "version": "1.0.0",
+  "ping_results": [
+    {
+      "target": "8.8.8.8",
+      "sent": 4,
+      "received": 4,
+      "lost_pct": 0,
+      "avg_rtt_ms": 12.5,
+      "min_rtt_ms": 10.1,
+      "max_rtt_ms": 15.3,
+      "reachable": true
+    }
+  ]
+}
+```
+
+### Interpretacao no ServerWatch
+
+- `agent_id` identifica o link e evita depender de cadastro manual previo.
+- `is_online=false` marca o link como offline.
+- `success_rate` abaixo de `1.0`, mas acima do threshold do agente, pode aparecer como degradado.
+- `public_ip` vira o IP de saida observado.
+- `ip_changed=true` gera evento de rede para alertar troca de saida.
+- `ping_results` alimenta os cards de alvos externos testados.
 
 ## Fase 1 - Links por probe e ping
 

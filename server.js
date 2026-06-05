@@ -1102,6 +1102,12 @@ function publicNetworkLink(link) {
     expectedPublicIp: link.expectedPublicIp || "",
     contractedDownloadMbps: link.contractedDownloadMbps || 0,
     contractedUploadMbps: link.contractedUploadMbps || 0,
+    monitorSource: link.monitorSource || (link.linkProbeAgentId ? "linkprobe" : "probe"),
+    linkProbeAgentId: link.linkProbeAgentId || null,
+    linkProbeVersion: link.linkProbeVersion || null,
+    linkProbeSourceIp: link.linkProbeSourceIp || "",
+    linkProbeSuccessRate: link.linkProbeSuccessRate ?? null,
+    linkProbeIpChanged: link.linkProbeIpChanged === true,
     probeId: link.probeId || null,
     probeName: probe?.name || link.probeId || null,
     probeStatus: probeConnection.status,
@@ -1280,6 +1286,201 @@ function applyNetworkLinkResult(link, result, probeId) {
   }
   link.updatedAt = nowIso();
   return true;
+}
+
+function normalizeLinkProbePayload(payload) {
+  const agentId = String(payload.agent_id || payload.agentId || "").trim();
+  if (!agentId) {
+    const error = new Error("Informe agent_id.");
+    error.statusCode = 400;
+    throw error;
+  }
+  const pingResults = Array.isArray(payload.ping_results)
+    ? payload.ping_results
+    : Array.isArray(payload.pingResults)
+    ? payload.pingResults
+    : [];
+  if (!pingResults.length) {
+    const error = new Error("Informe ping_results.");
+    error.statusCode = 400;
+    throw error;
+  }
+  const targets = pingResults
+    .map((item) => ({
+      name: String(item.name || item.target_name || item.targetName || "").trim(),
+      host: normalizeOptionalHost(item.target || item.targetHost || item.host, "Alvo do LinkProbe")
+    }))
+    .filter((item) => item.host);
+  if (!targets.length) {
+    const error = new Error("Nenhum alvo valido recebido do LinkProbe.");
+    error.statusCode = 400;
+    throw error;
+  }
+  const successRate = Math.max(0, Math.min(1, Number(payload.success_rate ?? payload.successRate ?? 0) || 0));
+  const publicIp = normalizeOptionalHost(payload.public_ip ?? payload.publicIp ?? "", "IP publico observado");
+  const timestamp = payload.timestamp ? new Date(payload.timestamp) : new Date();
+  return {
+    agentId,
+    linkName: String(payload.link_name || payload.linkName || agentId).trim() || agentId,
+    timestamp: Number.isNaN(timestamp.getTime()) ? nowIso() : timestamp.toISOString(),
+    isOnline: payload.is_online ?? payload.isOnline ?? false,
+    successRate,
+    publicIp,
+    ipChanged: Boolean(payload.ip_changed ?? payload.ipChanged),
+    version: String(payload.version || "").trim(),
+    sourceIp: normalizeOptionalHost(payload.source_ip ?? payload.sourceIp ?? "", "Source IP"),
+    interfaceName: String(payload.interface || payload.interfaceName || payload.interface_name || "").trim(),
+    targets,
+    pingResults
+  };
+}
+
+function averagePingLatency(pingResults) {
+  const values = pingResults
+    .map((item) => Number(item.avg_rtt_ms ?? item.avgRTTMs ?? item.avgRttMs ?? item.latencyMs))
+    .filter((value) => Number.isFinite(value) && value >= 0);
+  if (!values.length) return null;
+  return Math.round((values.reduce((sum, value) => sum + value, 0) / values.length) * 10) / 10;
+}
+
+function linkProbeTargetResults(data) {
+  return data.pingResults.slice(0, 20).map((item) => {
+    const targetHost = String(item.target || item.targetHost || item.host || "").trim();
+    const sent = Math.max(0, Number(item.sent || 0) || 0);
+    const received = Math.max(0, Number(item.received || 0) || 0);
+    const lostPct = Number(item.lost_pct ?? item.lostPct ?? (sent ? ((sent - received) / sent) * 100 : received ? 0 : 100));
+    return {
+      targetHost,
+      targetName: String(item.name || item.target_name || item.targetName || "").trim(),
+      online: Boolean(item.reachable ?? item.online ?? received > 0),
+      latencyMs: Number(item.avg_rtt_ms ?? item.avgRTTMs ?? item.avgRttMs ?? item.latencyMs ?? 0) || null,
+      minLatencyMs: Number(item.min_rtt_ms ?? item.minRTTMs ?? item.minRttMs ?? 0) || null,
+      maxLatencyMs: Number(item.max_rtt_ms ?? item.maxRTTMs ?? item.maxRttMs ?? 0) || null,
+      sent,
+      received,
+      packetLossPercent: Math.round(Math.max(0, Math.min(100, lostPct)) * 10) / 10,
+      error: item.error ? String(item.error).slice(0, 300) : null
+    };
+  }).filter((item) => item.targetHost);
+}
+
+function findOrCreateLinkProbeLink(data) {
+  const existing = listedNetworkLinks().find((link) => link.linkProbeAgentId === data.agentId);
+  if (existing) return { link: existing, created: false };
+  const createdAt = nowIso();
+  const link = {
+    id: randomUUID(),
+    name: data.linkName,
+    networkDeviceId: null,
+    groupId: null,
+    provider: "",
+    linkType: "internet",
+    interfaceName: data.interfaceName,
+    targetHost: data.targets[0]?.host,
+    targetHosts: data.targets.map((target) => target.host),
+    targets: data.targets,
+    expectedPublicIp: "",
+    contractedDownloadMbps: 0,
+    contractedUploadMbps: 0,
+    probeId: null,
+    monitorSource: "linkprobe",
+    linkProbeAgentId: data.agentId,
+    linkProbeVersion: data.version || null,
+    linkProbeSourceIp: data.sourceIp,
+    linkProbeSuccessRate: null,
+    linkProbeIpChanged: false,
+    checkInterval: 60,
+    failureThreshold: 1,
+    degradedLatencyMs: 120,
+    degradedPacketLossPercent: 10,
+    degradedJitterMs: 40,
+    sampleCount: 1,
+    currentStatus: "unknown",
+    previousStatus: "unknown",
+    statusChangedAt: createdAt,
+    lastCheckedAt: null,
+    lastLatencyMs: null,
+    lastPacketLossPercent: null,
+    lastJitterMs: null,
+    targetResults: [],
+    lastError: null,
+    lastProbeSeenAt: null,
+    consecutiveFailures: 0,
+    isActive: true,
+    notes: "Criado automaticamente pelo LinkProbe.",
+    createdAt,
+    updatedAt: createdAt,
+    deletedAt: null
+  };
+  state.networkLinks.unshift(link);
+  return { link, created: true };
+}
+
+function applyLinkProbeStatus(payload, req) {
+  const data = normalizeLinkProbePayload(payload);
+  const { link, created } = findOrCreateLinkProbeLink(data);
+  const previousStatus = link.currentStatus || "unknown";
+  const targetResults = linkProbeTargetResults(data);
+  const packetLossPercent = Math.round((1 - data.successRate) * 1000) / 10;
+  const latencyMs = averagePingLatency(data.pingResults);
+  const result = {
+    online: Boolean(data.isOnline),
+    packetLossPercent,
+    latencyMs,
+    jitterMs: null,
+    targetResults,
+    activeTargetHost: data.publicIp || null,
+    activeTargetName: data.publicIp ? "IP de saida" : "",
+    activeDetection: data.publicIp ? "linkprobe_source_ip" : "",
+    observedPublicIp: data.publicIp || null,
+    checkedAt: data.timestamp,
+    error: data.isOnline ? null : "LinkProbe reportou o link como offline."
+  };
+  const candidate = networkCandidateStatus(link, result);
+
+  link.name = data.linkName || link.name;
+  link.monitorSource = "linkprobe";
+  link.linkProbeAgentId = data.agentId;
+  link.linkProbeVersion = data.version || link.linkProbeVersion || null;
+  link.linkProbeSourceIp = data.sourceIp || link.linkProbeSourceIp || "";
+  link.linkProbeSuccessRate = data.successRate;
+  link.linkProbeIpChanged = data.ipChanged;
+  link.interfaceName = data.interfaceName || link.interfaceName || "";
+  link.targetHost = data.targets[0]?.host || link.targetHost;
+  link.targetHosts = data.targets.map((target) => target.host);
+  link.targets = data.targets;
+  link.lastProbeSeenAt = nowIso();
+  link.lastCheckedAt = data.timestamp;
+  link.lastLatencyMs = latencyMs;
+  link.lastPacketLossPercent = packetLossPercent;
+  link.lastJitterMs = null;
+  link.lastError = result.error;
+  link.activeTargetHost = result.activeTargetHost;
+  link.activeTargetName = result.activeTargetName;
+  link.activeDetection = result.activeDetection;
+  link.observedPublicIp = data.publicIp || null;
+  link.targetResults = targetResults;
+  link.forceCheckAt = null;
+  link.consecutiveFailures = data.isOnline ? 0 : (link.consecutiveFailures || 0) + 1;
+  link.currentStatus = data.isOnline ? candidate : "offline";
+  link.updatedAt = nowIso();
+
+  if (created || link.currentStatus !== previousStatus || data.ipChanged) {
+    link.previousStatus = previousStatus;
+    link.statusChangedAt = data.timestamp;
+    addNetworkEvent(
+      link,
+      previousStatus,
+      link.currentStatus,
+      data.ipChanged
+        ? `LinkProbe ${data.agentId} detectou troca de IP de saida para ${data.publicIp || "desconhecido"}.`
+        : `Resultado recebido do LinkProbe ${data.agentId}${req?.socket?.remoteAddress ? ` (${req.socket.remoteAddress})` : ""}.`
+    );
+  }
+
+  scheduleSave();
+  broadcastSnapshot();
+  return publicNetworkLink(link);
 }
 
 function summary() {
@@ -2316,6 +2517,16 @@ async function handleApi(req, res) {
   try {
     if (req.method === "GET" && parts.length === 1 && parts[0] === "health") {
       return sendJson(res, 200, healthPayload());
+    }
+
+    if (parts[1] === "link-status") {
+      if (req.method !== "POST") return notFound(res);
+      if (!authorizeProbe(req)) {
+        return sendJson(res, 401, { error: "Token do LinkProbe invalido." });
+      }
+      const payload = await readBody(req);
+      const link = applyLinkProbeStatus(payload, req);
+      return sendJson(res, 202, { ok: true, link });
     }
 
     if (parts[1] === "auth") {
