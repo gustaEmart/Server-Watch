@@ -1,6 +1,6 @@
 # ServerWatch LinkProbe
 
-LinkProbe e um agente especifico para monitorar links de internet de dentro para fora. Ele executa pings externos usando `source_ip` ou interface local, detecta o IP de saida com HTTP vinculado ao mesmo `source_ip` e envia o resultado ao ServerWatch em `POST /api/link-status`.
+LinkProbe e um agente especifico para monitorar links de internet de dentro para fora. Ele executa pings externos para multiplos alvos, deixa o firewall decidir a rota por policy route e envia o resultado ao ServerWatch em `POST /api/link-status`.
 
 ## Build
 
@@ -22,14 +22,29 @@ O projeto usa apenas a biblioteca padrao do Go.
 
 O `--once` executa um ciclo unico e sai, util para validar roteamento.
 
+## Instalacao Linux por comando
+
+Na interface do ServerWatch, abra `Redes` e copie o comando Linux do LinkProbe. Ajuste pelo menos `agent-id`, `link-name` e `targets` para cada link/WAN:
+
+```bash
+curl -fsSL -H "X-ServerWatch-Probe-Token: TOKEN_DO_PROBE" http://serverwatch.local:3000/downloads/linkprobe/linux-installer | sudo bash -s -- \
+  --server-url http://serverwatch.local:3000 \
+  --agent-id hcrv-vivo-wan1 \
+  --link-name "Vivo HCRV" \
+  --targets 8.8.8.8,1.1.1.1,9.9.9.9 \
+  --token "TOKEN_DO_PROBE"
+```
+
+O instalador cria um servico `systemd` por `agent-id`, por exemplo `serverwatch-linkprobe-hcrv-vivo-wan1.service`. Use uma instancia por link quando o firewall tiver uma policy route especifica para os alvos daquele link.
+
 ## Configuracao
 
 Copie `config.example.json` para `config.json`.
 
 - `agent_id`: identificador unico do link no ServerWatch.
 - `link_name`: nome amigavel exibido na tela de redes.
-- `interface`: interface usada no Linux/macOS com `ping -I`.
-- `source_ip`: IP local usado no Windows com `ping -S` e no HTTP de IP publico.
+- `interface`: opcional; interface usada no Linux/macOS com `ping -I`.
+- `source_ip`: opcional; IP local usado no Windows com `ping -S` e no HTTP de IP publico.
 - `ping_targets`: 1 a 10 IPs externos.
 - `ping_count`: pings por alvo.
 - `ping_timeout`: timeout por ping em segundos.
@@ -71,21 +86,11 @@ nssm start ServerWatchLinkProbe
 
 ## Roteamento necessario
 
-O LinkProbe prende o teste no `source_ip`, mas quem garante que esse source sai pela WAN correta e o roteador/firewall.
+Por padrao, o LinkProbe apenas pinga os alvos configurados. Quem garante que esses alvos saem pela WAN correta e o roteador/firewall, usando policy route.
 
 ### MikroTik RouterOS
 
-Policy routing por mangle:
-
-```routeros
-/ip firewall mangle
-add chain=prerouting src-address=192.168.10.50 action=mark-routing new-routing-mark=probe-link1 passthrough=yes comment="LinkProbe Link1"
-
-/ip route
-add dst-address=0.0.0.0/0 gateway=<WAN1-gateway> routing-mark=probe-link1
-```
-
-Alternativa simples para alvos fixos:
+Policy routing por destino dos alvos:
 
 ```routeros
 /ip route
@@ -97,12 +102,9 @@ add dst-address=208.67.222.222/32 gateway=<WAN1-gateway>
 
 ### pfSense / OPNsense
 
-Crie uma regra Floating:
+Crie rotas estaticas para os alvos ou regras de policy routing que direcionem esses destinos pelo gateway do link testado.
 
-- Action: `Match`
-- Interface: interface interna
-- Source: `<source_ip>/32`
-- Advanced Gateway: gateway do link testado
+Evite usar os mesmos alvos para dois links diferentes, a menos que o firewall tenha regras distintas por origem.
 
 ### Fortinet FortiGate
 
@@ -111,8 +113,7 @@ config router policy
     edit 1
         set comments "LinkProbe - Link WAN1"
         set input-device "internal"
-        set src "192.168.10.50/32"
-        set dst "0.0.0.0/0"
+        set dst "8.8.8.8/32"
         set output-device "wan1"
         set gateway <IP-do-gateway-WAN1>
     next

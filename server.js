@@ -81,17 +81,27 @@ const DOWNLOADS = {
   "/downloads/linkprobe/windows-amd64": {
     path: resolve(process.env.SERVERWATCH_LINKPROBE_WINDOWS_AMD64_PATH || "downloads/linkprobe-windows-amd64.exe"),
     filename: "linkprobe-windows-amd64.exe",
-    contentType: "application/vnd.microsoft.portable-executable"
+    contentType: "application/vnd.microsoft.portable-executable",
+    allowProbeToken: true
   },
   "/downloads/linkprobe/linux-amd64": {
     path: resolve(process.env.SERVERWATCH_LINKPROBE_LINUX_AMD64_PATH || "downloads/linkprobe-linux-amd64"),
     filename: "linkprobe-linux-amd64",
-    contentType: "application/octet-stream"
+    contentType: "application/octet-stream",
+    allowProbeToken: true
   },
   "/downloads/linkprobe/linux-arm64": {
     path: resolve(process.env.SERVERWATCH_LINKPROBE_LINUX_ARM64_PATH || "downloads/linkprobe-linux-arm64"),
     filename: "linkprobe-linux-arm64",
-    contentType: "application/octet-stream"
+    contentType: "application/octet-stream",
+    allowProbeToken: true
+  },
+  "/downloads/linkprobe/linux-installer": {
+    path: resolve("tools/linkprobe/install-linux.sh"),
+    filename: "serverwatch-linkprobe-install-linux.sh",
+    contentType: "text/x-shellscript; charset=utf-8",
+    public: true,
+    allowProbeToken: true
   }
 };
 const CHECK_LOOP_MS = 1000;
@@ -1444,9 +1454,9 @@ function applyLinkProbeStatus(payload, req) {
     latencyMs,
     jitterMs: null,
     targetResults,
-    activeTargetHost: data.publicIp || null,
-    activeTargetName: data.publicIp ? "IP de saida" : "",
-    activeDetection: data.publicIp ? "linkprobe_source_ip" : "",
+    activeTargetHost: null,
+    activeTargetName: "",
+    activeDetection: "",
     observedPublicIp: data.publicIp || null,
     checkedAt: data.timestamp,
     error: data.isOnline ? null : "LinkProbe reportou o link como offline."

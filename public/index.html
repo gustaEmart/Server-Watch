@@ -8,7 +8,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="/styles.css?v=20260605-linkprobe" />
+    <link rel="stylesheet" href="/styles.css?v=20260605-linkprobe-installer" />
   </head>
   <body>
     <section class="bootstrap-screen" id="bootScreen" aria-label="Carregando ServerWatch">
@@ -252,6 +252,17 @@
                 <button class="primary-button compact" id="openNetworkLinkForm" type="button">Adicionar link</button>
               </div>
             </div>
+
+            <section class="install-command network-install-command admin-only">
+              <div class="install-command-header">
+                <div>
+                  <strong>Comando Linux LinkProbe</strong>
+                  <span>Instale uma instancia por link/WAN e ajuste agent-id, nome e alvos conforme a policy route.</span>
+                </div>
+                <button class="ghost-button compact" id="copyLinkProbeInstallCommand" type="button">Copiar comando</button>
+              </div>
+              <code id="linkProbeInstallCommand"></code>
+            </section>
 
             <div class="network-summary-grid" aria-label="Resumo dos links">
               <article class="network-summary-card">

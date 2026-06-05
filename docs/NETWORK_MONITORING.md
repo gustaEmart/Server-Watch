@@ -22,8 +22,8 @@ Motivos:
 - o ServerWatch central pode estar fora da rede do cliente;
 - muitos roteadores/firewalls nao devem ficar expostos na internet;
 - SNMP e APIs de roteadores normalmente ficam restritos a LAN/VPN;
-- o teste de dentro para fora permite forcar `source_ip` ou interface de saida;
-- o roteador/firewall pode aplicar policy routing para garantir que aquele source saia pelo link correto.
+- o teste de dentro para fora permite checar alvos externos reais do ponto de vista do cliente;
+- o roteador/firewall pode aplicar policy routing para garantir que os alvos de cada instancia saiam pelo link correto.
 
 O backend central deve apenas orquestrar configuracoes, receber resultados e exibir historico.
 
@@ -38,10 +38,10 @@ Authorization: Bearer <token-do-probe>
 
 Fluxo recomendado:
 
-1. Separar um `source_ip` por link monitorado, por exemplo `192.168.10.50` para WAN1 e `192.168.10.51` para WAN2.
-2. Configurar policy routing no MikroTik, pfSense/OPNsense ou Fortigate para que cada `source_ip` saia pela WAN correta.
-3. Rodar uma instancia do LinkProbe por link, cada uma com seu `agent_id`, `link_name`, `source_ip` e lista de `ping_targets`.
-4. O LinkProbe pinga alvos externos, detecta o IP de saida via HTTP usando `net.Dialer.LocalAddr` e envia o payload para o ServerWatch.
+1. Definir uma lista de alvos externos para cada link monitorado, evitando reaproveitar os mesmos alvos em links diferentes.
+2. Configurar policy routing no MikroTik, pfSense/OPNsense ou Fortigate para que esses destinos saiam pela WAN correta.
+3. Rodar uma instancia do LinkProbe por link, cada uma com seu `agent_id`, `link_name` e lista de `ping_targets`.
+4. O LinkProbe pinga alvos externos, observa o IP publico como diagnostico e envia o payload para o ServerWatch.
 5. O ServerWatch cria ou atualiza automaticamente o link com base no `agent_id`.
 
 Este modelo substitui a tentativa anterior de descobrir o link real apenas a partir de pings feitos pelo Probe Collector contra gateways/IPs publicos. O cadastro antigo continua existindo para compatibilidade, mas a forma mais confiavel para WAN e o LinkProbe.

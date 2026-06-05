@@ -82,6 +82,8 @@ const els = {
   networkProbeStaleCount: document.querySelector("#networkProbeStaleCount"),
   networkLinksList: document.querySelector("#networkLinksList"),
   networkDetailPanel: document.querySelector("#networkDetailPanel"),
+  linkProbeInstallCommand: document.querySelector("#linkProbeInstallCommand"),
+  copyLinkProbeInstallCommand: document.querySelector("#copyLinkProbeInstallCommand"),
   networkDeviceDialog: document.querySelector("#networkDeviceDialog"),
   networkDeviceForm: document.querySelector("#networkDeviceForm"),
   networkDeviceDialogTitle: document.querySelector("#networkDeviceDialogTitle"),
@@ -2781,6 +2783,19 @@ function probeInstallCommandFor(probe, options = {}) {
   return `curl -fsSL -H "X-ServerWatch-Probe-Token: ${token}" ${location.origin}/downloads/probe/linux-installer | ${runner} -s -- ${mode}--server-url ${location.origin} --probe-id ${shellQuote(probeId)} --token ${shellQuote(token)} --name ${shellQuote(probeName)}`;
 }
 
+function linkProbeInstallCommand() {
+  const token = probeToken();
+  if (!token) return "";
+  return [
+    `curl -fsSL -H "X-ServerWatch-Probe-Token: ${token}" ${location.origin}/downloads/linkprobe/linux-installer | sudo bash -s --`,
+    `  --server-url ${location.origin}`,
+    `  --agent-id hcrv-vivo-wan1`,
+    `  --link-name ${shellQuote("Vivo HCRV")}`,
+    `  --targets 8.8.8.8,1.1.1.1,9.9.9.9,208.67.222.222,4.2.2.2,1.0.0.1`,
+    `  --token ${shellQuote(token)}`
+  ].join(" \\\n");
+}
+
 function probeLinkedServers(probeId) {
   return state.servers.filter((server) => !server.deletedAt && server.checkSource === "probe" && server.probeId === probeId);
 }
@@ -3462,6 +3477,9 @@ function renderNetworks() {
   if (els.networkDegradedCount) els.networkDegradedCount.textContent = counts.degraded || 0;
   if (els.networkOfflineCount) els.networkOfflineCount.textContent = counts.offline || 0;
   if (els.networkProbeStaleCount) els.networkProbeStaleCount.textContent = counts.probe_unreachable || 0;
+  if (els.linkProbeInstallCommand) {
+    els.linkProbeInstallCommand.textContent = probeToken() ? linkProbeInstallCommand() : "Token ainda nao disponivel.";
+  }
 
   els.networkLinksList.innerHTML = links.length
     ? links
@@ -4305,6 +4323,10 @@ function bindEvents() {
 
   els.copyProbeInstallCommand?.addEventListener("click", () => {
     copyText(probeInstallCommand(), "Comando de instalacao do probe copiado.");
+  });
+
+  els.copyLinkProbeInstallCommand?.addEventListener("click", () => {
+    copyText(linkProbeInstallCommand(), "Comando de instalacao do LinkProbe copiado.");
   });
 
   document.querySelectorAll("[data-probe-install-target]").forEach((button) => {
