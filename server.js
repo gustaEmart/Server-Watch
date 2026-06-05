@@ -77,6 +77,21 @@ const DOWNLOADS = {
     path: resolve(process.env.SERVERWATCH_WINDOWS_INSTALLER_PATH || "downloads/ServerWatchProbeSetup.exe"),
     filename: "ServerWatchProbeSetup.exe",
     contentType: "application/vnd.microsoft.portable-executable"
+  },
+  "/downloads/linkprobe/windows-amd64": {
+    path: resolve(process.env.SERVERWATCH_LINKPROBE_WINDOWS_AMD64_PATH || "downloads/linkprobe-windows-amd64.exe"),
+    filename: "linkprobe-windows-amd64.exe",
+    contentType: "application/vnd.microsoft.portable-executable"
+  },
+  "/downloads/linkprobe/linux-amd64": {
+    path: resolve(process.env.SERVERWATCH_LINKPROBE_LINUX_AMD64_PATH || "downloads/linkprobe-linux-amd64"),
+    filename: "linkprobe-linux-amd64",
+    contentType: "application/octet-stream"
+  },
+  "/downloads/linkprobe/linux-arm64": {
+    path: resolve(process.env.SERVERWATCH_LINKPROBE_LINUX_ARM64_PATH || "downloads/linkprobe-linux-arm64"),
+    filename: "linkprobe-linux-arm64",
+    contentType: "application/octet-stream"
   }
 };
 const CHECK_LOOP_MS = 1000;
