@@ -5372,6 +5372,39 @@ body {
   gap: 8px;
 }
 
+.network-company-section {
+  border: 1px solid var(--border-default);
+  border-radius: 8px;
+  background: var(--bg-surface);
+  overflow: hidden;
+}
+
+.network-company-header {
+  padding: 11px 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-bottom: 1px solid var(--border-default);
+  background: var(--surface-subtle);
+}
+
+.network-company-header strong,
+.network-company-header span {
+  display: block;
+}
+
+.network-company-header span {
+  color: var(--text-secondary);
+  font-size: 0.84rem;
+}
+
+.network-company-items {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+}
+
 .network-link-row {
   width: 100%;
   min-height: 64px;
@@ -5500,12 +5533,14 @@ body {
 }
 
 .network-link-list > .network-link-row:nth-child(odd),
+.network-company-items > .network-link-row:nth-child(odd),
 .network-event-list > .profile-data-row:nth-child(odd),
 .network-target-list > .profile-data-row:nth-child(odd) {
   background: color-mix(in srgb, var(--bg-elevated) 72%, var(--bg-surface));
 }
 
 .network-link-list > .network-link-row:nth-child(even),
+.network-company-items > .network-link-row:nth-child(even),
 .network-event-list > .profile-data-row:nth-child(even),
 .network-target-list > .profile-data-row:nth-child(even) {
   background: color-mix(in srgb, var(--bg-surface) 82%, var(--bg-elevated));

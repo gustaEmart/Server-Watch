@@ -2789,9 +2789,9 @@ function linkProbeInstallCommand() {
   return [
     `curl -fsSL -H "X-ServerWatch-Probe-Token: ${token}" ${location.origin}/downloads/linkprobe/linux-installer | sudo bash -s --`,
     `  --server-url ${location.origin}`,
-    `  --agent-id hcrv-vivo-wan1`,
-    `  --link-name ${shellQuote("Vivo HCRV")}`,
-    `  --targets 8.8.8.8,1.1.1.1,9.9.9.9,208.67.222.222,4.2.2.2,1.0.0.1`,
+    `  --agent-id link1-empresa`,
+    `  --link-name ${shellQuote("Link 1 - Empresa")}`,
+    `  --targets 1.1.1.1,8.8.8.8,9.9.9.9`,
     `  --token ${shellQuote(token)}`
   ].join(" \\\n");
 }
@@ -3463,6 +3463,58 @@ function renderNetworkDetail(link) {
   `;
 }
 
+function renderNetworkLinkRow(link) {
+  const status = link.displayStatus || link.currentStatus || "unknown";
+  const selected = state.selectedNetworkLinkId === link.id ? "selected" : "";
+  const subtitle = [
+    link.provider || "Sem operadora",
+    link.networkDeviceName || "Sem dispositivo",
+    link.activeTargetHost ? `ativo ${activeNetworkTargetLabel(link)}` : networkTargetsForLink(link).map(networkTargetLabel).join(", ")
+  ].filter(Boolean).join(" · ");
+  return `
+    <button class="network-link-row ${selected}" type="button" data-network-link-id="${escapeHtml(link.id)}">
+      <span class="status-dot ${networkStatusClass(status)}"></span>
+      <div>
+        <strong>${escapeHtml(link.name)}</strong>
+        <small>${escapeHtml(subtitle)}</small>
+      </div>
+      <span class="status-badge ${networkStatusClass(status)}">${networkStatusLabel(status)}</span>
+      <small>${link.lastLatencyMs ?? "-"} ms</small>
+    </button>
+  `;
+}
+
+function renderNetworkCompanySection(group) {
+  const links = sortedByAlpha(group.links, networkLinkSortLabel);
+  const counts = links.reduce((acc, link) => {
+    const status = link.displayStatus || link.currentStatus || "unknown";
+    acc[status] = (acc[status] || 0) + 1;
+    return acc;
+  }, {});
+  const online = counts.online || 0;
+  const offline = counts.offline || 0;
+  const degraded = counts.degraded || 0;
+  const stale = counts.probe_unreachable || 0;
+  const attention = offline + degraded + stale;
+  return `
+    <section class="network-company-section">
+      <div class="network-company-header">
+        <div>
+          <strong>${escapeHtml(group.label)}</strong>
+          <span>${links.length} ${links.length === 1 ? "link" : "links"} monitorados</span>
+        </div>
+        <div class="server-group-badges">
+          <span class="mini-badge online">${online} online</span>
+          ${attention ? `<span class="mini-badge offline">${attention} atencao</span>` : ""}
+        </div>
+      </div>
+      <div class="network-company-items">
+        ${links.map(renderNetworkLinkRow).join("")}
+      </div>
+    </section>
+  `;
+}
+
 function renderNetworks() {
   if (!els.networkLinksList) return;
   const links = sortedByAlpha(state.networkLinks || [], networkLinkSortLabel);
@@ -3481,30 +3533,25 @@ function renderNetworks() {
     els.linkProbeInstallCommand.textContent = probeToken() ? linkProbeInstallCommand() : "Token ainda nao disponivel.";
   }
 
+  const groups = new Map();
+  links.forEach((link) => {
+    const key = link.groupId || "none";
+    if (!groups.has(key)) {
+      groups.set(key, {
+        id: key,
+        label: key === "none" ? "Sem empresa" : groupLabel(key),
+        links: []
+      });
+    }
+    groups.get(key).links.push(link);
+  });
+  const groupedLinks = Array.from(groups.values()).sort((left, right) => {
+    if (left.id === "none") return 1;
+    if (right.id === "none") return -1;
+    return compareAlpha(left.label, right.label);
+  });
   els.networkLinksList.innerHTML = links.length
-    ? links
-        .map((link) => {
-          const status = link.displayStatus || link.currentStatus || "unknown";
-          const selected = state.selectedNetworkLinkId === link.id ? "selected" : "";
-          const subtitle = [
-            link.groupName || "Sem empresa",
-            link.provider || "Sem operadora",
-            link.networkDeviceName || "Sem dispositivo",
-            link.activeTargetHost ? `ativo ${activeNetworkTargetLabel(link)}` : networkTargetsForLink(link).map(networkTargetLabel).join(", ")
-          ].filter(Boolean).join(" · ");
-          return `
-            <button class="network-link-row ${selected}" type="button" data-network-link-id="${escapeHtml(link.id)}">
-              <span class="status-dot ${networkStatusClass(status)}"></span>
-              <div>
-                <strong>${escapeHtml(link.name)}</strong>
-                <small>${escapeHtml(subtitle)}</small>
-              </div>
-              <span class="status-badge ${networkStatusClass(status)}">${networkStatusLabel(status)}</span>
-              <small>${link.lastLatencyMs ?? "-"} ms</small>
-            </button>
-          `;
-        })
-        .join("")
+    ? groupedLinks.map(renderNetworkCompanySection).join("")
     : `<div class="empty-list">Nenhum link cadastrado ainda.</div>`;
   renderNetworkDetail(links.find((link) => link.id === state.selectedNetworkLinkId) || null);
 }

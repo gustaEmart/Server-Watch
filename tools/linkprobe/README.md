@@ -29,13 +29,13 @@ Na interface do ServerWatch, abra `Redes` e copie o comando Linux do LinkProbe. 
 ```bash
 curl -fsSL -H "X-ServerWatch-Probe-Token: TOKEN_DO_PROBE" http://serverwatch.local:3000/downloads/linkprobe/linux-installer | sudo bash -s -- \
   --server-url http://serverwatch.local:3000 \
-  --agent-id hcrv-vivo-wan1 \
-  --link-name "Vivo HCRV" \
+  --agent-id link1-empresa \
+  --link-name "Link 1 - Empresa" \
   --targets 8.8.8.8,1.1.1.1,9.9.9.9 \
   --token "TOKEN_DO_PROBE"
 ```
 
-O instalador cria um servico `systemd` por `agent-id`, por exemplo `serverwatch-linkprobe-hcrv-vivo-wan1.service`. Use uma instancia por link quando o firewall tiver uma policy route especifica para os alvos daquele link.
+O instalador cria um servico `systemd` por `agent-id`, por exemplo `serverwatch-linkprobe-link1-empresa.service`. Use uma instancia por link quando o firewall tiver uma policy route especifica para os alvos daquele link.
 
 ## Configuracao
 
@@ -130,8 +130,8 @@ diagnose ip router policy list
 
 ```json
 {
-  "agent_id": "hcrv-vivo-wan1",
-  "link_name": "Vivo Fibra - HCRV",
+  "agent_id": "link1-empresa",
+  "link_name": "Link 1 - Empresa",
   "timestamp": "2026-06-04T14:30:00Z",
   "is_online": true,
   "success_rate": 0.833,
