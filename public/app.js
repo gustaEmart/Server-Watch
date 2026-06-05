@@ -15,6 +15,7 @@ const state = {
   selectedGroupId: null,
   selectedProbeId: null,
   selectedNetworkLinkId: null,
+  selectedNetworkGroupId: null,
   topologyExpanded: new Set(),
   probeInstallTarget: "linux",
   filters: {
@@ -740,7 +741,13 @@ function applySnapshot(payload) {
   if (state.selectedNetworkLinkId && !state.networkLinks.some((link) => link.id === state.selectedNetworkLinkId)) {
     state.selectedNetworkLinkId = null;
   }
-  if (!state.selectedNetworkLinkId && state.networkLinks.length) {
+  if (state.selectedNetworkGroupId) {
+    const groupStillExists =
+      state.selectedNetworkGroupId === "none" ||
+      state.networkLinks.some((link) => (link.groupId || "none") === state.selectedNetworkGroupId);
+    if (!groupStillExists) state.selectedNetworkGroupId = null;
+  }
+  if (!state.selectedNetworkGroupId && !state.selectedNetworkLinkId && state.networkLinks.length) {
     state.selectedNetworkLinkId = sortedByAlpha(state.networkLinks, networkLinkSortLabel)[0].id;
   }
   renderGroupOptions();
@@ -3329,6 +3336,15 @@ function activeNetworkTargetLabel(link) {
   return networkTargetLabel(target || { host: link.activeTargetHost, name: link.activeTargetName || "" });
 }
 
+function hasConfirmedActiveNetworkTarget(link) {
+  return ["egress_ip", "egress_subnet"].includes(link?.activeDetection);
+}
+
+function networkTargetSummary(link) {
+  if (hasConfirmedActiveNetworkTarget(link)) return `ativo ${activeNetworkTargetLabel(link)}`;
+  return networkTargetsForLink(link).map(networkTargetLabel).join(", ");
+}
+
 function activeDetectionLabel(value) {
   return {
     linkprobe_source_ip: "LinkProbe source IP",
@@ -3341,7 +3357,33 @@ function activeDetectionLabel(value) {
 }
 
 function activeTargetTitle(link) {
-  return ["linkprobe_source_ip", "egress_ip", "egress_subnet", "single_reachable"].includes(link?.activeDetection) ? "Link ativo" : "Melhor resposta";
+  if (hasConfirmedActiveNetworkTarget(link)) return "Link ativo";
+  if (link?.monitorSource === "linkprobe" || link?.linkProbeAgentId) return "Alvo monitorado";
+  return "Melhor resposta";
+}
+
+function networkStatusReasons(link) {
+  const status = link?.displayStatus || link?.currentStatus || "unknown";
+  const reasons = [];
+  const latency = Number(link?.lastLatencyMs);
+  const latencyLimit = Number(link?.degradedLatencyMs || 120);
+  const loss = Number(link?.lastPacketLossPercent);
+  const lossLimit = Number(link?.degradedPacketLossPercent ?? 10);
+  const jitter = Number(link?.lastJitterMs);
+  const jitterLimit = Number(link?.degradedJitterMs || 40);
+  if (status === "degraded") {
+    if (Number.isFinite(latency) && latency > latencyLimit) reasons.push(`latencia ${latency} ms acima do limite ${latencyLimit} ms`);
+    if (Number.isFinite(loss) && loss > lossLimit) reasons.push(`perda ${loss}% acima do limite ${lossLimit}%`);
+    if (Number.isFinite(jitter) && jitter > jitterLimit) reasons.push(`jitter ${jitter} ms acima do limite ${jitterLimit} ms`);
+    if (!reasons.length) reasons.push("resultado dentro da faixa de atencao configurada");
+  }
+  if (status === "offline") reasons.push(link?.lastError || "sem resposta dos alvos monitorados");
+  if (status === "probe_unreachable") reasons.push("agente sem contato recente");
+  return reasons;
+}
+
+function networkStatusReasonLabel(link) {
+  return networkStatusReasons(link).join("; ") || "sem anomalia pelos limites atuais";
 }
 
 function networkTargetReason(target) {
@@ -3375,6 +3417,14 @@ function renderNetworkDetail(link) {
   const isLinkProbe = link.monitorSource === "linkprobe" || Boolean(link.linkProbeAgentId);
   const collectorLabel = isLinkProbe ? "LinkProbe" : "Probe Collector";
   const collectorId = isLinkProbe ? link.linkProbeAgentId : link.probeName || link.probeId;
+  const activeLabel = hasConfirmedActiveNetworkTarget(link) ? activeNetworkTargetLabel(link) : targetLabels.join(", ") || "-";
+  const activeMethod = hasConfirmedActiveNetworkTarget(link)
+    ? activeDetectionLabel(link.activeDetection)
+    : isLinkProbe
+    ? "Policy route por alvos"
+    : link.activeTargetHost
+    ? activeDetectionLabel(link.activeDetection)
+    : "-";
   els.networkDetailPanel.innerHTML = `
     <div class="network-detail-header">
       <div>
@@ -3384,8 +3434,9 @@ function renderNetworkDetail(link) {
       <span class="status-badge ${networkStatusClass(status)}">${networkStatusLabel(status)}</span>
     </div>
     <div class="profile-data-grid">
-      <div><span>${escapeHtml(activeTargetTitle(link))}</span><strong>${escapeHtml(activeNetworkTargetLabel(link))}</strong></div>
-      <div><span>Metodo do ativo</span><strong>${escapeHtml(link.activeTargetHost ? activeDetectionLabel(link.activeDetection) : "-")}</strong></div>
+      <div><span>${escapeHtml(activeTargetTitle(link))}</span><strong>${escapeHtml(activeLabel)}</strong></div>
+      <div><span>Metodo do ativo</span><strong>${escapeHtml(activeMethod)}</strong></div>
+      <div><span>Motivo do status</span><strong>${escapeHtml(networkStatusReasonLabel(link))}</strong></div>
       <div><span>IP publico observado</span><strong>${escapeHtml(link.observedPublicIp || "-")}</strong></div>
       <div><span>Alvos externos</span><strong>${escapeHtml(targetLabels.join(", ") || "-")}</strong></div>
       <div><span>Coletor</span><strong>${escapeHtml(collectorLabel)}</strong></div>
@@ -3463,13 +3514,75 @@ function renderNetworkDetail(link) {
   `;
 }
 
+function renderNetworkCompanyDetail(group) {
+  if (!els.networkDetailPanel) return;
+  if (!group) {
+    renderNetworkDetail(null);
+    return;
+  }
+  const links = sortedByAlpha(group.links, networkLinkSortLabel);
+  const counts = links.reduce((acc, link) => {
+    const status = link.displayStatus || link.currentStatus || "unknown";
+    acc[status] = (acc[status] || 0) + 1;
+    return acc;
+  }, {});
+  const confirmedActive = links.filter(hasConfirmedActiveNetworkTarget);
+  const onlineLinks = links.filter((link) => (link.displayStatus || link.currentStatus) === "online");
+  const activeSummary = confirmedActive.length
+    ? confirmedActive.map((link) => `${link.name}: ${activeNetworkTargetLabel(link)}`).join(", ")
+    : onlineLinks.length > 1
+    ? "Mais de um link respondendo"
+    : onlineLinks[0]?.name || "-";
+  els.networkDetailPanel.innerHTML = `
+    <div class="network-detail-header">
+      <div>
+        <h3>${escapeHtml(group.label)}</h3>
+        <span>${links.length} ${links.length === 1 ? "link monitorado" : "links monitorados"}</span>
+      </div>
+      <span class="status-badge ${counts.offline ? "danger" : counts.degraded || counts.probe_unreachable ? "warning" : "success"}">
+        ${counts.offline ? "ATENCAO" : counts.degraded || counts.probe_unreachable ? "DEGRADADO" : "ONLINE"}
+      </span>
+    </div>
+    <div class="profile-data-grid">
+      <div><span>Links online</span><strong>${counts.online || 0}</strong></div>
+      <div><span>Links degradados</span><strong>${counts.degraded || 0}</strong></div>
+      <div><span>Links offline</span><strong>${counts.offline || 0}</strong></div>
+      <div><span>Link ativo</span><strong>${escapeHtml(activeSummary)}</strong></div>
+      <div><span>Observacao</span><strong>${confirmedActive.length ? "Confirmado por IP/sub-rede de saida" : "Sem confirmacao unica de saida"}</strong></div>
+    </div>
+    <section class="profile-section">
+      <div class="panel-title compact-title">
+        <h3>Links da empresa</h3>
+        <span>${links.length} itens</span>
+      </div>
+      <div class="network-company-detail-list">
+        ${links
+          .map((link) => {
+            const status = link.displayStatus || link.currentStatus || "unknown";
+            return `
+              <button class="network-company-detail-row" type="button" data-network-link-id="${escapeHtml(link.id)}">
+                <div>
+                  <strong>${escapeHtml(link.name)}</strong>
+                  <small>${escapeHtml([networkTargetSummary(link), networkStatusReasonLabel(link)].filter(Boolean).join(" · "))}</small>
+                </div>
+                <span class="status-badge ${networkStatusClass(status)}">${networkStatusLabel(status)}</span>
+                <small>${link.lastLatencyMs ?? "-"} ms</small>
+              </button>
+            `;
+          })
+          .join("")}
+      </div>
+    </section>
+  `;
+}
+
 function renderNetworkLinkRow(link) {
   const status = link.displayStatus || link.currentStatus || "unknown";
   const selected = state.selectedNetworkLinkId === link.id ? "selected" : "";
   const subtitle = [
     link.provider || "Sem operadora",
     link.networkDeviceName || "Sem dispositivo",
-    link.activeTargetHost ? `ativo ${activeNetworkTargetLabel(link)}` : networkTargetsForLink(link).map(networkTargetLabel).join(", ")
+    networkTargetSummary(link)
   ].filter(Boolean).join(" · ");
   return `
     <button class="network-link-row ${selected}" type="button" data-network-link-id="${escapeHtml(link.id)}">
@@ -3496,9 +3609,10 @@ function renderNetworkCompanySection(group) {
   const degraded = counts.degraded || 0;
   const stale = counts.probe_unreachable || 0;
   const attention = offline + degraded + stale;
+  const selected = state.selectedNetworkGroupId === group.id ? "selected" : "";
   return `
-    <section class="network-company-section">
-      <div class="network-company-header">
+    <section class="network-company-section ${selected}">
+      <button class="network-company-header" type="button" data-network-group-id="${escapeHtml(group.id)}">
         <div>
           <strong>${escapeHtml(group.label)}</strong>
           <span>${links.length} ${links.length === 1 ? "link" : "links"} monitorados</span>
@@ -3507,7 +3621,7 @@ function renderNetworkCompanySection(group) {
           <span class="mini-badge online">${online} online</span>
           ${attention ? `<span class="mini-badge offline">${attention} atencao</span>` : ""}
         </div>
-      </div>
+      </button>
       <div class="network-company-items">
         ${links.map(renderNetworkLinkRow).join("")}
       </div>
@@ -3553,7 +3667,9 @@ function renderNetworks() {
   els.networkLinksList.innerHTML = links.length
     ? groupedLinks.map(renderNetworkCompanySection).join("")
     : `<div class="empty-list">Nenhum link cadastrado ainda.</div>`;
-  renderNetworkDetail(links.find((link) => link.id === state.selectedNetworkLinkId) || null);
+  const selectedGroup = state.selectedNetworkGroupId ? groupedLinks.find((group) => group.id === state.selectedNetworkGroupId) : null;
+  if (selectedGroup) renderNetworkCompanyDetail(selectedGroup);
+  else renderNetworkDetail(links.find((link) => link.id === state.selectedNetworkLinkId) || null);
 }
 
 function render() {
@@ -4168,12 +4284,29 @@ function bindEvents() {
 
   els.networkLinksList?.addEventListener("click", (event) => {
     const row = eventClosest(event, "[data-network-link-id]");
-    if (!row) return;
-    state.selectedNetworkLinkId = row.dataset.networkLinkId;
-    renderNetworks();
+    if (row) {
+      state.selectedNetworkLinkId = row.dataset.networkLinkId;
+      state.selectedNetworkGroupId = null;
+      renderNetworks();
+      return;
+    }
+    const group = eventClosest(event, "[data-network-group-id]");
+    if (group) {
+      state.selectedNetworkGroupId = group.dataset.networkGroupId;
+      state.selectedNetworkLinkId = null;
+      renderNetworks();
+    }
   });
 
   els.networkDetailPanel?.addEventListener("click", async (event) => {
+    const detailRow = eventClosest(event, "[data-network-link-id]");
+    if (detailRow && !eventClosest(event, "[data-network-action]")) {
+      state.selectedNetworkLinkId = detailRow.dataset.networkLinkId;
+      state.selectedNetworkGroupId = null;
+      renderNetworks();
+      return;
+    }
+
     const button = eventClosest(event, "[data-network-action]");
     if (!button || !isAdmin()) return;
     const link = state.networkLinks.find((item) => item.id === button.dataset.linkId);

@@ -5379,7 +5379,14 @@ body {
   overflow: hidden;
 }
 
+.network-company-section.selected {
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--color-accent) 24%, transparent);
+}
+
 .network-company-header {
+  width: 100%;
+  border: 0;
   padding: 11px 12px;
   display: flex;
   align-items: center;
@@ -5387,6 +5394,17 @@ body {
   gap: 12px;
   border-bottom: 1px solid var(--border-default);
   background: var(--surface-subtle);
+  color: var(--text-primary);
+  cursor: pointer;
+  text-align: left;
+}
+
+.network-company-header > * {
+  pointer-events: none;
+}
+
+.network-company-header:hover {
+  background: var(--selected-bg);
 }
 
 .network-company-header strong,
@@ -5403,6 +5421,43 @@ body {
   display: grid;
   gap: 8px;
   padding: 10px;
+}
+
+.network-company-detail-list {
+  display: grid;
+  gap: 8px;
+}
+
+.network-company-detail-row {
+  width: 100%;
+  border: 1px solid var(--border-muted);
+  border-radius: 8px;
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 12px;
+  padding: 11px 12px;
+  text-align: left;
+}
+
+.network-company-detail-row > * {
+  pointer-events: none;
+}
+
+.network-company-detail-row strong,
+.network-company-detail-row small {
+  display: block;
+}
+
+.network-company-detail-row small {
+  color: var(--text-secondary);
+}
+
+.network-company-detail-row:hover {
+  border-color: var(--color-accent);
+  background: var(--selected-bg);
 }
 
 .network-link-row {
