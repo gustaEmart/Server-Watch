@@ -1102,6 +1102,7 @@ function publicNetworkLink(link) {
   const device = link.networkDeviceId ? listedNetworkDevices().find((item) => item.id === link.networkDeviceId) : null;
   const probe = (state.probes || []).find((item) => item.id === link.probeId && !item.deletedAt);
   const probeConnection = networkProbeConnection(link);
+  const expectedActive = expectedWanDetection(link);
   const displayStatus = link.isActive === false
     ? "paused"
     : probeConnection.status === "stale"
@@ -1123,9 +1124,9 @@ function publicNetworkLink(link) {
     targets: Array.isArray(link.targets) && link.targets.length
       ? link.targets
       : (Array.isArray(link.targetHosts) && link.targetHosts.length ? link.targetHosts : [link.targetHost].filter(Boolean)).map((host) => ({ name: "", host })),
-    activeTargetHost: link.activeTargetHost || null,
-    activeTargetName: link.activeTargetName || "",
-    activeDetection: link.activeDetection || "",
+    activeTargetHost: expectedActive?.activeTargetHost || link.activeTargetHost || null,
+    activeTargetName: expectedActive?.activeTargetName || link.activeTargetName || "",
+    activeDetection: expectedActive?.activeDetection || link.activeDetection || "",
     observedPublicIp: link.observedPublicIp || null,
     expectedPublicIp: link.expectedPublicIp || "",
     expectedPublicPrefixLength: link.expectedPublicPrefixLength || null,
@@ -1226,14 +1227,33 @@ function sameIpv4Subnet(left, right, prefixLength) {
   return (leftNumber & mask) === (rightNumber & mask);
 }
 
+function expectedWanDetection(link, observedPublicIp = link?.observedPublicIp) {
+  const observed = String(observedPublicIp || "").trim();
+  const expected = String(link?.expectedPublicIp || "").trim();
+  const prefixLength = link?.expectedPublicPrefixLength ?? null;
+  if (!observed || !expected) return null;
+  if (observed === expected) {
+    return {
+      activeTargetHost: expected,
+      activeTargetName: "Rede WAN",
+      activeDetection: "expected_public_ip"
+    };
+  }
+  if (prefixLength && sameIpv4Subnet(observed, expected, prefixLength)) {
+    return {
+      activeTargetHost: expected,
+      activeTargetName: "Rede WAN",
+      activeDetection: "expected_public_subnet"
+    };
+  }
+  return null;
+}
+
 function reconcileNetworkLinkResult(link, result) {
   const targetResults = Array.isArray(result.targetResults) ? result.targetResults.slice(0, 20) : [];
   const targets = Array.isArray(link.targets) ? link.targets : [];
   const observedPublicIp = String(result.observedPublicIp || "").trim();
-  const expectedPublicIp = String(link.expectedPublicIp || "").trim();
-  const expectedPrefixLength = link.expectedPublicPrefixLength ?? null;
-  const expectedExact = Boolean(observedPublicIp && expectedPublicIp && observedPublicIp === expectedPublicIp);
-  const expectedSubnet = Boolean(!expectedExact && observedPublicIp && expectedPublicIp && expectedPrefixLength && sameIpv4Subnet(observedPublicIp, expectedPublicIp, expectedPrefixLength));
+  const expected = expectedWanDetection(link, observedPublicIp);
   const enrichedResults = targetResults.map((target) => {
     const meta = targets.find((item) => item.host === target.targetHost || item.targetHost === target.targetHost) || {};
     const prefixLength = target.prefixLength ?? meta.prefixLength ?? meta.prefix_length ?? null;
@@ -1254,9 +1274,9 @@ function reconcileNetworkLinkResult(link, result) {
   return {
     ...result,
     targetResults: enrichedResults,
-    activeTargetHost: expectedExact || expectedSubnet ? expectedPublicIp : active?.targetHost || result.activeTargetHost || null,
-    activeTargetName: expectedExact || expectedSubnet ? "Rede WAN" : active?.targetName || result.activeTargetName || "",
-    activeDetection: expectedExact ? "expected_public_ip" : expectedSubnet ? "expected_public_subnet" : exact ? "egress_ip" : subnet ? "egress_subnet" : result.activeDetection || "",
+    activeTargetHost: expected?.activeTargetHost || active?.targetHost || result.activeTargetHost || null,
+    activeTargetName: expected?.activeTargetName || active?.targetName || result.activeTargetName || "",
+    activeDetection: expected?.activeDetection || (exact ? "egress_ip" : subnet ? "egress_subnet" : result.activeDetection || ""),
     jitterMs: enrichedResults.length > 1 ? null : result.jitterMs ?? null
   };
 }
@@ -1470,7 +1490,8 @@ function applyLinkProbeStatus(payload, req) {
     checkedAt: data.timestamp,
     error: data.isOnline ? null : "LinkProbe reportou o link como offline."
   };
-  const candidate = networkCandidateStatus(link, result);
+  const adjustedResult = reconcileNetworkLinkResult(link, result);
+  const candidate = networkCandidateStatus(link, adjustedResult);
 
   link.name = data.linkName || link.name;
   link.monitorSource = "linkprobe";
@@ -1488,12 +1509,12 @@ function applyLinkProbeStatus(payload, req) {
   link.lastLatencyMs = latencyMs;
   link.lastPacketLossPercent = packetLossPercent;
   link.lastJitterMs = null;
-  link.lastError = result.error;
-  link.activeTargetHost = result.activeTargetHost;
-  link.activeTargetName = result.activeTargetName;
-  link.activeDetection = result.activeDetection;
+  link.lastError = adjustedResult.error || null;
+  link.activeTargetHost = adjustedResult.activeTargetHost || null;
+  link.activeTargetName = adjustedResult.activeTargetName || "";
+  link.activeDetection = adjustedResult.activeDetection || "";
   link.observedPublicIp = data.publicIp || null;
-  link.targetResults = targetResults;
+  link.targetResults = adjustedResult.targetResults;
   link.forceCheckAt = null;
   link.consecutiveFailures = data.isOnline ? 0 : (link.consecutiveFailures || 0) + 1;
   link.currentStatus = data.isOnline ? candidate : "offline";

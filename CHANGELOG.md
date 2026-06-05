@@ -12,6 +12,7 @@ Resumo das versoes estaveis publicadas do ServerWatch.
 - Isola o binario do LinkProbe por `agent_id` para permitir multiplas instancias no mesmo Linux sem conflito de arquivo em uso.
 - Permite abrir o detalhe consolidado de uma empresa na pagina de Redes e exibe o motivo de status degradado/offline por link.
 - Adiciona IP/Gateway WAN e mascara no cadastro de links para confirmar a saida ativa comparando com o IP publico observado.
+- Corrige o fluxo do LinkProbe para aplicar a confirmacao de saida ativa por rede WAN tambem nos resultados recebidos e no snapshot da UI.
 - Corrige o instalador Windows do Probe Collector para registrar a versao real do `collector.js` embutido e publicar automaticamente o `.exe` recompilado em `downloads`.
 - Organiza alfabeticamente listas e seletores operacionais de empresas, servidores, VMs, probes, usuarios, dispositivos e links.
 - Permite remover empresas escolhendo entre desvincular servidores/links/dispositivos ou excluir tambem os cadastros vinculados.
