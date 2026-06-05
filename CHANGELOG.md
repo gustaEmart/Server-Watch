@@ -9,6 +9,7 @@ Resumo das versoes estaveis publicadas do ServerWatch.
 - Publica binarios LinkProbe para Windows x64, Linux x64 e Linux ARM64 na area de downloads do ServerWatch.
 - Adiciona instalador Linux por linha de comando para o LinkProbe, criando um servico `systemd` por `agent_id`.
 - Torna genericos os exemplos do LinkProbe e agrupa links por empresa na pagina de Redes.
+- Isola o binario do LinkProbe por `agent_id` para permitir multiplas instancias no mesmo Linux sem conflito de arquivo em uso.
 - Corrige o instalador Windows do Probe Collector para registrar a versao real do `collector.js` embutido e publicar automaticamente o `.exe` recompilado em `downloads`.
 - Organiza alfabeticamente listas e seletores operacionais de empresas, servidores, VMs, probes, usuarios, dispositivos e links.
 - Permite remover empresas escolhendo entre desvincular servidores/links/dispositivos ou excluir tambem os cadastros vinculados.

@@ -35,7 +35,7 @@ curl -fsSL -H "X-ServerWatch-Probe-Token: TOKEN_DO_PROBE" http://serverwatch.loc
   --token "TOKEN_DO_PROBE"
 ```
 
-O instalador cria um servico `systemd` por `agent-id`, por exemplo `serverwatch-linkprobe-link1-empresa.service`. Use uma instancia por link quando o firewall tiver uma policy route especifica para os alvos daquele link.
+O instalador cria um servico `systemd` e um binario isolado por `agent-id`, por exemplo `serverwatch-linkprobe-link1-empresa.service` usando `/opt/serverwatch-linkprobe/link1-empresa/linkprobe`. Use uma instancia por link quando o firewall tiver uma policy route especifica para os alvos daquele link.
 
 ## Configuracao
 

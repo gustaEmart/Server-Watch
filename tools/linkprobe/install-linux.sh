@@ -161,8 +161,7 @@ fi
 SERVICE_NAME="serverwatch-linkprobe-${SAFE_ID}.service"
 CONFIG_DIR="${BASE_DIR}/${SAFE_ID}"
 CONFIG_PATH="${CONFIG_DIR}/config.json"
-BINARY_DIR="${BASE_DIR}/bin"
-BINARY_PATH="${BINARY_DIR}/linkprobe"
+BINARY_PATH="${CONFIG_DIR}/linkprobe"
 SERVICE_PATH="/etc/systemd/system/${SERVICE_NAME}"
 
 remove_linkprobe() {
@@ -227,7 +226,8 @@ download_url "${SERVER_URL}/downloads/linkprobe/${ASSET}" "$TMP_DIR/linkprobe" \
 chmod +x "$TMP_DIR/linkprobe"
 
 step 35 "Instalando binario..."
-mkdir -p "$BINARY_DIR" "$CONFIG_DIR"
+systemctl stop "$SERVICE_NAME" >/dev/null 2>&1 || true
+mkdir -p "$CONFIG_DIR"
 cp "$TMP_DIR/linkprobe" "$BINARY_PATH"
 chmod 755 "$BINARY_PATH"
 
