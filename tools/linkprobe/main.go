@@ -21,7 +21,7 @@ import (
 	"time"
 )
 
-const version = "1.0.0"
+const version = "1.0.1"
 
 type Config struct {
 	AgentID         string   `json:"agent_id"`
@@ -66,11 +66,12 @@ type Payload struct {
 }
 
 var (
-	packetLineRe  = regexp.MustCompile(`(?i)(\d+)\D+(?:packets?|pacotes?)\D+(?:transmitted|transmitidos).+?(\d+)\D+(?:received|recebidos)`)
-	rttLineRe     = regexp.MustCompile(`=\s*([0-9]+(?:[.,][0-9]+)?)/([0-9]+(?:[.,][0-9]+)?)/([0-9]+(?:[.,][0-9]+)?)`)
-	msValueRe     = regexp.MustCompile(`([0-9]+(?:[.,][0-9]+)?)\s*ms`)
-	publicIPv4Re  = regexp.MustCompile(`\b(?:\d{1,3}\.){3}\d{1,3}\b`)
-	privateBlocks = []string{"10.", "127.", "169.254.", "192.168."}
+	packetLineRe        = regexp.MustCompile(`(?i)(\d+)\D+(?:packets?|pacotes?)\D+(?:transmitted|transmitidos)`)
+	rttLineRe           = regexp.MustCompile(`=\s*([0-9]+(?:[.,][0-9]+)?)/([0-9]+(?:[.,][0-9]+)?)/([0-9]+(?:[.,][0-9]+)?)`)
+	msValueRe           = regexp.MustCompile(`([0-9]+(?:[.,][0-9]+)?)\s*ms`)
+	publicIPv4Re        = regexp.MustCompile(`\b(?:\d{1,3}\.){3}\d{1,3}\b`)
+	privateBlocks       = []string{"10.", "127.", "169.254.", "192.168."}
+	unreachablePatterns = []string{"unreachable", "inacess", "inacces", "timeout", "timed out", "esgotado", "100% packet loss"}
 )
 
 func main() {
@@ -245,13 +246,10 @@ func pingArgs(cfg Config, target string) []string {
 }
 
 func parsePingOutput(target string, sent int, output string) PingResult {
-	received := countTTLReplies(output)
-	if match := packetLineRe.FindStringSubmatch(output); len(match) == 3 {
+	received := countEchoReplies(output, target)
+	if match := packetLineRe.FindStringSubmatch(output); len(match) == 2 {
 		if parsedSent, err := strconv.Atoi(match[1]); err == nil && parsedSent > 0 {
 			sent = parsedSent
-		}
-		if parsedReceived, err := strconv.Atoi(match[2]); err == nil {
-			received = parsedReceived
 		}
 	}
 	minRTT, avgRTT, maxRTT := parseRTT(output)
@@ -271,15 +269,30 @@ func parsePingOutput(target string, sent int, output string) PingResult {
 	}
 }
 
-func countTTLReplies(output string) int {
+func countEchoReplies(output string, target string) int {
 	count := 0
+	target = strings.ToLower(strings.TrimSpace(target))
 	for _, line := range strings.Split(output, "\n") {
 		lower := strings.ToLower(line)
-		if strings.Contains(lower, "ttl=") || strings.Contains(lower, "ttl ") {
+		if isEchoReplyLine(lower, target) {
 			count++
 		}
 	}
 	return count
+}
+
+func isEchoReplyLine(line string, target string) bool {
+	if target == "" || !strings.Contains(line, "ttl") {
+		return false
+	}
+	for _, pattern := range unreachablePatterns {
+		if strings.Contains(line, pattern) {
+			return false
+		}
+	}
+	return strings.Contains(line, "bytes from "+target) ||
+		strings.Contains(line, "reply from "+target) ||
+		strings.Contains(line, "resposta de "+target)
 }
 
 func parseRTT(output string) (float64, float64, float64) {

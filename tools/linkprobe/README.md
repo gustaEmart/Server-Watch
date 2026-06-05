@@ -2,6 +2,8 @@
 
 LinkProbe e um agente especifico para monitorar links de internet de dentro para fora. Ele executa pings externos para multiplos alvos, deixa o firewall decidir a rota por policy route e envia o resultado ao ServerWatch em `POST /api/link-status`.
 
+Versao atual: `1.0.1`.
+
 ## Build
 
 ```bash
