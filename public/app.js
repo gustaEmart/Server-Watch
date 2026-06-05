@@ -3476,13 +3476,15 @@ function renderNetworkDetail(link) {
                 .map((target) => {
                   const active = target.targetHost === link.activeTargetHost;
                   const reason = networkTargetReason(target);
+                  const targetState = target.online ? "Respondendo" : "Sem resposta";
+                  const targetDetail = target.online ? reason || "Monitorado por ping" : target.error || "Monitorado por ping";
                   return `
                     <div class="profile-data-row network-target-card ${target.online ? "online" : "offline"} ${active ? "active" : ""}">
                       <div>
                         <strong>${escapeHtml(networkTargetLabel(target))}${active ? `<em>ATIVO</em>` : ""}</strong>
-                        <small>${escapeHtml(reason || "Monitorado por ping")}</small>
+                        <small title="${escapeHtml(targetDetail)}">${escapeHtml(targetDetail)}</small>
                       </div>
-                      <span class="network-target-state">${target.online ? "Respondendo" : escapeHtml(target.error || "Sem resposta")}</span>
+                      <span class="network-target-state">${escapeHtml(targetState)}</span>
                       <small class="network-target-latency">${escapeHtml(networkTargetLatencyLabel(target))}</small>
                     </div>
                   `;

@@ -5503,8 +5503,12 @@ body {
 
 .network-target-card {
   border-width: 1px;
-  grid-template-columns: minmax(0, 1fr) auto auto;
+  grid-template-columns: minmax(160px, 1fr) minmax(110px, auto) minmax(46px, auto);
   align-items: center;
+}
+
+.network-target-card > div {
+  min-width: 0;
 }
 
 .network-target-card.online {
@@ -5521,6 +5525,13 @@ body {
   display: flex;
   align-items: center;
   gap: 8px;
+  flex-wrap: wrap;
+  overflow-wrap: anywhere;
+}
+
+.network-target-card > div > small {
+  line-height: 1.35;
+  overflow-wrap: anywhere;
 }
 
 .network-target-card strong em {
@@ -5543,6 +5554,9 @@ body {
 
 .network-target-state {
   font-weight: 900;
+  line-height: 1.25;
+  max-width: 180px;
+  overflow-wrap: anywhere;
 }
 
 .network-target-card.offline {
