@@ -511,6 +511,9 @@ function normalizeNetworkLink(payload, existing = {}) {
     targetHosts,
     targets,
     expectedPublicIp: normalizeOptionalHost(payload.expectedPublicIp ?? payload.expected_public_ip ?? existing.expectedPublicIp, "IP publico esperado"),
+    expectedPublicPrefixLength: normalizeNetworkPrefixLength(
+      payload.expectedPublicPrefixLength ?? payload.expected_public_prefix_length ?? payload.expectedPrefixLength ?? payload.expected_prefix_length ?? existing.expectedPublicPrefixLength
+    ),
     contractedDownloadMbps: Math.max(0, Number(payload.contractedDownloadMbps ?? payload.contracted_download_mbps ?? existing.contractedDownloadMbps ?? 0) || 0),
     contractedUploadMbps: Math.max(0, Number(payload.contractedUploadMbps ?? payload.contracted_upload_mbps ?? existing.contractedUploadMbps ?? 0) || 0),
     probeId,
@@ -1125,6 +1128,7 @@ function publicNetworkLink(link) {
     activeDetection: link.activeDetection || "",
     observedPublicIp: link.observedPublicIp || null,
     expectedPublicIp: link.expectedPublicIp || "",
+    expectedPublicPrefixLength: link.expectedPublicPrefixLength || null,
     contractedDownloadMbps: link.contractedDownloadMbps || 0,
     contractedUploadMbps: link.contractedUploadMbps || 0,
     monitorSource: link.monitorSource || (link.linkProbeAgentId ? "linkprobe" : "probe"),
@@ -1226,6 +1230,10 @@ function reconcileNetworkLinkResult(link, result) {
   const targetResults = Array.isArray(result.targetResults) ? result.targetResults.slice(0, 20) : [];
   const targets = Array.isArray(link.targets) ? link.targets : [];
   const observedPublicIp = String(result.observedPublicIp || "").trim();
+  const expectedPublicIp = String(link.expectedPublicIp || "").trim();
+  const expectedPrefixLength = link.expectedPublicPrefixLength ?? null;
+  const expectedExact = Boolean(observedPublicIp && expectedPublicIp && observedPublicIp === expectedPublicIp);
+  const expectedSubnet = Boolean(!expectedExact && observedPublicIp && expectedPublicIp && expectedPrefixLength && sameIpv4Subnet(observedPublicIp, expectedPublicIp, expectedPrefixLength));
   const enrichedResults = targetResults.map((target) => {
     const meta = targets.find((item) => item.host === target.targetHost || item.targetHost === target.targetHost) || {};
     const prefixLength = target.prefixLength ?? meta.prefixLength ?? meta.prefix_length ?? null;
@@ -1246,9 +1254,9 @@ function reconcileNetworkLinkResult(link, result) {
   return {
     ...result,
     targetResults: enrichedResults,
-    activeTargetHost: active?.targetHost || result.activeTargetHost || null,
-    activeTargetName: active?.targetName || result.activeTargetName || "",
-    activeDetection: exact ? "egress_ip" : subnet ? "egress_subnet" : result.activeDetection || "",
+    activeTargetHost: expectedExact || expectedSubnet ? expectedPublicIp : active?.targetHost || result.activeTargetHost || null,
+    activeTargetName: expectedExact || expectedSubnet ? "Rede WAN" : active?.targetName || result.activeTargetName || "",
+    activeDetection: expectedExact ? "expected_public_ip" : expectedSubnet ? "expected_public_subnet" : exact ? "egress_ip" : subnet ? "egress_subnet" : result.activeDetection || "",
     jitterMs: enrichedResults.length > 1 ? null : result.jitterMs ?? null
   };
 }
@@ -1405,6 +1413,7 @@ function findOrCreateLinkProbeLink(data) {
     targetHosts: data.targets.map((target) => target.host),
     targets: data.targets,
     expectedPublicIp: "",
+    expectedPublicPrefixLength: null,
     contractedDownloadMbps: 0,
     contractedUploadMbps: 0,
     probeId: null,

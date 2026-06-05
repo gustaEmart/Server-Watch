@@ -107,6 +107,8 @@ const els = {
   networkLinkTarget: document.querySelector("#networkLinkTarget"),
   addNetworkTarget: document.querySelector("#addNetworkTarget"),
   networkLinkInterface: document.querySelector("#networkLinkInterface"),
+  networkLinkExpectedPublicIp: document.querySelector("#networkLinkExpectedPublicIp"),
+  networkLinkExpectedPrefix: document.querySelector("#networkLinkExpectedPrefix"),
   networkLinkGroup: document.querySelector("#networkLinkGroup"),
   networkLinkProbe: document.querySelector("#networkLinkProbe"),
   networkLinkInterval: document.querySelector("#networkLinkInterval"),
@@ -3332,12 +3334,16 @@ function removeNetworkTargetInput(button) {
 
 function activeNetworkTargetLabel(link) {
   if (!link?.activeTargetHost) return "-";
+  if (["expected_public_ip", "expected_public_subnet"].includes(link.activeDetection)) {
+    const prefix = link.expectedPublicPrefixLength ? `/${link.expectedPublicPrefixLength}` : "";
+    return `${link.activeTargetName || "Rede WAN"} (${link.activeTargetHost}${prefix})`;
+  }
   const target = networkTargetsForLink(link).find((item) => item.host === link.activeTargetHost || item.targetHost === link.activeTargetHost);
   return networkTargetLabel(target || { host: link.activeTargetHost, name: link.activeTargetName || "" });
 }
 
 function hasConfirmedActiveNetworkTarget(link) {
-  return ["egress_ip", "egress_subnet"].includes(link?.activeDetection);
+  return ["egress_ip", "egress_subnet", "expected_public_ip", "expected_public_subnet"].includes(link?.activeDetection);
 }
 
 function networkTargetSummary(link) {
@@ -3348,6 +3354,8 @@ function networkTargetSummary(link) {
 function activeDetectionLabel(value) {
   return {
     linkprobe_source_ip: "LinkProbe source IP",
+    expected_public_ip: "IP WAN esperado",
+    expected_public_subnet: "sub-rede WAN esperada",
     egress_ip: "IP publico de saida",
     egress_subnet: "mesma sub-rede WAN",
     single_reachable: "unico gateway respondendo",
@@ -3438,6 +3446,7 @@ function renderNetworkDetail(link) {
       <div><span>Metodo do ativo</span><strong>${escapeHtml(activeMethod)}</strong></div>
       <div><span>Motivo do status</span><strong>${escapeHtml(networkStatusReasonLabel(link))}</strong></div>
       <div><span>IP publico observado</span><strong>${escapeHtml(link.observedPublicIp || "-")}</strong></div>
+      <div><span>Rede WAN esperada</span><strong>${escapeHtml(link.expectedPublicIp ? `${link.expectedPublicIp}${link.expectedPublicPrefixLength ? `/${link.expectedPublicPrefixLength}` : ""}` : "-")}</strong></div>
       <div><span>Alvos externos</span><strong>${escapeHtml(targetLabels.join(", ") || "-")}</strong></div>
       <div><span>Coletor</span><strong>${escapeHtml(collectorLabel)}</strong></div>
       <div><span>ID do agente</span><strong>${escapeHtml(collectorId || "-")}</strong></div>
@@ -3533,6 +3542,7 @@ function renderNetworkCompanyDetail(group) {
     : onlineLinks.length > 1
     ? "Mais de um link respondendo"
     : onlineLinks[0]?.name || "-";
+  const companyTone = counts.offline ? "offline" : counts.degraded || counts.probe_unreachable ? "warning" : "online";
   els.networkDetailPanel.innerHTML = `
     <div class="network-detail-header">
       <div>
@@ -3543,12 +3553,35 @@ function renderNetworkCompanyDetail(group) {
         ${counts.offline ? "ATENCAO" : counts.degraded || counts.probe_unreachable ? "DEGRADADO" : "ONLINE"}
       </span>
     </div>
-    <div class="profile-data-grid">
-      <div><span>Links online</span><strong>${counts.online || 0}</strong></div>
-      <div><span>Links degradados</span><strong>${counts.degraded || 0}</strong></div>
-      <div><span>Links offline</span><strong>${counts.offline || 0}</strong></div>
-      <div><span>Link ativo</span><strong>${escapeHtml(activeSummary)}</strong></div>
-      <div><span>Observacao</span><strong>${confirmedActive.length ? "Confirmado por IP/sub-rede de saida" : "Sem confirmacao unica de saida"}</strong></div>
+    <div class="network-company-summary-grid">
+      <div class="profile-data-row network-target-card online">
+        <div>
+          <strong>${counts.online || 0} online</strong>
+          <small>links respondendo</small>
+        </div>
+        <span class="network-target-state">OK</span>
+      </div>
+      <div class="profile-data-row network-target-card ${counts.degraded ? "warning" : "online"}">
+        <div>
+          <strong>${counts.degraded || 0} degradados</strong>
+          <small>acima dos limites</small>
+        </div>
+        <span class="network-target-state">${counts.degraded ? "Atencao" : "OK"}</span>
+      </div>
+      <div class="profile-data-row network-target-card ${counts.offline ? "offline" : "online"}">
+        <div>
+          <strong>${counts.offline || 0} offline</strong>
+          <small>falha confirmada</small>
+        </div>
+        <span class="network-target-state">${counts.offline ? "Falha" : "OK"}</span>
+      </div>
+      <div class="profile-data-row network-target-card ${companyTone} active">
+        <div>
+          <strong>${escapeHtml(activeSummary)}</strong>
+          <small>${confirmedActive.length ? "saida confirmada por IP/sub-rede WAN" : "sem confirmacao unica de saida"}</small>
+        </div>
+        <span class="network-target-state">Saida</span>
+      </div>
     </div>
     <section class="profile-section">
       <div class="panel-title compact-title">
@@ -3849,6 +3882,8 @@ function openNetworkLinkDialog(link = null) {
   els.networkLinkType.value = link?.linkType || "internet";
   renderNetworkTargetInputs(link ? networkTargetsForLink(link) : [{ name: "", host: "" }]);
   els.networkLinkInterface.value = link?.interfaceName || "";
+  if (els.networkLinkExpectedPublicIp) els.networkLinkExpectedPublicIp.value = link?.expectedPublicIp || "";
+  if (els.networkLinkExpectedPrefix) els.networkLinkExpectedPrefix.value = link?.expectedPublicPrefixLength ? `/${link.expectedPublicPrefixLength}` : "";
   els.networkLinkGroup.value = link?.groupId || "";
   if (link?.probeId && state.probes.some((probe) => probe.id === link.probeId)) {
     els.networkLinkProbe.value = link.probeId;
@@ -3998,6 +4033,14 @@ async function submitNetworkLink(event) {
     showToast("Mascara invalida", "Use valores como /30, /29 ou /28 nos links monitorados.");
     return;
   }
+  const expectedPrefix = els.networkLinkExpectedPrefix?.value.trim().replace(/^\//, "") || "";
+  if (expectedPrefix) {
+    const prefixLength = Number(expectedPrefix);
+    if (!Number.isInteger(prefixLength) || prefixLength < 1 || prefixLength > 32) {
+      showToast("Mascara WAN invalida", "Use valores como /30, /29 ou /28 na rede WAN esperada.");
+      return;
+    }
+  }
   const payload = {
     name: els.networkLinkName.value,
     provider: els.networkLinkProvider.value,
@@ -4005,6 +4048,8 @@ async function submitNetworkLink(event) {
     linkType: els.networkLinkType.value,
     targets,
     interfaceName: els.networkLinkInterface.value,
+    expectedPublicIp: els.networkLinkExpectedPublicIp?.value || "",
+    expectedPublicPrefixLength: expectedPrefix || null,
     groupId: els.networkLinkGroup.value || null,
     probeId: els.networkLinkProbe.value || null,
     checkInterval: Number(els.networkLinkInterval.value || 10),

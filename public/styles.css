@@ -5428,6 +5428,13 @@ body {
   gap: 8px;
 }
 
+.network-company-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
 .network-company-detail-row {
   width: 100%;
   border: 1px solid var(--border-muted);
@@ -5543,6 +5550,16 @@ body {
   background: color-mix(in srgb, var(--color-danger) 12%, var(--bg-surface));
 }
 
+.network-target-card.warning {
+  border-color: color-mix(in srgb, var(--color-warning) 46%, var(--border-muted));
+  background: color-mix(in srgb, var(--color-warning) 14%, var(--bg-surface));
+}
+
+.network-target-card.warning strong,
+.network-target-card.warning small {
+  color: color-mix(in srgb, var(--color-warning) 76%, var(--text-primary));
+}
+
 .network-target-card.active {
   border-color: color-mix(in srgb, var(--color-success) 78%, var(--border-muted));
   background: color-mix(in srgb, var(--color-success) 28%, var(--bg-surface));
@@ -5628,6 +5645,10 @@ body {
   }
 
   .network-target-card {
+    grid-template-columns: 1fr;
+  }
+
+  .network-company-summary-grid {
     grid-template-columns: 1fr;
   }
 
