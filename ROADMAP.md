@@ -61,63 +61,50 @@ Campos sugeridos:
 
 ## Prioridade 3 - Probe Collector
 
-### Instalador mais inteligente
+### Monitoramento de redes e links
 
 Objetivo:
 
-- Reduzir falhas de instalacao e facilitar suporte remoto.
+- Criar uma pagina separada para redes, links de internet e equipamentos como MikroTik, pfSense, Fortigate e roteadores genericos.
+- Coletar primeiro disponibilidade, latencia, perda de pacotes e jitter via Probe Collector.
+- Evoluir depois para SNMP generico e templates por fabricante.
+- Manter diferenca clara entre `link offline`, `link degradado` e `probe sem contato`.
 
-Melhorias sugeridas:
+Escopo inicial:
 
-- Testar conexao com o ServerWatch antes de instalar.
-- Validar token antes da instalacao.
-- Exibir log de instalacao na propria interface.
-- Botao de reparar instalacao.
-- Botao de remover servico.
-- Mostrar progresso por etapa.
-- Detectar Node.js ausente ou versao incompatibil sem erro tecnico cru.
+- Cadastro de dispositivos de rede por empresa.
+- Cadastro de links por dispositivo.
+- Checagem de links pelo probe local.
+- Historico de falhas e recuperacoes.
+- Cards e graficos simples na rota `/networks`.
+- Validacao da funcionalidade em Docker com MongoDB antes da transferencia para outro servidor.
 
-### Atualizacao automatica do probe
+Documento tecnico:
 
-Objetivo:
+- `docs/NETWORK_MONITORING.md`
 
-- Manter collectors atualizados sem reinstalacao manual em cada servidor.
-
-Funcionalidades sugeridas:
-
-- Collector informar versao atual.
-- ServerWatch indicar probes desatualizados.
-- Comando de atualizacao por Linux e Windows.
-- Modo de atualizacao segura, com rollback simples.
-- Registro no historico quando o probe for atualizado.
-
-### Fila local do probe
+### Metricas avancadas pelo probe
 
 Objetivo:
 
-- Preservar resultados quando a internet do cliente cair.
+- Evoluir alem do ping e das metricas basicas de host ja coletadas pelo collector.
 
-Funcionalidades sugeridas:
+Coletas implementadas em validacao:
 
-- Salvar resultados localmente quando o ServerWatch central estiver indisponivel.
-- Reenviar resultados quando a conexao voltar.
-- Limite de tamanho da fila local.
-- Registro de tempo em que o probe ficou sem conseguir enviar dados.
+- Particoes/volumes de disco.
+- Portas TCP locais em escuta.
+- Servicos conhecidos.
+- Processos principais.
+- Eventos criticos recentes.
+- Inventario basico de virtualizacao quando o host expor Hyper-V ou Proxmox.
 
-### Metricas adicionais pelo probe
+Ajustes pendentes para a proxima iteracao:
 
-Objetivo:
-
-- Evoluir alem do ping.
+- Definir e documentar o criterio de "servicos criticos". A coleta atual usa uma lista fixa de nomes conhecidos, mas isso precisa virar configuracao por ambiente/empresa/servidor.
+- Revisar "processos principais": hoje a coleta lista processos por consumo, mas isso nao significa criticidade operacional. Separar "top processos" de "processos criticos configurados".
 
 Coletas futuras:
 
-- CPU.
-- Memoria.
-- Disco.
-- Interfaces de rede.
-- Uptime.
-- Inventario basico.
 - SNMP dentro da LAN do cliente.
 - Status de servicos especificos.
 
@@ -203,16 +190,30 @@ Opcoes:
 
 ## Prioridade 6 - Hierarquia de infraestrutura
 
-### Clusters, hosts fisicos e VMs
+### Topologia manual de hosts, virtualizadores e VMs
 
 Objetivo:
 
-- Representar dependencias entre servidores, hosts fisicos, clusters e maquinas virtuais.
+- Registrar relacoes de dependencia entre servidores, VMs e seus hosts/virtualizadores.
+- Evitar leitura errada quando uma VM aparece indisponivel porque o host pai esta offline ou com probe sem contato.
 
-Modelo sugerido:
+Funcionalidades implementadas:
+
+- Tipo do item: servidor, host fisico, virtualizador, VM ou servico.
+- Plataforma de infraestrutura: Proxmox, VMware, Hyper-V, bare metal, cloud ou outra.
+- Host pai/virtualizador manual no cadastro do servidor.
+- Indicador no dashboard quando um item esta afetado pelo host pai.
+- Visualizacao expansivel no dashboard para abrir um virtualizador/host pai e ver as VMs dependentes.
+
+### Descoberta automatica e topologia avancada
+
+Objetivo:
+
+- Evoluir a topologia manual para descoberta automatica e visualizacao mais completa.
+
+Modelo futuro:
 
 - `node_type`: `physical`, `hypervisor`, `cluster`, `vm`, `service`.
-- `parent_id`: servidor, host ou cluster do qual o item depende.
 - `platform`: `proxmox`, `vmware`, `hyper-v`, `bare-metal`, `cloud`.
 - `dependency_status`: calculado com base no status do item e dos pais.
 

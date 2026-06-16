@@ -7,18 +7,30 @@ TOKEN=""
 NAME=""
 INSTALL_DIR="/opt/serverwatch-probe"
 NODE_VERSION_REQUIRED="20.19.2"
+MODE="install"
+LOG_FILE="/var/log/serverwatch-probe-install.log"
 
 usage() {
   cat <<'USAGE'
 Usage:
   curl -fsSL <serverwatch-url>/downloads/probe/linux-installer | sudo bash -s -- --server-url <url> --probe-id <id> --token <token> [--name <name>]
-
-Local repository fallback:
-  sudo bash tools/probe/install-linux.sh --server-url <url> --probe-id <id> --token <token> [--name <name>]
+  curl -fsSL <serverwatch-url>/downloads/probe/linux-installer | sudo bash -s -- --repair --server-url <url> --probe-id <id> --token <token> [--name <name>]
+  curl -fsSL <serverwatch-url>/downloads/probe/linux-installer | sudo bash -s -- --remove
 
 Setup UI:
   node probe/setup-server.js --config ./config.json
 USAGE
+}
+
+log() {
+  local message="$1"
+  printf '[%s] %s\n' "$(date -Is)" "$message" | tee -a "$LOG_FILE"
+}
+
+step() {
+  local percent="$1"
+  local message="$2"
+  log "[$percent%] $message"
 }
 
 while [[ $# -gt 0 ]]; do
@@ -27,27 +39,100 @@ while [[ $# -gt 0 ]]; do
     --probe-id) PROBE_ID="${2:-}"; shift 2 ;;
     --token) TOKEN="${2:-}"; shift 2 ;;
     --name) NAME="${2:-}"; shift 2 ;;
+    --repair) MODE="repair"; shift ;;
+    --remove|--uninstall) MODE="remove"; shift ;;
     --help) usage; exit 0 ;;
     *) echo "Unknown option: $1" >&2; usage; exit 2 ;;
   esac
 done
-
-if [[ -z "$SERVER_URL" || -z "$PROBE_ID" || -z "$TOKEN" ]]; then
-  usage
-  exit 2
-fi
 
 if [[ "${EUID}" -ne 0 ]]; then
   echo "Run as root, for example with sudo." >&2
   exit 1
 fi
 
+touch "$LOG_FILE"
+chmod 600 "$LOG_FILE"
+
+remove_probe() {
+  step 10 "Parando ServerWatch Probe Collector..."
+  systemctl stop serverwatch-probe >/dev/null 2>&1 || true
+  step 35 "Desabilitando servico systemd..."
+  systemctl disable serverwatch-probe >/dev/null 2>&1 || true
+  rm -f /etc/systemd/system/serverwatch-probe.service
+  systemctl daemon-reload
+  step 70 "Removendo arquivos em ${INSTALL_DIR}..."
+  rm -rf "$INSTALL_DIR"
+  step 100 "Probe Collector removido."
+}
+
+if [[ "$MODE" == "remove" ]]; then
+  remove_probe
+  exit 0
+fi
+
+if [[ -z "$SERVER_URL" || -z "$PROBE_ID" || -z "$TOKEN" ]]; then
+  usage
+  exit 2
+fi
+
 SERVER_URL="${SERVER_URL%/}"
 TMP_DIR="$(mktemp -d)"
+BACKUP_DIR=""
+ROLLBACK_READY=0
+
 cleanup() {
   rm -rf "$TMP_DIR"
 }
-trap cleanup EXIT
+
+restore_backup() {
+  if [[ "$ROLLBACK_READY" != "1" || -z "$BACKUP_DIR" || ! -d "$BACKUP_DIR" ]]; then
+    return
+  fi
+
+  log "Falha detectada. Restaurando instalacao anterior do probe..."
+  systemctl stop serverwatch-probe >/dev/null 2>&1 || true
+
+  if [[ -d "$BACKUP_DIR/install" ]]; then
+    rm -rf "$INSTALL_DIR"
+    mkdir -p "$(dirname "$INSTALL_DIR")"
+    cp -a "$BACKUP_DIR/install" "$INSTALL_DIR"
+  else
+    rm -rf "$INSTALL_DIR"
+  fi
+
+  if [[ -f "$BACKUP_DIR/serverwatch-probe.service" ]]; then
+    cp "$BACKUP_DIR/serverwatch-probe.service" /etc/systemd/system/serverwatch-probe.service
+    systemctl daemon-reload || true
+    systemctl enable serverwatch-probe >/dev/null 2>&1 || true
+    systemctl restart serverwatch-probe >/dev/null 2>&1 || true
+  else
+    rm -f /etc/systemd/system/serverwatch-probe.service
+    systemctl daemon-reload || true
+  fi
+}
+
+on_exit() {
+  local code="$?"
+  if [[ "$code" -ne 0 ]]; then
+    restore_backup
+  fi
+  cleanup
+  exit "$code"
+}
+trap on_exit EXIT
+
+create_backup() {
+  BACKUP_DIR="$TMP_DIR/backup"
+  mkdir -p "$BACKUP_DIR"
+  if [[ -d "$INSTALL_DIR" ]]; then
+    cp -a "$INSTALL_DIR" "$BACKUP_DIR/install"
+  fi
+  if [[ -f /etc/systemd/system/serverwatch-probe.service ]]; then
+    cp /etc/systemd/system/serverwatch-probe.service "$BACKUP_DIR/serverwatch-probe.service"
+  fi
+  ROLLBACK_READY=1
+}
 
 download_url() {
   local url="$1"
@@ -83,6 +168,29 @@ download_asset() {
   download_url "$url" "$destination" \
     -H "Authorization: Bearer ${TOKEN}" \
     -H "X-ServerWatch-Probe-Token: ${TOKEN}"
+}
+
+validate_server_connection() {
+  local encoded_probe_id="${PROBE_ID// /%20}"
+  local url="${SERVER_URL}/api/probe/validate?probeId=${encoded_probe_id}"
+  step 5 "Validando URL e token no ServerWatch..."
+  if command -v curl >/dev/null 2>&1; then
+    curl -fsSL \
+      -H "Authorization: Bearer ${TOKEN}" \
+      -H "X-ServerWatch-Probe-Token: ${TOKEN}" \
+      "$url" >/dev/null
+    return
+  fi
+  if command -v wget >/dev/null 2>&1; then
+    wget -q \
+      --header="Authorization: Bearer ${TOKEN}" \
+      --header="X-ServerWatch-Probe-Token: ${TOKEN}" \
+      -O /dev/null \
+      "$url"
+    return
+  fi
+  echo "curl or wget is required to validate ServerWatch connectivity." >&2
+  exit 1
 }
 
 node_major() {
@@ -134,7 +242,7 @@ ensure_node_runtime() {
 
   mkdir -p "$INSTALL_DIR"
   echo "Installing isolated Node.js ${NODE_VERSION_REQUIRED} runtime for ServerWatch Probe..." >&2
-  download_url "https://nodejs.org/dist/v${NODE_VERSION_REQUIRED}/${archive_name}" "$archive_path"
+  download_asset "node-runtime-${platform}" "$archive_path"
   rm -rf "$runtime_root"
   mkdir -p "$runtime_root"
   tar -xJf "$archive_path" --strip-components=1 -C "$runtime_root"
@@ -146,17 +254,24 @@ ensure_node_runtime() {
   echo "$bundled_node"
 }
 
-if [[ -f "probe/collector.js" && -f "probe/setup-server.js" ]]; then
-  cp probe/collector.js "$TMP_DIR/collector.js"
-  cp probe/setup-server.js "$TMP_DIR/setup-server.js"
+validate_server_connection
+
+if [[ "$MODE" == "repair" ]]; then
+  step 8 "Reparando instalacao existente..."
 else
-  echo "Downloading probe files from ${SERVER_URL}..."
-  download_asset "collector.js" "$TMP_DIR/collector.js"
-  download_asset "setup-server.js" "$TMP_DIR/setup-server.js"
+  step 8 "Iniciando instalacao..."
 fi
 
+step 15 "Baixando arquivos do probe de ${SERVER_URL}..."
+download_asset "collector.js" "$TMP_DIR/collector.js"
+download_asset "setup-server.js" "$TMP_DIR/setup-server.js"
+
+step 35 "Preparando runtime e diretorio de instalacao..."
+create_backup
+systemctl stop serverwatch-probe >/dev/null 2>&1 || true
 mkdir -p "$INSTALL_DIR"
 NODE_BIN="$(ensure_node_runtime)"
+step 55 "Copiando collector e setup..."
 cp "$TMP_DIR/collector.js" "$INSTALL_DIR/collector.js"
 cp "$TMP_DIR/setup-server.js" "$INSTALL_DIR/setup-server.js"
 cat >"$INSTALL_DIR/package.json" <<'EOF'
@@ -176,6 +291,7 @@ cat >"$INSTALL_DIR/config.json" <<EOF
 EOF
 chmod 600 "$INSTALL_DIR/config.json"
 
+step 70 "Configurando servico systemd..."
 cat >/etc/systemd/system/serverwatch-probe.service <<EOF
 [Unit]
 Description=ServerWatch Probe Collector
@@ -193,7 +309,11 @@ RestartSec=10
 WantedBy=multi-user.target
 EOF
 
+step 84 "Habilitando servico..."
 systemctl daemon-reload
 systemctl enable serverwatch-probe
+step 92 "Iniciando Probe Collector..."
 systemctl restart serverwatch-probe
 systemctl status serverwatch-probe --no-pager
+ROLLBACK_READY=0
+step 100 "Instalacao concluida. Log salvo em ${LOG_FILE}."

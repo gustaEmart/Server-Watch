@@ -51,6 +51,14 @@ Em producao, voce tambem pode definir:
 SERVERWATCH_PROBE_TOKEN=um-token-longo-e-seguro
 ```
 
+No coletor instalado, o token pode ficar no `config.json` ou ser fornecido pela variavel de ambiente:
+
+```text
+PROBE_TOKEN=cole-aqui-o-token-do-serverwatch
+```
+
+Quando `PROBE_TOKEN` estiver definida, ela tem prioridade sobre o campo `token` do arquivo de configuracao. Se nenhum token estiver disponivel, o Probe Collector encerra com uma mensagem clara em vez de tentar enviar dados sem autenticacao.
+
 ## Configuracao de servidores
 
 No cadastro de um servidor, escolha:

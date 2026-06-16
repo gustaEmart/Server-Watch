@@ -10,14 +10,21 @@ ENV PORT=3000
 ENV DATA_DIR=/app/data
 
 COPY package*.json ./
-COPY storage ./storage
-COPY scripts ./scripts
-COPY server.js ./
-COPY public ./public
 
 RUN npm ci --omit=dev
 
-RUN mkdir -p /app/data && chown -R node:node /app
+COPY server.js ./
+COPY public ./public
+COPY routes ./routes
+COPY services ./services
+COPY storage ./storage
+COPY ws ./ws
+COPY scripts ./scripts
+COPY probe ./probe
+COPY tools/probe/install-linux.sh ./tools/probe/install-linux.sh
+COPY tools/linkprobe/install-linux.sh ./tools/linkprobe/install-linux.sh
+
+RUN mkdir -p /app/data /app/downloads && chown -R node:node /app
 
 USER node
 
