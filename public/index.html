@@ -4,8 +4,8 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>ServerWatch</title>
-    <link rel="icon" href="/favicon.ico" sizes="any" />
-    <link rel="icon" href="/favicon.png" type="image/png" />
+    <link rel="icon" href="/favicon.ico?v=20260619-newlogo" sizes="any" />
+    <link rel="icon" href="/favicon.png?v=20260619-newlogo" type="image/png" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
@@ -14,7 +14,7 @@
   <body>
     <section class="bootstrap-screen" id="bootScreen" aria-label="Carregando ServerWatch">
       <div class="boot-card">
-        <span class="brand-mark brand-logo has-image" style="background-image:url('/assets/brand/serverwatch-mark-transparent-256.png')" aria-hidden="true"><span class="brand-initials">SW</span></span>
+        <span class="brand-mark brand-logo has-image" style="background-image:url('/assets/brand/serverwatch-mark-transparent-256.png?v=20260619-newlogo')" aria-hidden="true"><span class="brand-initials">SW</span></span>
         <strong class="brand-name">ServerWatch</strong>
       </div>
     </section>
@@ -23,7 +23,7 @@
       <form class="login-card" id="loginForm">
         <div class="login-accent-line" aria-hidden="true"></div>
         <div class="login-wordmark-frame">
-          <img class="login-wordmark" src="/assets/brand/serverwatch-wordmark-transparent.png" alt="ServerWatch" />
+          <img class="login-wordmark" src="/assets/brand/serverwatch-wordmark-transparent.png?v=20260619-newlogo" alt="ServerWatch" />
         </div>
         <div class="login-copy">
           <h1>Entrar no monitoramento</h1>
@@ -45,7 +45,7 @@
     <div class="app-shell" id="appShell" hidden>
       <aside class="sidebar">
         <div class="brand">
-          <span class="brand-mark brand-logo has-image" style="background-image:url('/assets/brand/serverwatch-mark-transparent-256.png')" aria-hidden="true"><span class="brand-initials">SW</span></span>
+          <span class="brand-mark brand-logo has-image" style="background-image:url('/assets/brand/serverwatch-mark-transparent-256.png?v=20260619-newlogo')" aria-hidden="true"><span class="brand-initials">SW</span></span>
           <div>
             <strong class="brand-name">ServerWatch</strong>
             <span class="brand-subtitle">MVP LAN</span>
@@ -53,16 +53,21 @@
         </div>
 
         <nav class="nav-tabs" aria-label="Navegacao principal">
-          <a class="nav-tab active" href="/dashboard" data-view="dashboard">Dashboard</a>
-          <a class="nav-tab" href="/servidores" data-view="servers">Servidores</a>
-          <a class="nav-tab" href="/redes" data-view="networks">Redes</a>
-          <a class="nav-tab" href="/alertas" data-view="alerts">Historico de alertas</a>
-          <a class="nav-tab" href="/historico" data-view="history">Historico</a>
-          <a class="nav-tab" href="/configuracoes" data-view="settings">Configuracoes</a>
-          <a class="nav-tab admin-only" href="/admin" data-view="admin">Administracao</a>
-          <a class="nav-tab route-only admin-only" href="/empresas" data-view="groups">Empresas</a>
-          <a class="nav-tab route-only admin-only" href="/probes" data-view="probes">Probes</a>
-          <a class="nav-tab route-only admin-only" href="/usuarios" data-view="users">Usuarios</a>
+          <span class="sidebar-section-title">Monitoramento</span>
+          <a class="nav-tab active" href="/dashboard" data-view="dashboard"><svg class="nav-tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="9" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/><rect x="14" y="12" width="7" height="9" rx="1"/><rect x="3" y="16" width="7" height="5" rx="1"/></svg><span>Dashboard</span></a>
+          <a class="nav-tab" href="/servidores" data-view="servers"><svg class="nav-tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="6" rx="1.4"/><rect x="3" y="14" width="18" height="6" rx="1.4"/><circle cx="7" cy="7" r="0.6" fill="currentColor" stroke="none"/><circle cx="7" cy="17" r="0.6" fill="currentColor" stroke="none"/></svg><span>Servidores</span></a>
+          <a class="nav-tab" href="/redes" data-view="networks"><svg class="nav-tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="6" cy="6" r="2.2"/><circle cx="18" cy="6" r="2.2"/><circle cx="12" cy="18" r="2.2"/><line x1="7.8" y1="7.2" x2="10.6" y2="16.2"/><line x1="16.2" y1="7.2" x2="13.4" y2="16.2"/></svg><span>Redes</span></a>
+          <a class="nav-tab" href="/backups" data-view="backups"><svg class="nav-tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v6c0 1.66 3.58 3 8 3s8-1.34 8-3V5"/><path d="M4 11v6c0 1.66 3.58 3 8 3s8-1.34 8-3v-6"/></svg><span>Backups</span></a>
+          <span class="sidebar-section-title">Registros</span>
+          <a class="nav-tab" href="/alertas" data-view="alerts"><svg class="nav-tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 8a6 6 0 1 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg><span>Alertas</span></a>
+          <a class="nav-tab" href="/historico" data-view="history"><svg class="nav-tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15.5 14"/></svg><span>Historico</span></a>
+          <span class="sidebar-section-title admin-only">Administracao</span>
+          <a class="nav-tab admin-only" href="/empresas" data-view="groups"><svg class="nav-tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="3" width="14" height="18" rx="1"/><rect x="8" y="7" width="2" height="2"/><rect x="14" y="7" width="2" height="2"/><rect x="8" y="13" width="2" height="2"/><rect x="14" y="13" width="2" height="2"/></svg><span>Empresas</span></a>
+          <a class="nav-tab admin-only" href="/probes" data-view="probes"><svg class="nav-tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="2"/><path d="M16.24 7.76a6 6 0 0 1 0 8.49"/><path d="M7.76 16.24a6 6 0 0 1 0-8.49"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/><path d="M4.93 19.07a10 10 0 0 1 0-14.14"/></svg><span>Probes</span></a>
+          <a class="nav-tab admin-only" href="/usuarios" data-view="users"><svg class="nav-tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="9" cy="8" r="3"/><path d="M3 20c0-3.3 2.7-6 6-6s6 2.7 6 6"/><circle cx="17.5" cy="9" r="2.3"/><path d="M15.7 14.4c2.3.5 4 2.5 4 5.6"/></svg><span>Usuarios</span></a>
+          <a class="nav-tab route-only admin-only" href="/admin" data-view="admin"><svg class="nav-tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="3" width="14" height="18" rx="1"/><rect x="8" y="7" width="2" height="2"/><rect x="14" y="7" width="2" height="2"/><rect x="8" y="13" width="2" height="2"/><rect x="14" y="13" width="2" height="2"/></svg><span>Administracao</span></a>
+          <span class="sidebar-section-title">Sistema</span>
+          <a class="nav-tab" href="/configuracoes" data-view="settings"><svg class="nav-tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 13a7.97 7.97 0 0 0 0-2l2-1.5-2-3.4-2.4.9a8 8 0 0 0-1.7-1l-.3-2.5h-4l-.3 2.5a8 8 0 0 0-1.7 1l-2.4-.9-2 3.4 2 1.5a7.97 7.97 0 0 0 0 2l-2 1.5 2 3.4 2.4-.9c.5.4 1.1.8 1.7 1l.3 2.5h4l.3-2.5a8 8 0 0 0 1.7-1l2.4.9 2-3.4Z"/></svg><span>Configuracoes</span></a>
         </nav>
 
         <div class="connection-card">
@@ -104,8 +109,7 @@
             </details>
             <span class="user-chip" id="currentUserName"></span>
             <button class="ghost-button" id="logoutButton" type="button">Sair</button>
-            <button class="primary-button admin-only" id="openServerForm" type="button">Adicionar servidor</button>
-          </div>
+            </div>
         </header>
 
         <section class="metrics-grid" id="metricsGrid" aria-label="Resumo">
@@ -172,90 +176,6 @@
             <div id="simpleDashboardContent"></div>
           </section>
 
-          <details class="dashboard-details" id="dashboardDetails">
-            <summary>
-              <span>Visao operacional detalhada</span>
-              <small>Filtros, lista completa e investigacao tecnica</small>
-            </summary>
-
-            <section class="executive-dashboard" id="executiveDashboard" aria-label="Dashboard executivo">
-              <div class="panel-title">
-                <div>
-                  <h2>Visao executiva</h2>
-                  <span>Prioridades operacionais do dia</span>
-                </div>
-              </div>
-              <div class="executive-grid" id="executiveGrid"></div>
-            </section>
-
-            <div class="toolbar">
-              <details class="filter-menu" id="filterMenu">
-                <summary class="filter-toggle">
-                  <span>Filtrar</span>
-                  <small id="activeFilterCount">Todos</small>
-                </summary>
-                <div class="filter-panel" aria-label="Filtros de servidores">
-                  <div>
-                    <span class="filter-label">Status</span>
-                    <div class="segmented" role="group" aria-label="Filtro de status">
-                      <button class="segment active" data-status="all" type="button">Todos</button>
-                      <button class="segment" data-status="online" type="button">Online</button>
-                      <button class="segment" data-status="offline" type="button">Offline</button>
-                      <button class="segment" data-status="dependency_down" type="button">Afetado pelo host</button>
-                      <button class="segment" data-status="probe_stale" type="button">Probe sem contato</button>
-                      <button class="segment" data-status="unknown" type="button">Sem status</button>
-                      <button class="segment" data-status="paused" type="button">Pausado</button>
-                    </div>
-                  </div>
-                  <label class="search-field">
-                    <span>Buscar</span>
-                    <input id="searchInput" type="search" placeholder="Nome, IP, tag ou ambiente" />
-                  </label>
-                  <div class="filter-grid">
-                    <label>
-                      Ambiente
-                      <select id="environmentFilter" aria-label="Filtrar por ambiente">
-                        <option value="all">Todos ambientes</option>
-                        <option value="production">Producao</option>
-                        <option value="staging">Homologacao</option>
-                        <option value="development">Desenvolvimento</option>
-                      </select>
-                    </label>
-                    <label>
-                      Empresa
-                      <select id="groupFilter" aria-label="Filtrar por empresa">
-                        <option value="all">Todas empresas</option>
-                        <option value="none">Sem empresa</option>
-                      </select>
-                    </label>
-                  </div>
-                  <div class="filter-actions">
-                    <button class="ghost-button compact" id="clearFilters" type="button">Limpar filtros</button>
-                  </div>
-                </div>
-              </details>
-            </div>
-
-            <div class="server-layout">
-              <section class="server-panel">
-                <div class="panel-title">
-                  <h2>Servidores por empresa</h2>
-                  <div class="panel-title-actions">
-                    <span id="serverCount">0 itens</span>
-                    <button class="ghost-button compact" id="toggleTopologyAll" type="button" hidden>Expandir todos</button>
-                  </div>
-                </div>
-                <div class="server-list" id="serverList"></div>
-              </section>
-
-              <aside class="detail-panel" id="detailPanel">
-                <div class="empty-state">
-                  <strong>Nenhum servidor selecionado</strong>
-                  <span>Selecione um item para ver latencia, historico recente e acoes.</span>
-                </div>
-              </aside>
-            </div>
-          </details>
         </section>
 
         <section class="view" id="serversView">
@@ -266,6 +186,54 @@
                   <h2>Inventario</h2>
                   <span id="serverDirectoryCount">0 servidores</span>
                 </div>
+                <button class="ghost-button compact" id="toggleTopologyAll" type="button" hidden>Expandir todos</button>
+              </div>
+              <div class="toolbar">
+                <details class="filter-menu" id="filterMenu">
+                  <summary class="filter-toggle">
+                    <span>Filtrar</span>
+                    <small id="activeFilterCount">Todos</small>
+                  </summary>
+                  <div class="filter-panel" aria-label="Filtros de servidores">
+                    <div>
+                      <span class="filter-label">Status</span>
+                      <div class="segmented" role="group" aria-label="Filtro de status">
+                        <button class="segment active" data-status="all" type="button">Todos</button>
+                        <button class="segment" data-status="online" type="button">Online</button>
+                        <button class="segment" data-status="offline" type="button">Offline</button>
+                        <button class="segment" data-status="dependency_down" type="button">Afetado pelo host</button>
+                        <button class="segment" data-status="probe_stale" type="button">Probe sem contato</button>
+                        <button class="segment" data-status="unknown" type="button">Sem status</button>
+                        <button class="segment" data-status="paused" type="button">Pausado</button>
+                      </div>
+                    </div>
+                    <label class="search-field">
+                      <span>Buscar</span>
+                      <input id="searchInput" type="search" placeholder="Nome, IP, tag ou ambiente" />
+                    </label>
+                    <div class="filter-grid">
+                      <label>
+                        Ambiente
+                        <select id="environmentFilter" aria-label="Filtrar por ambiente">
+                          <option value="all">Todos ambientes</option>
+                          <option value="production">Producao</option>
+                          <option value="staging">Homologacao</option>
+                          <option value="development">Desenvolvimento</option>
+                        </select>
+                      </label>
+                      <label>
+                        Empresa
+                        <select id="groupFilter" aria-label="Filtrar por empresa">
+                          <option value="all">Todas empresas</option>
+                          <option value="none">Sem empresa</option>
+                        </select>
+                      </label>
+                    </div>
+                    <div class="filter-actions">
+                      <button class="ghost-button compact" id="clearFilters" type="button">Limpar filtros</button>
+                    </div>
+                  </div>
+                </details>
               </div>
               <div class="server-directory-list" id="serverDirectoryList"></div>
             </aside>
@@ -334,6 +302,105 @@
           </div>
         </section>
 
+        <section class="view" id="backupsView">
+          <div class="simple-dashboard" id="backupsSimpleDashboard">
+            <div class="simple-hero" id="backupsHero"></div>
+
+            <div class="simple-kpi-row" id="backupsKpiRow" aria-label="Resumo de backups"></div>
+
+            <div class="simple-chart-grid" aria-label="Graficos de backup">
+              <section class="simple-panel simple-chart-card simple-chart-wide">
+                <div class="panel-title compact-title">
+                  <h2>Tentativas de backup (24h)</h2>
+                  <span id="backupsDestinationMeta">0 tentativas</span>
+                </div>
+                <div class="simple-failure-chart" id="backupsDestinationChart" aria-label="Tentativas de backup nas ultimas 24 horas"></div>
+                <div class="simple-chart-foot" id="backupsDestinationFoot"></div>
+              </section>
+
+              <section class="simple-panel simple-chart-card">
+                <div class="panel-title compact-title">
+                  <h2>Estado atual</h2>
+                  <span id="backupsDonutMeta">0 monitorados</span>
+                </div>
+                <div class="simple-status-chart">
+                  <div class="simple-status-donut" id="backupsStatusDonut" aria-hidden="true"><strong id="backupsStatusDonutValue">0%</strong></div>
+                  <div class="simple-status-legend" id="backupsDonutLegend"></div>
+                </div>
+              </section>
+
+              <section class="simple-panel simple-chart-card">
+                <div class="panel-title compact-title">
+                  <h2>Backup sets</h2>
+                  <span id="backupsSetsMeta">0 sets</span>
+                </div>
+                <div class="simple-network-summary" id="backupsSetsSummary"></div>
+                <div class="simple-scroll-list simple-network-list" id="backupsSetsList"></div>
+              </section>
+            </div>
+
+            <div class="simple-dashboard-grid">
+              <section class="simple-panel">
+                <div class="panel-title compact-title">
+                  <h2>Precisa de atencao</h2>
+                  <span id="backupsAttentionMeta">Sem acao imediata</span>
+                </div>
+                <div class="simple-attention-list simple-scroll-list" id="backupsAttentionList"></div>
+              </section>
+
+              <section class="simple-panel">
+                <div class="panel-title compact-title">
+                  <h2>Saude por cliente</h2>
+                  <span>Prioridade visual</span>
+                </div>
+                <div class="simple-health-list simple-scroll-list" id="backupsHealthRows"></div>
+              </section>
+
+              <section class="simple-panel">
+                <div class="panel-title compact-title">
+                  <h2>Clientes</h2>
+                  <span>Saude por cliente</span>
+                </div>
+                <div class="simple-client-grid simple-scroll-list" id="backupsClientGrid"></div>
+              </section>
+            </div>
+          </div>
+
+          <section class="wide-panel" aria-label="Clientes monitorados">
+            <div class="panel-title">
+              <div>
+                <h2>Clientes monitorados</h2>
+                <span id="backupsClientCountHint">0 clientes</span>
+              </div>
+              <button class="ghost-button compact admin-only" id="refreshBackupsButton" type="button">Atualizar agora</button>
+            </div>
+
+            <div class="empty-state" id="backupsEmptyState">
+              <strong>Integracao ainda nao configurada</strong>
+              <span>Cadastre a API key do Cloud Backup para comecar a receber os dados aqui.</span>
+            </div>
+
+            <div class="server-profile-layout backup-profile-layout" id="backupsProfileLayout" hidden>
+              <aside class="server-directory-panel">
+                <div class="panel-title compact-title">
+                  <div>
+                    <h3>Clientes</h3>
+                    <span id="backupsDirectoryCount">0 clientes</span>
+                  </div>
+                </div>
+                <div class="server-directory-list" id="backupsDirectoryList"></div>
+              </aside>
+
+              <section class="server-profile-panel" id="backupsProfilePanel">
+                <div class="empty-state">
+                  <strong>Nenhum cliente selecionado</strong>
+                  <span>Selecione um cliente para ver o detalhamento completo.</span>
+                </div>
+              </section>
+            </div>
+          </section>
+        </section>
+
         <section class="view" id="adminView">
           <div class="wide-panel">
             <div class="panel-title">
@@ -366,7 +433,7 @@
           <div class="wide-panel">
             <div class="panel-title">
               <div>
-                <h2>Empresas e grupos</h2>
+                <h2>Cadastro de empresas</h2>
                 <span id="groupCount">0 empresas</span>
               </div>
               <button class="primary-button compact admin-only" id="openGroupForm" type="button">Adicionar empresa</button>
@@ -379,7 +446,7 @@
           <div class="wide-panel">
             <div class="panel-title">
               <div>
-                <h2>Probe Collector</h2>
+                <h2>Token e instaladores</h2>
                 <span id="probeCount">0 probes conectados</span>
               </div>
               <button class="primary-button compact admin-only" id="openCommandGeneratorButton" type="button">Gerar comando</button>
@@ -489,6 +556,7 @@
                   <button class="install-target-button active" type="button" data-probe-filter="all">Todos</button>
                   <button class="install-target-button" type="button" data-probe-filter="stale">Sem contato</button>
                   <button class="install-target-button" type="button" data-probe-filter="online">Online</button>
+                  <button class="install-target-button" type="button" data-probe-filter="outdated">Desatualizados</button>
                 </div>
                 <div class="probes-list" id="probesList"></div>
               </section>
@@ -533,7 +601,7 @@
           <div class="wide-panel">
             <div class="panel-title">
               <div>
-                <h2>Usuarios</h2>
+                <h2>Contas do sistema</h2>
                 <span id="userCount">0 usuarios</span>
               </div>
               <button class="primary-button compact" id="openUserForm" type="button">Adicionar usuario</button>
@@ -546,7 +614,7 @@
           <div class="wide-panel">
             <div class="panel-title">
               <div>
-                <h2>Configuracoes</h2>
+                <h2>Preferencias do sistema</h2>
                 <span>Identidade visual</span>
               </div>
             </div>
@@ -681,7 +749,7 @@
           <div class="wide-panel">
             <div class="panel-title">
               <div>
-                <h2>Historico de alertas</h2>
+                <h2>Linha do tempo</h2>
                 <span id="alertCount">0 alertas</span>
               </div>
             </div>
@@ -1235,7 +1303,7 @@
 
         <section class="group-logo-editor">
           <div class="brand-preview compact">
-            <span class="brand-mark brand-logo" id="groupLogoPreview" aria-hidden="true">
+            <span class="brand-mark" id="groupLogoPreview" aria-hidden="true">
               <span class="brand-initials" id="groupLogoInitials">SW</span>
             </span>
             <div>
@@ -1304,6 +1372,18 @@
           <div class="user-company-list" id="userCompanyList"></div>
         </fieldset>
 
+        <fieldset class="user-company-fieldset" id="userSectionsFieldset">
+          <legend>Secoes visiveis</legend>
+          <p>Usuarios comuns veem apenas as secoes marcadas. O Dashboard se ajusta automaticamente.</p>
+          <div class="user-company-list">
+            <label class="user-company-option"><input type="checkbox" name="userSection" value="servers" checked /><span>Servidores</span></label>
+            <label class="user-company-option"><input type="checkbox" name="userSection" value="networks" checked /><span>Redes</span></label>
+            <label class="user-company-option"><input type="checkbox" name="userSection" value="backups" checked /><span>Backups</span></label>
+            <label class="user-company-option"><input type="checkbox" name="userSection" value="alerts" checked /><span>Alertas</span></label>
+            <label class="user-company-option"><input type="checkbox" name="userSection" value="history" checked /><span>Historico</span></label>
+          </div>
+        </fieldset>
+
         <div class="form-error" id="userFormError" role="alert"></div>
 
         <div class="dialog-actions">
@@ -1345,6 +1425,32 @@
           <button class="primary-button" type="submit">Salvar nova senha</button>
         </div>
       </form>
+    </dialog>
+
+    <dialog class="server-dialog" id="backupErrorsDialog">
+      <div class="dialog-shell">
+        <div class="dialog-header">
+          <div>
+            <p class="eyebrow">Backups</p>
+            <h2>Backups com erro</h2>
+          </div>
+          <button class="icon-button" value="cancel" type="button" id="closeBackupErrorsDialog" title="Fechar">x</button>
+        </div>
+        <div class="dialog-list" id="backupErrorsList"></div>
+      </div>
+    </dialog>
+
+    <dialog class="server-dialog" id="offlineServersDialog">
+      <div class="dialog-shell">
+        <div class="dialog-header">
+          <div>
+            <p class="eyebrow">Servidores</p>
+            <h2>Offline e sem contato</h2>
+          </div>
+          <button class="icon-button" value="cancel" type="button" id="closeOfflineServersDialog" title="Fechar">x</button>
+        </div>
+        <div class="dialog-list" id="offlineServersList"></div>
+      </div>
     </dialog>
 
     <div class="toast-stack" id="toastStack" aria-live="polite"></div>

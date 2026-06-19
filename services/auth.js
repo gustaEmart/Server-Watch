@@ -18,6 +18,8 @@ export function verifyPassword(password, storedHash) {
   return expected.length === actual.length && timingSafeEqual(expected, actual);
 }
 
+const ALL_SECTIONS = ["servers", "networks", "backups", "alerts", "history"];
+
 export function publicUser(user) {
   const role = user.role === "admin" ? "admin" : "user";
   return {
@@ -26,6 +28,7 @@ export function publicUser(user) {
     email: user.email,
     role,
     groupIds: role === "admin" ? [] : Array.isArray(user.groupIds) ? user.groupIds : [],
+    allowedSections: role === "admin" ? ALL_SECTIONS : Array.isArray(user.allowedSections) ? user.allowedSections : ALL_SECTIONS,
     isActive: user.isActive !== false,
     mustChangePassword: user.mustChangePassword === true,
     createdAt: user.createdAt,

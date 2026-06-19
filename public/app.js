@@ -20,7 +20,10 @@ const state = {
   selectedNetworkGroupId: null,
   companyScopeQuery: "",
   groupLogoDraft: "",
+  themeDraft: null,
   topologyExpanded: new Set(),
+  selectedBackupClientId: null,
+  backupLinkEditorOpen: null,
   probeInstallTarget: "linux",
   commandGeneratorMode: "server",
   commandGeneratorMikrotikUplinks: [
@@ -48,7 +51,7 @@ const state = {
 };
 
 const PROBE_PUBLIC_ORIGIN = "http://sw.grupoinsideti.com.br:3000";
-const DEFAULT_BRAND_LOGO = "/assets/brand/serverwatch-mark-transparent-256.png";
+const DEFAULT_BRAND_LOGO = "/assets/brand/serverwatch-mark-transparent-256.png?v=20260619-newlogo";
 
 const els = {
   bootScreen: document.querySelector("#bootScreen"),
@@ -220,6 +223,7 @@ const els = {
   userActive: document.querySelector("#userActive"),
   userPassword: document.querySelector("#userPassword"),
   userCompanyFieldset: document.querySelector("#userCompanyFieldset"),
+  userSectionsFieldset: document.querySelector("#userSectionsFieldset"),
   userCompanyList: document.querySelector("#userCompanyList"),
   userFormError: document.querySelector("#userFormError"),
   probeCount: document.querySelector("#probeCount"),
@@ -267,13 +271,43 @@ const els = {
   serverProbeId: document.querySelector("#serverProbeId"),
   serverProbeHint: document.querySelector("#serverProbeHint"),
   serverTags: document.querySelector("#serverTags"),
-  serverDescription: document.querySelector("#serverDescription")
+  serverDescription: document.querySelector("#serverDescription"),
+  backupsHero: document.querySelector("#backupsHero"),
+  backupsKpiRow: document.querySelector("#backupsKpiRow"),
+  backupsDestinationMeta: document.querySelector("#backupsDestinationMeta"),
+  backupsDestinationChart: document.querySelector("#backupsDestinationChart"),
+  backupsDestinationFoot: document.querySelector("#backupsDestinationFoot"),
+  backupsDonutMeta: document.querySelector("#backupsDonutMeta"),
+  backupsStatusDonut: document.querySelector("#backupsStatusDonut"),
+  backupsStatusDonutValue: document.querySelector("#backupsStatusDonutValue"),
+  backupsDonutLegend: document.querySelector("#backupsDonutLegend"),
+  backupsSetsMeta: document.querySelector("#backupsSetsMeta"),
+  backupsSetsSummary: document.querySelector("#backupsSetsSummary"),
+  backupsSetsList: document.querySelector("#backupsSetsList"),
+  backupsAttentionMeta: document.querySelector("#backupsAttentionMeta"),
+  backupsAttentionList: document.querySelector("#backupsAttentionList"),
+  backupsHealthRows: document.querySelector("#backupsHealthRows"),
+  backupsClientGrid: document.querySelector("#backupsClientGrid"),
+  backupsClientCountHint: document.querySelector("#backupsClientCountHint"),
+  backupsEmptyState: document.querySelector("#backupsEmptyState"),
+  backupsProfileLayout: document.querySelector("#backupsProfileLayout"),
+  backupsDirectoryCount: document.querySelector("#backupsDirectoryCount"),
+  backupsDirectoryList: document.querySelector("#backupsDirectoryList"),
+  backupsProfilePanel: document.querySelector("#backupsProfilePanel"),
+  refreshBackupsButton: document.querySelector("#refreshBackupsButton"),
+  backupErrorsDialog: document.querySelector("#backupErrorsDialog"),
+  backupErrorsList: document.querySelector("#backupErrorsList"),
+  closeBackupErrorsDialog: document.querySelector("#closeBackupErrorsDialog"),
+  offlineServersDialog: document.querySelector("#offlineServersDialog"),
+  offlineServersList: document.querySelector("#offlineServersList"),
+  closeOfflineServersDialog: document.querySelector("#closeOfflineServersDialog")
 };
 
 const VIEW_ROUTES = {
   dashboard: "/dashboard",
   servers: "/servidores",
   networks: "/redes",
+  backups: "/backups",
   admin: "/admin",
   groups: "/empresas",
   probes: "/probes",
@@ -407,6 +441,14 @@ function showLogin() {
   els.appShell.hidden = true;
 }
 
+const SECTION_KEYS = ["servers", "networks", "backups", "alerts", "history"];
+
+function canSeeSection(section) {
+  if (isAdmin()) return true;
+  const allowed = state.currentUser?.allowedSections;
+  return Array.isArray(allowed) ? allowed.includes(section) : true;
+}
+
 function showApp(user) {
   state.currentUser = user;
   els.bootScreen.hidden = true;
@@ -415,6 +457,10 @@ function showApp(user) {
   els.currentUserName.textContent = `${user.name} · ${user.role === "admin" ? "Admin" : "Usuario"}`;
   document.querySelectorAll(".admin-only").forEach((item) => {
     item.hidden = !isAdmin();
+  });
+  SECTION_KEYS.forEach((section) => {
+    const tab = document.querySelector(`.nav-tab[data-view="${section}"]`);
+    if (tab) tab.hidden = !canSeeSection(section);
   });
   syncViewFromLocation({ replace: true });
 }
@@ -837,6 +883,7 @@ function applySnapshot(payload) {
   applyBranding();
   state.alerts = payload.alerts || [];
   state.events = payload.events || [];
+  state.cloudBackup = payload.cloudBackup || null;
   if (state.selectedServerId && !state.servers.some((server) => server.id === state.selectedServerId)) {
     state.selectedServerId = null;
   }
@@ -881,7 +928,7 @@ function routeForView(viewName) {
 }
 
 function primaryNavView(viewName) {
-  return ["groups", "probes", "users"].includes(viewName) ? "admin" : viewName;
+  return viewName;
 }
 
 function setActiveView(viewName, options = {}) {
@@ -927,6 +974,7 @@ function updateTopbarContext() {
     dashboard: ["Monitoramento em tempo real", "Disponibilidade dos servidores"],
     servers: ["Inventario operacional", "Informacoes dos servidores"],
     networks: ["Monitoramento de redes", "Links e conectividade"],
+    backups: ["Backups em nuvem", "Status dos jobs de backup"],
     admin: ["Gestao do sistema", "Painel administrativo"],
     groups: ["Organizacao operacional", "Empresas e grupos"],
     probes: ["Instalacao e coleta", "Probe Collector"],
@@ -980,6 +1028,16 @@ function upsertGroup(group) {
   renderGroupOptions();
 }
 
+let pendingRenderTimer = null;
+
+function scheduleRender(delay = 400) {
+  if (pendingRenderTimer) return;
+  pendingRenderTimer = setTimeout(() => {
+    pendingRenderTimer = null;
+    render();
+  }, delay);
+}
+
 function handleSocketMessage(payload) {
   if (payload.type === "snapshot") {
     applySnapshot(payload);
@@ -1007,7 +1065,7 @@ function handleSocketMessage(payload) {
     state.alerts = [payload.alert, ...state.alerts.filter((item) => item.id !== payload.alert.id)].slice(0, 50);
   }
 
-  render();
+  scheduleRender();
 }
 
 function connectSocket() {
@@ -1414,6 +1472,7 @@ function renderMetrics() {
 
   const offlineCard = els.metricOffline.closest(".metric-card");
   offlineCard?.classList.toggle("has-alerts", alertsOpen > 0);
+  offlineCard?.classList.toggle("is-zero", counts.offline === 0);
   const availabilityCard = els.metricAvailability.closest(".metric-card");
   availabilityCard?.classList.remove("availability-success", "availability-warning", "availability-danger", "availability-neutral");
   availabilityCard?.classList.add(`availability-${availabilityTone(availability)}`);
@@ -1465,8 +1524,6 @@ function selectServer(serverId, options = {}) {
     render();
     return true;
   }
-  renderServers();
-  renderDetail();
   renderServerDirectory();
   renderServerProfile();
   return true;
@@ -1475,8 +1532,6 @@ function selectServer(serverId, options = {}) {
 function selectServerGroup(groupId) {
   state.selectedServerGroupId = groupId || null;
   state.selectedServerId = null;
-  renderServers();
-  renderDetail();
   renderServerDirectory();
   renderServerProfile();
 }
@@ -1553,6 +1608,10 @@ function isRecoveryEvent(event) {
 function renderSimpleDashboard() {
   if (!els.simpleDashboardContent) return;
   const scrollPositions = captureSimpleDashboardScroll();
+  const canServers = canSeeSection("servers");
+  const canNetworks = canSeeSection("networks");
+  const canBackups = canSeeSection("backups");
+  const canAlerts = canSeeSection("alerts");
   const scopedServers = state.servers.filter((server) => groupIdMatches(state.filters.groupId, server.groupId));
   const scopedServerIds = new Set(scopedServers.map((server) => server.id));
   const activeServers = scopedServers.filter((server) => server.isActive);
@@ -1625,15 +1684,19 @@ function renderSimpleDashboard() {
   const availability = Number(isGlobalScope ? state.summary.availability24h ?? availabilityForServers(activeServers) : availabilityForServers(activeServers));
   const availabilityTitle = isGlobalScope ? "Disponibilidade 24h" : "Disponibilidade agora";
   const availabilityCaption = isGlobalScope ? "eventos registrados" : "estado atual do filtro";
-  const tone = counts.offline || openAlerts.length || networkCounts.offline
+  const tone = (canServers && counts.offline) || (canAlerts && openAlerts.length) || (canNetworks && networkCounts.offline)
     ? "danger"
-    : counts.dependency_down || counts.probe_stale || staleProbes.length || networkCounts.degraded || networkCounts.probe_unreachable
+    : (canServers && (counts.dependency_down || counts.probe_stale || staleProbes.length)) || (canNetworks && (networkCounts.degraded || networkCounts.probe_unreachable))
     ? "warning"
     : "success";
   const headline = tone === "danger" ? "Atencao necessaria" : tone === "warning" ? "Acompanhar operacao" : "Operacao normal";
+  const dangerParts = [];
+  if (canServers && counts.offline) dangerParts.push(`${counts.offline} servidor${counts.offline === 1 ? "" : "es"} offline`);
+  if (canNetworks && networkCounts.offline) dangerParts.push(`${networkCounts.offline} link${networkCounts.offline === 1 ? "" : "s"} offline`);
+  if (canAlerts && openAlerts.length) dangerParts.push(`${openAlerts.length} alerta${openAlerts.length === 1 ? "" : "s"} aberto${openAlerts.length === 1 ? "" : "s"}`);
   const message =
     tone === "danger"
-      ? `${counts.offline} servidores offline, ${networkCounts.offline} links offline e ${openAlerts.length} alerta${openAlerts.length === 1 ? "" : "s"} aberto${openAlerts.length === 1 ? "" : "s"}.`
+      ? `${dangerParts.join(", ")}.`
       : tone === "warning"
       ? "Ha itens para acompanhar, mas sem queda critica confirmada."
       : "Nenhuma queda critica aberta no momento.";
@@ -1677,52 +1740,6 @@ function renderSimpleDashboard() {
   const attentionDegrees = ((simpleStatusCounts.dependency_down + simpleStatusCounts.probe_stale) / statusTotal) * 360;
   const statusChartStyle = `--online-deg:${onlineDegrees}deg; --offline-deg:${offlineDegrees}deg; --attention-deg:${attentionDegrees}deg;`;
 
-  const groupHealth = groupedServers(scopedServers)
-    .filter((group) => group.servers.some((server) => server.isActive))
-    .map((group) => {
-      const active = group.servers.filter((server) => server.isActive);
-      const currentCounts = active.reduce(
-        (acc, server) => {
-          const status = displayStatus(server);
-          acc[status] = (acc[status] || 0) + 1;
-          return acc;
-        },
-        { online: 0, offline: 0, dependency_down: 0, probe_stale: 0, unknown: 0, paused: 0 }
-      );
-      const serverIds = new Set(group.servers.map((server) => server.id));
-      const alerts = openAlerts.filter((alert) => serverIds.has(alert.serverId)).length;
-      const health = availabilityForServers(group.servers);
-      const attention = currentCounts.offline + currentCounts.dependency_down + currentCounts.probe_stale + alerts;
-      const groupTone = currentCounts.offline || alerts ? "danger" : currentCounts.dependency_down || currentCounts.probe_stale ? "warning" : "success";
-      return {
-        id: group.id,
-        name: group.name,
-        active: active.length,
-        online: currentCounts.online,
-        alerts,
-        attention,
-        tone: groupTone,
-        availability: health
-      };
-    })
-    .sort((left, right) => right.attention - left.attention || left.availability - right.availability || compareAlpha(left.name, right.name));
-
-  const groupHealthBars = groupHealth
-    .slice(0, 5)
-    .map(
-      (group) => `
-        <button class="simple-health-row ${group.tone}" type="button" data-simple-company-id="${escapeHtml(group.id)}">
-          <span>
-            <strong>${escapeHtml(group.name)}</strong>
-            <small>${group.online}/${group.active} online${group.alerts ? ` · ${group.alerts} alerta${group.alerts === 1 ? "" : "s"}` : ""}</small>
-          </span>
-          <em>${group.availability}%</em>
-          <i aria-hidden="true"><b style="width:${Math.max(0, Math.min(100, group.availability))}%"></b></i>
-        </button>
-      `
-    )
-    .join("");
-
   const attentionList = problemServers.length
     ? problemServers
         .map((server) => {
@@ -1738,6 +1755,8 @@ function renderSimpleDashboard() {
           `;
         })
         .join("")
+    : canAlerts && openAlerts.length
+    ? `<div class="simple-empty">Nenhum servidor com problema agora, mas ha ${openAlerts.length} alerta${openAlerts.length === 1 ? "" : "s"} aberto${openAlerts.length === 1 ? "" : "s"} para revisar.</div>`
     : `<div class="simple-empty">Tudo certo nos servidores ativos.</div>`;
   const networkAttentionList = networkProblems.length
     ? networkProblems
@@ -1756,39 +1775,36 @@ function renderSimpleDashboard() {
         .join("")
     : `<div class="simple-empty">Todos os links monitorados estao operacionais.</div>`;
 
-  const groupRows = groupedServers(scopedServers)
-    .filter((group) => group.servers.some((server) => server.isActive))
-    .map((group) => {
-      const active = group.servers.filter((server) => server.isActive);
-      const groupCounts = statusCounts(active);
-      const serverIds = new Set(group.servers.map((server) => server.id));
-      const alerts = openAlerts.filter((alert) => serverIds.has(alert.serverId)).length;
-      const groupTone = groupCounts.offline || alerts ? "danger" : groupCounts.dependency_down || groupCounts.probe_stale ? "warning" : "success";
-      return {
-        id: group.id,
-        name: group.name,
-        active: active.length,
-        online: groupCounts.online,
-        alerts,
-        tone: groupTone,
-        availability: availabilityForServers(group.servers)
-      };
-    })
-    .sort((left, right) => {
-      const order = { danger: 0, warning: 1, success: 2 };
-      return (order[left.tone] ?? 3) - (order[right.tone] ?? 3) || compareAlpha(left.name, right.name);
-    })
-    .slice(0, 6)
-    .map(
-      (group) => `
-        <button class="simple-client-card ${group.tone}" type="button" data-simple-company-id="${escapeHtml(group.id)}">
-          <strong>${escapeHtml(group.name)}</strong>
-          <span>${group.online}/${group.active} online</span>
-          <small>${group.alerts ? `${group.alerts} alerta${group.alerts === 1 ? "" : "s"}` : `${group.availability}% disponivel`}</small>
-        </button>
-      `
-    )
-    .join("");
+  const cloudBackup = state.cloudBackup || null;
+  const backupsConfigured = Boolean(cloudBackup?.configured);
+  const backupStatus = cloudBackup?.status || { info: 0, success: 0, warning: 0, error: 0, nomon: 0, total: 0 };
+  const backupsTotal = backupStatus.total || 0;
+  const backupsMonitoredTotal = backupClientMonitoredTotal(backupStatus);
+  const backupDonutTotal = Math.max(1, backupsTotal);
+  const backupSuccessDeg = (backupStatus.success / backupDonutTotal) * 360;
+  const backupErrorDeg = (backupStatus.error / backupDonutTotal) * 360;
+  const backupWarningDeg = (backupStatus.warning / backupDonutTotal) * 360;
+  const backupClients = Array.isArray(cloudBackup?.clients) ? cloudBackup.clients : [];
+  const backupHealthBars = backupsConfigured
+    ? backupClients
+        .map((client) => ({ client, pct: backupClientHealthPct(client.status), monitored: backupClientMonitoredTotal(client.status) }))
+        .filter((item) => item.monitored > 0)
+        .sort((left, right) => left.pct - right.pct)
+        .slice(0, 6)
+        .map(
+          ({ client, pct, monitored }) => `
+            <button class="backup-health-row ${availabilityTone(pct)}" type="button" data-simple-backup-client-id="${escapeHtml(String(client.id))}">
+              <span>
+                <strong>${escapeHtml(client.groupName || client.name)}</strong>
+                <small>${client.status.success}/${monitored} backups monitorados com sucesso</small>
+              </span>
+              <em>${pct}%</em>
+              <i aria-hidden="true"><b style="width:${Math.max(0, Math.min(100, pct))}%"></b></i>
+            </button>
+          `
+        )
+        .join("")
+    : "";
 
   els.simpleDashboardContent.innerHTML = `
     <div class="simple-hero ${tone}">
@@ -1801,14 +1817,15 @@ function renderSimpleDashboard() {
     </div>
 
     <div class="simple-kpi-row" aria-label="Resumo principal">
-      <article><span>Total</span><strong>${activeServers.length}</strong><small>monitorados</small></article>
-      <article class="success"><span>Online</span><strong>${counts.online}</strong><small>respondendo</small></article>
-      <article class="${counts.offline ? "danger" : "success"}"><span>Offline</span><strong>${counts.offline}</strong><small>${openAlerts.length} alertas</small></article>
-      <article class="${staleProbes.length ? "warning" : "success"}"><span>Probes</span><strong>${staleProbes.length}</strong><small>sem contato</small></article>
-      <article class="${networkCounts.offline ? "danger" : networkCounts.degraded || networkCounts.probe_unreachable ? "warning" : "success"}"><span>Links</span><strong>${networkLinks.length}</strong><small>${networkCounts.online} online</small></article>
+      ${canServers ? `<article><span>Total</span><strong>${activeServers.length}/${counts.online}</strong><small>monitorados online</small></article>` : ""}
+      ${canServers ? `<article class="${counts.offline ? "danger" : "success"}" data-offline-trigger="1"><span>Offline</span><strong>${counts.offline}</strong><small>${staleProbes.length} sem contato</small></article>` : ""}
+      ${canAlerts ? `<article class="${openAlerts.length ? "danger" : "success"}" data-simple-view="alerts"><span>Alertas</span><strong>${openAlerts.length}</strong><small>abertos</small></article>` : ""}
+      ${canNetworks ? `<article class="${networkCounts.offline ? "danger" : networkCounts.degraded || networkCounts.probe_unreachable ? "warning" : "success"}"><span>Links</span><strong>${networkLinks.length}</strong><small>${networkCounts.online} online</small></article>` : ""}
+      ${canBackups ? `<article class="${backupsConfigured && backupStatus.error ? "danger" : "success"}"><span>Backups</span><strong>${backupsConfigured ? `${backupStatus.success}/${backupsMonitoredTotal}` : "-"}</strong><small>${backupsConfigured ? "sucesso (monitorados)" : "nao configurado"}</small></article>` : ""}
     </div>
 
     <div class="simple-chart-grid" aria-label="Graficos rapidos">
+      ${canServers ? `
       <section class="simple-panel simple-chart-card simple-chart-wide">
         <div class="panel-title compact-title">
           <h2>Falhas nas ultimas 24h</h2>
@@ -1822,8 +1839,9 @@ function renderSimpleDashboard() {
           <strong>${recentFailureCount ? `${recentFailureCount} evento${recentFailureCount === 1 ? "" : "s"}` : "Sem falhas registradas"}</strong>
           <span>agora</span>
         </div>
-      </section>
+      </section>` : ""}
 
+      ${canServers ? `
       <section class="simple-panel simple-chart-card">
         <div class="panel-title compact-title">
           <h2>Estado atual</h2>
@@ -1840,8 +1858,9 @@ function renderSimpleDashboard() {
             <span><i class="neutral"></i>${simpleStatusCounts.unknown + simpleStatusCounts.paused} sem status/pausado</span>
           </div>
         </div>
-      </section>
+      </section>` : ""}
 
+      ${canNetworks ? `
       <section class="simple-panel simple-chart-card">
         <div class="panel-title compact-title">
           <h2>Redes monitoradas</h2>
@@ -1855,40 +1874,57 @@ function renderSimpleDashboard() {
         <div class="simple-scroll-list simple-network-list">
           ${networkOverviewList}
         </div>
-      </section>
+      </section>` : ""}
     </div>
 
     <div class="simple-dashboard-grid">
+      ${canServers ? `
       <section class="simple-panel">
         <div class="panel-title compact-title">
           <h2>Precisa de atencao</h2>
           <span>${problemServers.length ? `${problemServers.length} itens principais` : "Sem acao imediata"}</span>
         </div>
         <div class="simple-attention-list simple-scroll-list">${attentionList}</div>
-      </section>
+      </section>` : ""}
 
+      ${canBackups ? `
       <section class="simple-panel">
         <div class="panel-title compact-title">
-          <h2>Saude por empresa</h2>
+          <h2>Estado atual dos backups</h2>
+          <span>${backupsConfigured ? `${backupsTotal} monitorados` : "Nao configurado"}</span>
+        </div>
+        ${
+          backupsConfigured
+            ? `<div class="simple-status-chart">
+                <div class="simple-status-donut" style="--online-deg:${backupSuccessDeg}deg; --offline-deg:${backupErrorDeg}deg; --attention-deg:${backupWarningDeg}deg;" aria-hidden="true">
+                  <strong>${backupsTotal ? Math.round((backupStatus.success / backupsTotal) * 100) : 0}%</strong>
+                </div>
+                <div class="simple-status-legend">
+                  <span><i class="success"></i>${backupStatus.success} sucesso</span>
+                  <span><i class="danger"></i>${backupStatus.error} erro</span>
+                  <span><i class="warning"></i>${backupStatus.warning} alerta</span>
+                  <span><i class="neutral"></i>${backupStatus.nomon + backupStatus.info} sem monitor/info</span>
+                </div>
+              </div>`
+            : `<div class="simple-empty">Configure a API de Cloud Backup para ver os dados.</div>`
+        }
+      </section>` : ""}
+
+      ${canBackups ? `
+      <section class="simple-panel">
+        <div class="panel-title compact-title">
+          <h2>Taxa de sucesso dos backups</h2>
           <span>Prioridade visual</span>
         </div>
         <div class="simple-health-list simple-scroll-list">
-          ${groupHealthBars || `<div class="simple-empty">Nenhuma empresa com servidor ativo.</div>`}
+          ${backupHealthBars || `<div class="simple-empty">${backupsConfigured ? "Nenhum cliente de backup monitorado." : "Configure a API de Cloud Backup para ver os dados."}</div>`}
         </div>
-      </section>
-
-      <section class="simple-panel">
-        <div class="panel-title compact-title">
-          <h2>Clientes</h2>
-          <span>Saude por empresa</span>
-        </div>
-        <div class="simple-client-grid simple-scroll-list">${groupRows || `<div class="simple-empty">Nenhuma empresa com servidor ativo.</div>`}</div>
-      </section>
+      </section>` : ""}
     </div>
 
     <div class="simple-actions">
-      <button class="primary-button" type="button" data-simple-view="alerts">Ver alertas</button>
-      <button class="ghost-button" type="button" data-simple-view="servers">Abrir servidores</button>
+      ${canAlerts ? `<button class="primary-button" type="button" data-simple-view="alerts">Ver alertas</button>` : ""}
+      ${canServers ? `<button class="ghost-button" type="button" data-simple-view="servers">Abrir servidores</button>` : ""}
     </div>
   `;
   restoreSimpleDashboardScroll(scrollPositions);
@@ -2157,7 +2193,7 @@ function renderServerRow(server, options = {}) {
     ? `${escapeHtml(server.hostname)} · ${infra ? `${escapeHtml(infra)} · ` : ""}${checkSourceLabel(server.checkSource)} · ${environmentLabel(server.environment)}${mac ? ` · ${escapeHtml(mac)}` : ""} ${offlineFor}`
     : `${escapeHtml(server.hostname)} · Monitoramento pausado`;
   return `
-    <button class="server-row ${selected} ${inactive} ${statusTone} ${depth ? "dependency-child-row" : ""}" type="button" data-server-id="${server.id}" style="--dependency-depth:${depth}">
+    <button class="server-row ${selected} ${inactive} ${statusTone} ${depth ? "dependency-child-row" : ""}" type="button" data-profile-server-id="${server.id}" style="--dependency-depth:${depth}">
       ${
         childCount
           ? `<span class="topology-toggle ${expanded ? "expanded" : ""}" data-topology-toggle="${escapeHtml(server.id)}" aria-label="${expanded ? "Ocultar dependentes" : "Exibir dependentes"}" aria-expanded="${expanded ? "true" : "false"}"><i aria-hidden="true"></i></span>`
@@ -2179,7 +2215,31 @@ function renderServerRow(server, options = {}) {
   `;
 }
 
-function renderServerTopology(servers) {
+function renderServerDirectoryRow(server, options = {}) {
+  const { childCount = 0, depth = 0 } = options;
+  const visibleStatus = displayStatus(server);
+  const selected = server.id === state.selectedServerId ? "selected" : "";
+  const statusTone = visibleStatus === "offline" ? "is-offline" : "";
+  const expanded = state.topologyExpanded.has(server.id);
+  return `
+    <button class="server-directory-item ${selected} ${statusTone} ${depth ? "dependency-child-row" : ""}" type="button" data-profile-server-id="${server.id}" style="--dependency-depth:${depth}">
+      ${
+        childCount
+          ? `<span class="topology-toggle ${expanded ? "expanded" : ""}" data-topology-toggle="${escapeHtml(server.id)}" aria-label="${expanded ? "Ocultar dependentes" : "Exibir dependentes"}" aria-expanded="${expanded ? "true" : "false"}"><i aria-hidden="true"></i></span>`
+          : `<span class="topology-spacer" aria-hidden="true"></span>`
+      }
+      <span class="status-pulse ${visibleStatus}"></span>
+      ${platformIcon(server.platform)}
+      <span>
+        <strong>${escapeHtml(server.name)}</strong>
+        <small>${escapeHtml(server.hostname)}</small>
+      </span>
+      <em>${statusLabel(visibleStatus)}</em>
+    </button>
+  `;
+}
+
+function renderServerTopology(servers, rowRenderer = renderServerRow) {
   const visibleIds = new Set(servers.map((server) => server.id));
   const childrenByParent = new Map();
   for (const server of servers) {
@@ -2195,7 +2255,7 @@ function renderServerTopology(servers) {
   const renderNode = (server, depth = 0, visited = new Set()) => {
     const children = childrenByParent.get(server.id) || [];
     const expanded = state.topologyExpanded.has(server.id);
-    const row = renderServerRow(server, { childCount: children.length, depth });
+    const row = rowRenderer(server, { childCount: children.length, depth });
     if (!children.length || !expanded || visited.has(server.id)) return row;
     const nextVisited = new Set(visited);
     nextVisited.add(server.id);
@@ -2253,6 +2313,7 @@ function groupedServers(servers) {
 }
 
 function renderServers() {
+  if (!els.serverList) return;
   const servers = filteredServers();
   els.serverCount.textContent = `${servers.length} ${servers.length === 1 ? "item" : "itens"}`;
   const expandableIds = expandableTopologyIds(servers);
@@ -2547,6 +2608,7 @@ function renderServerGroupDetail(group, target = els.detailPanel) {
 }
 
 function renderDetail() {
+  if (!els.detailPanel) return;
   if (state.selectedServerGroupId) {
     renderServerGroupDetail(serverGroupById(state.selectedServerGroupId));
     return;
@@ -2724,26 +2786,16 @@ function sortedServersForDirectory() {
 
 function renderServerDirectory() {
   if (!els.serverDirectoryList) return;
-  const servers = sortedServersForDirectory();
+  const servers = filteredServers();
   if (els.serverDirectoryCount) {
     els.serverDirectoryCount.textContent = `${servers.length} ${servers.length === 1 ? "servidor" : "servidores"}`;
   }
-  const renderDirectoryServer = (server) => {
-    const visibleStatus = displayStatus(server);
-    const selected = server.id === state.selectedServerId ? "selected" : "";
-    const statusTone = visibleStatus === "offline" ? "is-offline" : "";
-    return `
-      <button class="server-directory-item ${selected} ${statusTone}" type="button" data-profile-server-id="${server.id}">
-        <span class="status-pulse ${visibleStatus}"></span>
-        ${platformIcon(server.platform)}
-        <span>
-          <strong>${escapeHtml(server.name)}</strong>
-          <small>${escapeHtml(server.hostname)}</small>
-        </span>
-        <em>${statusLabel(visibleStatus)}</em>
-      </button>
-    `;
-  };
+  const expandableIds = expandableTopologyIds(servers);
+  if (els.toggleTopologyAll) {
+    const allExpanded = expandableIds.length > 0 && expandableIds.every((id) => state.topologyExpanded.has(id));
+    els.toggleTopologyAll.hidden = expandableIds.length === 0;
+    els.toggleTopologyAll.textContent = allExpanded ? "Recolher todos" : "Expandir todos";
+  }
   const groups = groupedServers(servers);
   els.serverDirectoryList.innerHTML = servers.length
     ? groups
@@ -2763,13 +2815,13 @@ function renderServerDirectory() {
                 </div>
               </button>
               <div class="server-directory-group-items">
-                ${group.servers.map(renderDirectoryServer).join("")}
+                ${renderServerTopology(group.servers, renderServerDirectoryRow)}
               </div>
             </section>
           `;
         })
         .join("")
-    : `<div class="empty-list">Nenhum servidor cadastrado.</div>`;
+    : `<div class="empty-list">Nenhum servidor encontrado.</div>`;
 }
 
 function renderServerProfile() {
@@ -3000,7 +3052,7 @@ function renderAlerts() {
     ? alerts
         .map(
           (alert) => `
-            <article class="alert-card ${alert.severity || "info"} ${alert.read ? "read" : "unread"}">
+            <article class="alert-card ${alert.severity || "info"} ${alert.type !== "down" ? "alert-recovered" : ""} ${alert.read ? "read" : "unread"}">
               <div>
                 <strong>${escapeHtml(alert.serverName)}</strong>
                 <div>${escapeHtml(alert.message)}</div>
@@ -3100,7 +3152,6 @@ async function markAllAlertsRead() {
   renderAlerts();
   renderMetrics();
   renderSimpleDashboard();
-  renderExecutiveDashboard();
   if (els.notificationMenu) els.notificationMenu.open = false;
   showToast("Alertas atualizados", "Todos os alertas foram marcados como lidos.");
 }
@@ -3134,6 +3185,623 @@ function filteredAlerts() {
   });
 }
 
+function backupClientMonitoredTotal(status) {
+  return status.success + status.error + status.warning + status.info;
+}
+
+function backupClientHealthPct(status) {
+  const monitored = backupClientMonitoredTotal(status);
+  return monitored ? Math.round((status.success / monitored) * 1000) / 10 : 0;
+}
+
+function captureBackupsScroll() {
+  const ids = ["backupsDirectoryList", "backupsSetsList", "backupsHealthRows", "backupsAttentionList", "backupsClientGrid"];
+  const positions = {};
+  for (const id of ids) {
+    const element = document.getElementById(id);
+    if (element) positions[id] = element.scrollTop;
+  }
+  if (els.backupsProfilePanel) positions.backupsProfilePanel = els.backupsProfilePanel.scrollTop;
+  const jobsList = els.backupsProfilePanel?.querySelector(".backup-jobs-list, .company-mini-list.simple-scroll-list");
+  if (jobsList) positions.backupsJobsList = jobsList.scrollTop;
+  return positions;
+}
+
+function restoreBackupsScroll(positions) {
+  for (const [id, scrollTop] of Object.entries(positions)) {
+    if (id === "backupsProfilePanel") {
+      if (els.backupsProfilePanel) els.backupsProfilePanel.scrollTop = scrollTop;
+      continue;
+    }
+    if (id === "backupsJobsList") {
+      const jobsList = els.backupsProfilePanel?.querySelector(".backup-jobs-list, .company-mini-list.simple-scroll-list");
+      if (jobsList) jobsList.scrollTop = scrollTop;
+      continue;
+    }
+    const element = document.getElementById(id);
+    if (element) element.scrollTop = scrollTop;
+  }
+}
+
+function renderBackups() {
+  if (!els.backupsHero) return;
+  const backupsScrollPositions = captureBackupsScroll();
+  const backups = state.cloudBackup || null;
+  const configured = Boolean(backups?.configured);
+  const status = backups?.status || { info: 0, success: 0, warning: 0, error: 0, nomon: 0, total: 0 };
+  const clients = Array.isArray(backups?.clients) ? backups.clients : [];
+  const total = status.total || 0;
+  const healthPct = configured ? backupClientHealthPct(status) : 0;
+  const clientsWithIssues = clients
+    .filter((client) => client.status.error > 0 || client.status.nomon > 0)
+    .sort((left, right) => (right.status.error + right.status.nomon) - (left.status.error + left.status.nomon));
+
+  const tone = !configured ? "warning" : status.error > 0 ? "danger" : status.nomon > 0 ? "warning" : "success";
+  const headline = !configured
+    ? "Integracao nao configurada"
+    : tone === "danger"
+    ? "Atencao necessaria"
+    : tone === "warning"
+    ? "Acompanhar coleta"
+    : "Backups saudaveis";
+  const message = !configured
+    ? "Cadastre a API key do Cloud Backup para comecar a receber dados aqui."
+    : tone === "danger"
+    ? `${status.error} backup${status.error === 1 ? "" : "s"} com erro e ${status.nomon} sem monitoramento.`
+    : tone === "warning"
+    ? `${status.nomon} backup${status.nomon === 1 ? "" : "s"} sem monitoramento ativo, sem erro critico confirmado.`
+    : "Nenhum erro critico de backup no momento.";
+
+  els.backupsHero.className = `simple-hero ${tone}`;
+  els.backupsHero.innerHTML = `
+    <div>
+      <span class="simple-kicker">Resumo de backups</span>
+      <h2>${escapeHtml(headline)}</h2>
+      <p>${escapeHtml(message)}</p>
+    </div>
+    ${availabilityGaugeHtml(configured ? healthPct : undefined, { title: "Taxa de sucesso", caption: "" })}
+  `;
+
+  if (els.backupsKpiRow) {
+    els.backupsKpiRow.innerHTML = `
+      <article><span>Total</span><strong>${total}</strong><small>monitorados</small></article>
+      <article class="success"><span>Sucesso</span><strong>${status.success}</strong><small>concluidos</small></article>
+      <article class="${status.error ? "danger" : "success"}" data-backup-errors-trigger="1"><span>Erro</span><strong>${status.error}</strong><small>com falha</small></article>
+      <article class="${status.nomon ? "warning" : "success"}"><span>Sem monitor</span><strong>${status.nomon}</strong><small>sem coleta ativa</small></article>
+      <article class="${clientsWithIssues.length ? "danger" : "success"}"><span>Clientes</span><strong>${clients.length}</strong><small>${clientsWithIssues.length} com problema</small></article>
+    `;
+  }
+
+  const parseBackupDate = (value) => {
+    if (!value) return NaN;
+    const t = new Date(String(value).replace(" ", "T")).getTime();
+    return Number.isFinite(t) ? t : NaN;
+  };
+  const allBackupSets = clients.flatMap((client) =>
+    (client.backupSets || []).map((set) => ({ ...set, clientLabel: client.groupName || client.name }))
+  );
+  const now = Date.now();
+  const dayStart = now - 24 * 60 * 60 * 1000;
+  const recentAttempts = allBackupSets.filter((set) => {
+    const t = parseBackupDate(set.lastBackupJobDate);
+    return Number.isFinite(t) && t >= dayStart && t <= now;
+  });
+  const recentFailed = recentAttempts.filter((set) => set.status !== "success");
+
+  if (els.backupsDestinationMeta) {
+    els.backupsDestinationMeta.textContent = configured
+      ? `${recentAttempts.length} tentativa${recentAttempts.length === 1 ? "" : "s"}`
+      : "Sem dados";
+  }
+
+  if (els.backupsDestinationChart) {
+    const bucketCount = 8;
+    const bucketMs = 3 * 60 * 60 * 1000;
+    const buckets = Array.from({ length: bucketCount }, (_, index) => {
+      const start = now - (bucketCount - index) * bucketMs;
+      const end = start + bucketMs;
+      const inBucket = recentAttempts.filter((set) => {
+        const t = parseBackupDate(set.lastBackupJobDate);
+        return t >= start && t < end;
+      });
+      const failed = inBucket.filter((set) => set.status !== "success").length;
+      return { start, count: inBucket.length, failed };
+    });
+    const maxCount = Math.max(1, ...buckets.map((bucket) => bucket.count));
+    els.backupsDestinationChart.innerHTML = configured
+      ? buckets
+          .map((bucket) => {
+            const height = Math.max(bucket.count ? 12 : 3, Math.round((bucket.count / maxCount) * 100));
+            const barTone = bucket.count === 0 ? "" : bucket.failed > 0 ? "active" : "success";
+            const hour = new Date(bucket.start).getHours().toString().padStart(2, "0");
+            const title = bucket.count
+              ? `${bucket.count} tentativa${bucket.count === 1 ? "" : "s"} por volta de ${hour}h${bucket.failed ? `, ${bucket.failed} com falha` : ""}`
+              : `Sem tentativas por volta de ${hour}h`;
+            return `<span class="${barTone}" style="--bar-height:${height}%" title="${title}"><i></i></span>`;
+          })
+          .join("")
+      : "";
+  }
+
+  if (els.backupsDestinationFoot) {
+    els.backupsDestinationFoot.innerHTML = !configured
+      ? ""
+      : `
+        <span>24h atras</span>
+        <strong>${recentAttempts.length ? `${recentAttempts.length} tentativa${recentAttempts.length === 1 ? "" : "s"} &middot; ${recentFailed.length} falha${recentFailed.length === 1 ? "" : "s"}` : "Sem tentativas registradas"}</strong>
+        <span>agora</span>
+      `;
+  }
+
+  const donutTotal = Math.max(1, total);
+  const successDeg = (status.success / donutTotal) * 360;
+  const errorDeg = (status.error / donutTotal) * 360;
+  const warningDeg = (status.warning / donutTotal) * 360;
+
+  if (els.backupsDonutMeta) els.backupsDonutMeta.textContent = `${total} monitorado${total === 1 ? "" : "s"}`;
+  if (els.backupsStatusDonut) {
+    els.backupsStatusDonut.style.setProperty("--online-deg", `${successDeg}deg`);
+    els.backupsStatusDonut.style.setProperty("--offline-deg", `${errorDeg}deg`);
+    els.backupsStatusDonut.style.setProperty("--attention-deg", `${warningDeg}deg`);
+  }
+  if (els.backupsStatusDonutValue) {
+    els.backupsStatusDonutValue.textContent = `${total ? Math.round((status.success / total) * 100) : 0}%`;
+  }
+  if (els.backupsDonutLegend) {
+    els.backupsDonutLegend.innerHTML = `
+      <span><i class="success"></i>${status.success} sucesso</span>
+      <span><i class="danger"></i>${status.error} erro</span>
+      <span><i class="warning"></i>${status.warning} alerta</span>
+      <span><i class="neutral"></i>${status.nomon + status.info} sem monitor/info</span>
+    `;
+  }
+
+  if (els.backupsSetsMeta) els.backupsSetsMeta.textContent = `${total} set${total === 1 ? "" : "s"}`;
+  if (els.backupsSetsSummary) {
+    els.backupsSetsSummary.innerHTML = `
+      <article><strong>${status.success}</strong><span>sucesso</span></article>
+      <article class="${status.warning ? "warning" : ""}"><strong>${status.warning}</strong><span>alerta</span></article>
+      <article class="${status.error ? "danger" : ""}" data-backup-errors-trigger="1"><strong>${status.error}</strong><span>erro</span></article>
+    `;
+  }
+  if (els.backupsSetsList) {
+    const allIssues = clients.flatMap((client) => client.issues.map((issue) => ({ ...issue, clientLabel: client.groupName || client.name })));
+    const sortedIssues = allIssues
+      .slice()
+      .sort((left, right) => (left.status === "error" ? 0 : 1) - (right.status === "error" ? 0 : 1))
+      .slice(0, 20);
+    els.backupsSetsList.innerHTML = !configured
+      ? `<div class="simple-empty">Configure a API de backup para ver os dados.</div>`
+      : sortedIssues.length
+      ? sortedIssues
+          .map((issue) => {
+            const rowTone = issue.status === "error" ? "offline" : "degraded";
+            return `
+              <button class="simple-network-row ${rowTone}" type="button">
+                <span>
+                  <strong>${escapeHtml(issue.backupSetName || issue.loginDescription)}</strong>
+                  <small>${escapeHtml(issue.clientLabel)} &middot; ${escapeHtml(issue.destinationName || "Sem destino")}</small>
+                </span>
+                <em>${escapeHtml(issue.lastJobStatusDescription || issue.status)}</em>
+              </button>
+            `;
+          })
+          .join("")
+      : `<div class="simple-empty">Nenhum backup set com problema.</div>`;
+  }
+
+  if (els.backupsAttentionMeta) {
+    els.backupsAttentionMeta.textContent = clientsWithIssues.length ? `${clientsWithIssues.length} itens principais` : "Sem acao imediata";
+  }
+  if (els.backupsAttentionList) {
+    els.backupsAttentionList.innerHTML = !configured
+      ? `<div class="simple-empty">Configure a API de backup para ver os dados.</div>`
+      : clientsWithIssues.length
+      ? clientsWithIssues
+          .slice(0, 4)
+          .map((client) => `
+            <button class="simple-attention-item ${client.status.error > 0 ? "offline" : "probe_stale"}" type="button" data-backup-attention-client="${escapeHtml(String(client.id))}">
+              <span>
+                <strong>${escapeHtml(client.groupName || client.name)}</strong>
+                <small>${client.status.total} jobs monitorados</small>
+              </span>
+              <em>${client.status.error > 0 ? `${client.status.error} erro${client.status.error === 1 ? "" : "s"}` : `${client.status.nomon} sem monitor`}</em>
+            </button>
+          `)
+          .join("")
+      : `<div class="simple-empty">Tudo certo nos backups monitorados.</div>`;
+  }
+
+  if (els.backupsHealthRows) {
+    const healthRows = clients
+      .map((client) => ({ client, pct: backupClientHealthPct(client.status), monitored: backupClientMonitoredTotal(client.status) }))
+      .filter((item) => item.monitored > 0)
+      .sort((left, right) => left.pct - right.pct)
+      .slice(0, 6);
+
+    els.backupsHealthRows.innerHTML = !configured
+      ? `<div class="simple-empty">Configure a API de backup para ver os dados.</div>`
+      : healthRows.length
+      ? healthRows
+          .map(({ client, pct, monitored }) => `
+            <div class="backup-health-row ${availabilityTone(pct)}">
+              <span>
+                <strong>${escapeHtml(client.groupName || client.name)}</strong>
+                <small>${client.status.success}/${monitored} backups monitorados com sucesso</small>
+              </span>
+              <em>${pct}%</em>
+              <i aria-hidden="true"><b style="width:${Math.max(0, Math.min(100, pct))}%"></b></i>
+            </div>
+          `)
+          .join("")
+      : `<div class="simple-empty">Nenhum cliente com backups monitorados.</div>`;
+  }
+
+  const clientTilesSorted = clients.slice().sort((left, right) => {
+    const toneOrder = { danger: 0, warning: 1, success: 2 };
+    const leftTone = left.status.error > 0 ? "danger" : left.status.nomon > 0 ? "warning" : "success";
+    const rightTone = right.status.error > 0 ? "danger" : right.status.nomon > 0 ? "warning" : "success";
+    return (
+      (toneOrder[leftTone] ?? 3) - (toneOrder[rightTone] ?? 3) ||
+      compareAlpha(left.groupName || left.name, right.groupName || right.name)
+    );
+  });
+
+  if (els.backupsClientGrid) {
+    const clientTiles = clientTilesSorted.slice(0, 8);
+    els.backupsClientGrid.innerHTML = !configured
+      ? `<div class="simple-empty">Configure a API de backup para ver os dados.</div>`
+      : clientTiles.length
+      ? clientTiles
+          .map((client) => {
+            const tileTone = client.status.error > 0 ? "danger" : client.status.nomon > 0 ? "warning" : "success";
+            const pct = backupClientHealthPct(client.status);
+            return `
+              <button class="simple-client-card ${tileTone}" type="button" data-backup-client-jump="${escapeHtml(String(client.id))}">
+                <strong>${escapeHtml(client.groupName || client.name)}</strong>
+                <span>${client.status.success}/${client.status.total} sucesso</span>
+                <small>${client.status.error ? `${client.status.error} erro${client.status.error === 1 ? "" : "s"}` : `${pct}% saude`}</small>
+              </button>
+            `;
+          })
+          .join("")
+      : `<div class="simple-empty">Nenhum cliente retornado pela API.</div>`;
+  }
+
+  if (els.backupsEmptyState) els.backupsEmptyState.hidden = configured;
+  if (els.backupsProfileLayout) els.backupsProfileLayout.hidden = !configured;
+  if (els.backupsClientCountHint) {
+    els.backupsClientCountHint.textContent = `${clients.length} ${clients.length === 1 ? "cliente" : "clientes"}`;
+  }
+  if (els.backupsDirectoryCount) {
+    els.backupsDirectoryCount.textContent = `${clients.length} ${clients.length === 1 ? "cliente" : "clientes"}`;
+  }
+  if (!configured) return;
+
+  if (state.selectedBackupClientId && !clients.some((client) => String(client.id) === state.selectedBackupClientId)) {
+    state.selectedBackupClientId = null;
+  }
+  if (!state.selectedBackupClientId && clientTilesSorted.length) {
+    state.selectedBackupClientId = String(clientTilesSorted[0].id);
+  }
+
+  if (els.backupsDirectoryList) {
+    els.backupsDirectoryList.innerHTML = clients.length
+      ? sortedByAlpha(clients, (client) => client.groupName || client.name)
+          .map((client) => {
+            const clientId = String(client.id);
+            const selected = clientId === state.selectedBackupClientId ? "selected" : "";
+            const pulseStatus = client.status.error > 0 ? "offline" : client.status.nomon > 0 ? "paused" : "online";
+            const badgeLabel = client.status.error > 0 ? "ATENCAO" : client.status.nomon > 0 ? "VERIFICAR" : "OK";
+            return `
+              <button class="server-directory-item ${selected}" type="button" data-backup-client-id="${escapeHtml(clientId)}">
+                <span class="status-pulse ${pulseStatus}"></span>
+                <span>
+                  <strong>${escapeHtml(client.groupName || client.name)}</strong>
+                  <small>${client.status.total} jobs</small>
+                </span>
+                <em>${badgeLabel}</em>
+              </button>
+            `;
+          })
+          .join("")
+      : `<div class="empty-list">Nenhum cliente retornado pela API.</div>`;
+  }
+
+  if (els.backupsProfilePanel) {
+    const linkSelectIsActive =
+      document.activeElement?.matches?.("[data-backup-client-link]") && els.backupsProfilePanel.contains(document.activeElement);
+    if (!linkSelectIsActive) {
+      const selectedClient = clients.find((client) => String(client.id) === state.selectedBackupClientId);
+      els.backupsProfilePanel.innerHTML = renderBackupClientProfile(selectedClient);
+    }
+  }
+
+  restoreBackupsScroll(backupsScrollPositions);
+}
+
+function renderBackupClientProfile(client) {
+  if (!client) {
+    return `
+      <div class="empty-state">
+        <strong>Nenhum cliente selecionado</strong>
+        <span>Selecione um cliente para ver o detalhamento completo.</span>
+      </div>
+    `;
+  }
+  const clientId = String(client.id);
+  const jobs = Array.isArray(client.backupSets) ? client.backupSets : [];
+  const c = client.status;
+  const clientTotal = Math.max(1, c.total);
+  const clientHealthPct = backupClientHealthPct(c);
+  const successDeg = (c.success / clientTotal) * 360;
+  const errorDeg = (c.error / clientTotal) * 360;
+  const warningDeg = (c.warning / clientTotal) * 360;
+  const badgeTone = c.error > 0 ? "offline" : c.nomon > 0 ? "probe_stale" : "online";
+  const badgeLabel = c.error > 0 ? "ATENCAO" : c.nomon > 0 ? "VERIFICAR" : "OK";
+  const backupJobTimestamp = (value) => {
+    if (!value) return 0;
+    const timestamp = new Date(String(value).replace(" ", "T")).getTime();
+    return Number.isFinite(timestamp) ? timestamp : 0;
+  };
+  const sortedJobs = jobs.slice().sort((left, right) => {
+    const order = { error: 0, warning: 1, nomon: 2, info: 3, success: 4 };
+    return (
+      (order[left.status] ?? 5) - (order[right.status] ?? 5) ||
+      backupJobTimestamp(right.lastBackupJobDate) - backupJobTimestamp(left.lastBackupJobDate) ||
+      compareAlpha(left.loginDescription || left.backupSetName, right.loginDescription || right.backupSetName)
+    );
+  });
+  const lastAttemptJob = jobs.slice().sort((left, right) => backupJobTimestamp(right.lastBackupJobDate) - backupJobTimestamp(left.lastBackupJobDate))[0];
+  const lastSuccessJob = jobs
+    .filter((job) => job.lastSuccessBackupJobDate)
+    .sort((left, right) => backupJobTimestamp(right.lastSuccessBackupJobDate) - backupJobTimestamp(left.lastSuccessBackupJobDate))[0];
+  const lastAttemptLabel = lastAttemptJob?.lastBackupJobDate ? formatDate(lastAttemptJob.lastBackupJobDate) : "-";
+  const lastSuccessLabel = lastSuccessJob?.lastSuccessBackupJobDate ? formatDate(lastSuccessJob.lastSuccessBackupJobDate) : "-";
+
+  const destinationCounts = client.issues.reduce((acc, issue) => {
+    const key = issue.destinationName || "Sem destino";
+    acc[key] = (acc[key] || 0) + 1;
+    return acc;
+  }, {});
+  const destinationEntries = Object.entries(destinationCounts).sort((left, right) => right[1] - left[1]).slice(0, 8);
+  const maxDestCount = Math.max(1, ...destinationEntries.map(([, count]) => count));
+  const destinationBars = destinationEntries
+    .map(([name, count]) => {
+      const height = Math.max(12, Math.round((count / maxDestCount) * 100));
+      return `<span class="active" style="--bar-height:${height}%" title="${count} problema(s) em ${escapeHtml(name)}"><i></i></span>`;
+    })
+    .join("");
+
+  const loginItems = client.issues.length
+    ? client.issues
+        .slice(0, 4)
+        .map(
+          (issue) => `
+            <button type="button">
+              <span>${escapeHtml(issue.loginDescription || issue.backupSetName)}</span>
+              <strong class="status-badge ${issue.status === "error" ? "offline" : "probe_stale"}">${escapeHtml(issue.lastJobStatusDescription || issue.status)}</strong>
+            </button>
+          `
+        )
+        .join("")
+    : `<div class="empty-list compact">Nenhum problema de coleta.</div>`;
+
+  const groupOptions = sortedByAlpha(state.groups, groupSortLabel)
+    .map((group) => `<option value="${group.id}" ${client.groupId === group.id ? "selected" : ""}>${escapeHtml(group.name)}</option>`)
+    .join("");
+
+  return `
+    <div class="detail-header">
+      <div class="company-profile-title">
+        <div>
+          <h2>${escapeHtml(client.groupName || client.name)}</h2>
+          <div class="detail-meta">${c.total} job${c.total === 1 ? "" : "s"} monitorado${c.total === 1 ? "" : "s"}${client.groupName ? ` &middot; API: ${escapeHtml(client.name)}` : ""}</div>
+        </div>
+      </div>
+      <span class="status-badge ${badgeTone}">${badgeLabel}</span>
+    </div>
+
+    <section class="company-insight-grid backup-insight-grid" aria-label="Visao visual dos backups">
+      <article class="company-insight-card">
+        <div class="panel-title compact-title">
+          <h3>Status dos backups</h3>
+          <span>${c.total} monitorado${c.total === 1 ? "" : "s"}</span>
+        </div>
+        <div class="simple-status-chart company-status-chart">
+          <div class="simple-status-donut" style="--online-deg:${successDeg}deg; --offline-deg:${errorDeg}deg; --attention-deg:${warningDeg}deg;" aria-hidden="true">
+            <strong>${c.total ? Math.round((c.success / c.total) * 100) : 0}%</strong>
+          </div>
+          <div class="simple-status-legend">
+            <span><i class="success"></i>${c.success} sucesso</span>
+            <span><i class="danger"></i>${c.error} erro</span>
+            <span><i class="warning"></i>${c.warning} alerta</span>
+            <span><i class="neutral"></i>${c.nomon} sem monitor</span>
+          </div>
+        </div>
+      </article>
+
+      <article class="company-insight-card">
+        <div class="panel-title compact-title">
+          <h3>Por destino</h3>
+          <span>${destinationEntries.length} destino${destinationEntries.length === 1 ? "" : "s"} com problema</span>
+        </div>
+        ${
+          destinationEntries.length
+            ? `<div class="simple-failure-chart company-failure-chart">${destinationBars}</div>`
+            : `<div class="empty-list compact">Nenhum destino com problema.</div>`
+        }
+      </article>
+
+      <article class="company-insight-card">
+        <div class="panel-title compact-title">
+          <h3>Conjuntos</h3>
+          <span>${c.total} no total</span>
+        </div>
+        <div class="simple-network-summary">
+          <article><strong>${c.success}</strong><span>sucesso</span></article>
+          <article class="${c.warning ? "warning" : ""}"><strong>${c.warning}</strong><span>alerta</span></article>
+          <article class="${c.error ? "danger" : ""}"><strong>${c.error}</strong><span>erro</span></article>
+        </div>
+      </article>
+
+      <article class="company-insight-card">
+        <div class="panel-title compact-title">
+          <h3>Saude da coleta</h3>
+          <span>${c.nomon} sem monitor</span>
+        </div>
+        <div class="company-health-meter">
+          <strong>${clientHealthPct}%</strong>
+          <span><i style="width:${Math.max(0, Math.min(100, clientHealthPct))}%"></i></span>
+          <small>${c.nomon ? `${c.nomon} sem monitorar` : "Coleta respondendo"}</small>
+        </div>
+        <div class="company-mini-list">${loginItems}</div>
+      </article>
+    </section>
+
+    <section class="detail-section backup-summary-section">
+      <h3>Resumo do cliente</h3>
+      <div class="detail-grid backup-detail-grid">
+        <div class="detail-stat"><span>Total</span><strong>${c.total}</strong><small>jobs monitorados</small></div>
+        <div class="detail-stat"><span>Sucesso</span><strong>${c.success}</strong><small>ultima coleta validada</small></div>
+        <div class="detail-stat ${c.error ? "backup-stat-danger" : ""}"><span>Erros</span><strong>${c.error}</strong><small>falhas confirmadas</small></div>
+        <div class="detail-stat ${c.nomon ? "watch-limit-stat" : ""}"><span>Sem monitor</span><strong>${c.nomon}</strong><small>coleta desativada</small></div>
+        <div class="detail-stat"><span>Ultima tentativa</span><strong>${escapeHtml(lastAttemptLabel)}</strong><small>${escapeHtml(lastAttemptJob?.destinationName || "sem destino")}</small></div>
+        <div class="detail-stat"><span>Ultimo sucesso</span><strong>${escapeHtml(lastSuccessLabel)}</strong><small>${escapeHtml(lastSuccessJob?.destinationName || "sem destino")}</small></div>
+      </div>
+    </section>
+
+    <section class="detail-section backup-jobs-section">
+      <div class="panel-title compact-title">
+        <h3>Trabalhos de backup</h3>
+        <span>${jobs.length} job${jobs.length === 1 ? "" : "s"}</span>
+      </div>
+      <div class="company-server-list backup-jobs-list">
+        ${
+          sortedJobs.length
+            ? sortedJobs
+                .map((job) => {
+                  const jobTone = backupJobBadgeTone(job.status);
+                  const rowTone = job.status === "error" ? "is-offline" : job.status === "warning" ? "is-warning" : "";
+                  return `
+                    <button class="server-directory-item company-server-row backup-job-row ${rowTone}" type="button">
+                      <span class="status-pulse ${jobTone === "offline" ? "offline" : jobTone === "dependency_down" ? "paused" : "online"}"></span>
+                      <span class="backup-job-icon" aria-hidden="true">BK</span>
+                      <span>
+                        <strong>${escapeHtml(job.loginDescription || job.backupSetName || "Backup sem nome")}</strong>
+                        <small>${escapeHtml(job.destinationName || "Sem destino")} &middot; ${job.lastBackupJobDate ? escapeHtml(job.lastBackupJobDate) : "sem data"}</small>
+                      </span>
+                      <strong class="status-badge ${jobTone}">${escapeHtml(job.lastJobStatusDescription || job.status)}</strong>
+                    </button>
+                  `;
+                })
+                .join("")
+            : `<div class="empty-list compact">Nenhum job retornado para este cliente.</div>`
+        }
+      </div>
+    </section>
+
+    ${
+      isAdmin()
+        ? `<section class="detail-section backup-link-section">
+            <div class="panel-title compact-title">
+              <h3>Vinculo administrativo</h3>
+              <span>${client.groupName ? "Empresa associada" : "Sem empresa"}</span>
+            </div>
+            <div class="backup-link-row">
+              ${
+                state.backupLinkEditorOpen === clientId
+                  ? `<label class="backup-link-control">
+                      <span>Empresa</span>
+                      <select data-backup-client-link="${escapeHtml(clientId)}">
+                        <option value="">Nao vinculado</option>
+                        ${groupOptions}
+                      </select>
+                    </label>`
+                  : `<button class="ghost-button compact" type="button" data-backup-link-edit="${escapeHtml(clientId)}">
+                      ${client.groupName ? `Vinculado a ${escapeHtml(client.groupName)}` : "Vincular empresa"} &#9998;
+                    </button>`
+              }
+            </div>
+          </section>`
+        : ""
+    }
+  `;
+}
+
+function backupJobBadgeTone(status) {
+  if (status === "success") return "online";
+  if (status === "error") return "offline";
+  if (status === "warning") return "dependency_down";
+  return "paused";
+}
+
+function openBackupErrorsDialog() {
+  if (!els.backupErrorsDialog || !els.backupErrorsList) return;
+  const clients = Array.isArray(state.cloudBackup?.clients) ? state.cloudBackup.clients : [];
+  const errors = clients
+    .flatMap((client) =>
+      (client.backupSets || [])
+        .filter((set) => set.status === "error")
+        .map((set) => ({ ...set, clientLabel: client.groupName || client.name }))
+    )
+    .sort((left, right) => compareAlpha(left.clientLabel, right.clientLabel) || compareAlpha(left.backupSetName, right.backupSetName));
+
+  els.backupErrorsList.innerHTML = errors.length
+    ? errors
+        .map(
+          (error) => `
+            <div class="dialog-list-row">
+              <div>
+                <strong>${escapeHtml(error.loginDescription || error.backupSetName)}</strong>
+                <small>${escapeHtml(error.clientLabel)} &middot; ${escapeHtml(error.destinationName || "Sem destino")}</small>
+              </div>
+              <div class="dialog-list-meta">
+                <span class="status-badge offline">${escapeHtml(error.lastJobStatusDescription || "Erro")}</span>
+                <small>Ultimo sucesso: ${error.lastSuccessBackupJobDate ? escapeHtml(error.lastSuccessBackupJobDate) : "nunca"}</small>
+              </div>
+            </div>
+          `
+        )
+        .join("")
+    : `<div class="empty-list">Nenhum backup com erro no momento.</div>`;
+
+  els.backupErrorsDialog.showModal();
+}
+
+function openOfflineServersDialog() {
+  if (!els.offlineServersDialog || !els.offlineServersList) return;
+  const activeServers = state.servers.filter((server) => server.isActive);
+  const problemServers = activeServers
+    .filter((server) => ["offline", "probe_stale"].includes(displayStatus(server)))
+    .sort((left, right) => {
+      const order = { offline: 0, probe_stale: 1 };
+      return (order[displayStatus(left)] ?? 2) - (order[displayStatus(right)] ?? 2) || compareAlpha(serverSortLabel(left), serverSortLabel(right));
+    });
+
+  els.offlineServersList.innerHTML = problemServers.length
+    ? problemServers
+        .map((server) => {
+          const status = displayStatus(server);
+          return `
+            <div class="dialog-list-row">
+              <div>
+                <strong>${escapeHtml(server.name)}</strong>
+                <small>${escapeHtml(groupLabel(server.groupId))} &middot; ${escapeHtml(server.hostname)}</small>
+              </div>
+              <div class="dialog-list-meta">
+                <span class="status-badge ${status}">${statusLabel(status)}</span>
+                <small>${server.checkSource === "probe" && status === "probe_stale" ? `Probe visto: ${formatDate(server.probeLastSeenAt)}` : `Verificado: ${formatDate(server.lastCheckedAt)}`}</small>
+              </div>
+            </div>
+          `;
+        })
+        .join("")
+    : `<div class="empty-list">Nenhum servidor offline ou sem contato.</div>`;
+
+  els.offlineServersDialog.showModal();
+}
+
 function renderGroups() {
   if (!els.groupsList) return;
   els.groupCount.textContent = `${state.groups.length} ${state.groups.length === 1 ? "empresa" : "empresas"}`;
@@ -3159,10 +3827,10 @@ function renderGroups() {
             <span>${escapeHtml(group.description || "Sem descricao.")}</span>
           </div>
           <div class="group-stats">
-            <span>${servers.length} servidores</span>
-            <span>${links.length} links</span>
-            <span>${devices.length} dispositivos</span>
-            <span>${activeServers.length} ativos</span>
+            <span>${servers.length} ${servers.length === 1 ? "servidor" : "servidores"}</span>
+            <span>${links.length} ${links.length === 1 ? "link" : "links"}</span>
+            <span>${devices.length} ${devices.length === 1 ? "dispositivo" : "dispositivos"}</span>
+            <span>${activeServers.length} ${activeServers.length === 1 ? "ativo" : "ativos"}</span>
             <span>${offline} offline</span>
           </div>
           ${
@@ -3208,8 +3876,8 @@ function renderUsers() {
                 <small>${escapeHtml(userCompanyLabels(user))}</small>
               </div>
               <div class="user-badges">
-                <span class="tag">${roleLabel(user.role)}</span>
-                <span class="tag">${user.isActive ? "Ativo" : "Inativo"}</span>
+                <span class="tag ${user.role === "admin" ? "tag-admin" : ""}">${roleLabel(user.role)}</span>
+                <span class="tag ${user.isActive ? "tag-active" : ""}">${user.isActive ? "Ativo" : "Inativo"}</span>
               </div>
               <div class="user-actions">
                 <button class="ghost-button compact" type="button" data-user-action="edit" data-id="${user.id}">Editar</button>
@@ -3228,7 +3896,7 @@ function renderBrandingForm() {
   if (document.activeElement !== els.brandNameInput) els.brandNameInput.value = current.brandName;
   if (document.activeElement !== els.brandSubtitleInput) els.brandSubtitleInput.value = current.brandSubtitle;
   els.themeModeInputs?.forEach((input) => {
-    input.checked = input.value === current.theme;
+    input.checked = input.value === (state.themeDraft || current.theme);
   });
   if (els.brandPreviewName) els.brandPreviewName.textContent = current.brandName;
   if (els.brandPreviewSubtitle) els.brandPreviewSubtitle.textContent = current.brandSubtitle || "Sem subtitulo";
@@ -3300,6 +3968,7 @@ async function submitThemeSettings(event) {
   try {
     const settings = await api("/api/settings/theme", { method: "PUT", body: JSON.stringify({ theme }) });
     state.settings = { ...state.settings, ...settings };
+    state.themeDraft = null;
     applyBranding();
     showToast("Tema salvo", "A preferencia de tema foi atualizada.");
   } catch (error) {
@@ -3998,13 +4667,15 @@ function renderProbes() {
     const total = state.probes.length;
     const stale = state.probes.filter((probe) => probe.status === "stale").length;
     const online = state.probes.filter((probe) => probe.status === "online").length;
-    const counts = { all: total, stale, online };
-    const labels = { all: "Todos", stale: "Sem contato", online: "Online" };
+    const outdated = state.probes.filter((probe) => probe.updateAvailable).length;
+    const counts = { all: total, stale, online, outdated };
+    const labels = { all: "Todos", stale: "Sem contato", online: "Online", outdated: "Desatualizados" };
     button.textContent = `${labels[button.dataset.probeFilter] || "Todos"} (${counts[button.dataset.probeFilter] ?? total})`;
   });
   const filteredProbes = state.probes.filter((probe) => {
     if (state.probeFilter === "stale") return probe.status === "stale";
     if (state.probeFilter === "online") return probe.status === "online";
+    if (state.probeFilter === "outdated") return probe.updateAvailable;
     return true;
   });
   const probes = sortedByAlpha(filteredProbes, probeSortLabel);
@@ -4014,24 +4685,29 @@ function renderProbes() {
     ? probes
         .map(
           (probe) => `
-            <article class="probe-card" ${clickableCardAttrs(`Selecionar probe ${probe.name || probe.id}`)} data-probe-id="${escapeHtml(probe.id)}">
-              <div>
-                <strong>${platformIcon(probe.platform)}${escapeHtml(probe.name || probe.id)}</strong>
-                <span>${escapeHtml(probe.id)} · ${platformLabel(probe.platform)} · v${escapeHtml(probe.version || "-")} · ${escapeHtml(probe.primaryAddress || probe.addresses?.[0] || probe.lastAddress || "sem IP")} · ${escapeHtml(primaryMac(probe) || "sem MAC")} · ${probe.targetCount || 0} ${probe.targetCount === 1 ? "alvo" : "alvos"}</span>
-                <span class="probe-company-line">Empresa: <strong>${escapeHtml(probeCompanySummary(probe))}</strong></span>
+            <article class="probe-card ${probe.updateAvailable ? "outdated" : ""}" ${clickableCardAttrs(`Selecionar probe ${probe.name || probe.id}`)} data-probe-id="${escapeHtml(probe.id)}">
+              <div class="probe-card-main">
+                <div class="probe-card-title">
+                  ${platformIcon(probe.platform)}
+                  <strong>${escapeHtml(probe.name || probe.id)}</strong>
+                  ${probe.updateAvailable ? '<span class="mini-badge warning">Atualizar</span>' : ""}
+                </div>
+                <div class="probe-card-tags">
+                  <span class="probe-card-tag">${platformLabel(probe.platform)} · v${escapeHtml(probe.version || "-")}</span>
+                  <span class="probe-card-tag">${probe.targetCount || 0} ${probe.targetCount === 1 ? "alvo" : "alvos"}</span>
+                  <span class="probe-card-tag company">${escapeHtml(probeCompanySummary(probe))}</span>
+                </div>
               </div>
               <div class="probe-card-meta">
-                <strong><span class="status-badge ${probe.status === "stale" ? "probe_stale" : probe.status || "unknown"}">${probeStatusLabel(probe.status)}</span></strong>
-                ${probe.updateAvailable ? probeVersionBadge(probe) : ""}
+                <span class="status-badge ${probe.status === "stale" ? "probe_stale" : probe.status || "unknown"}">${probeStatusLabel(probe.status)}</span>
                 ${probeUpdateStatusBadge(probe)}
-                <span>${formatDate(probe.lastSeenAt)}</span>
-                <span>${escapeHtml(probe.lastAddress || "sem endereco")}</span>
+                <span class="probe-card-seen">${formatDate(probe.lastSeenAt)}</span>
               </div>
             </article>
           `
         )
         .join("")
-    : `<div class="empty-list">${state.probeFilter === "stale" ? "Nenhum probe sem contato." : state.probeFilter === "online" ? "Nenhum probe online." : "Nenhum probe se conectou ainda."}</div>`;
+    : `<div class="empty-list">${state.probeFilter === "stale" ? "Nenhum probe sem contato." : state.probeFilter === "online" ? "Nenhum probe online." : state.probeFilter === "outdated" ? "Nenhum probe desatualizado." : "Nenhum probe se conectou ainda."}</div>`;
   if (els.probeDetailPanel) {
     els.probeDetailPanel.hidden = true;
     els.probeDetailPanel.innerHTML = "";
@@ -4274,30 +4950,63 @@ function renderNetworkDetail(link) {
       </div>
       <span class="status-badge ${networkStatusClass(status)}">${networkStatusLabel(status)}</span>
     </div>
-    <div class="profile-data-grid">
-      <div><span>${escapeHtml(activeTargetTitle(link))}</span><strong>${escapeHtml(activeLabel)}</strong></div>
-      <div><span>Metodo do ativo</span><strong>${escapeHtml(activeMethod)}</strong></div>
-      <div><span>Motivo do status</span><strong>${escapeHtml(networkStatusReasonLabel(link))}</strong></div>
-      <div><span>IP publico observado</span><strong>${escapeHtml(link.observedPublicIp || "-")}</strong></div>
-      <div><span>Rede WAN esperada</span><strong>${escapeHtml(link.expectedPublicIp ? `${link.expectedPublicIp}${link.expectedPublicPrefixLength ? `/${link.expectedPublicPrefixLength}` : ""}` : "-")}</strong></div>
-      <div><span>Alvos externos</span><strong>${escapeHtml(targetLabels.join(", ") || "-")}</strong></div>
-      <div><span>Coletor</span><strong>${escapeHtml(collectorLabel)}</strong></div>
-      <div><span>ID do agente</span><strong>${escapeHtml(collectorId || "-")}</strong></div>
-      <div><span>Source IP</span><strong>${escapeHtml(link.linkProbeSourceIp || "-")}</strong></div>
-      <div><span>Sucesso</span><strong>${link.linkProbeSuccessRate === null || link.linkProbeSuccessRate === undefined ? "-" : `${Math.round(Number(link.linkProbeSuccessRate) * 100)}%`}</strong></div>
-      <div><span>Versao do agente</span><strong>${escapeHtml(link.mikrotikVersion || link.linkProbeVersion || "-")}</strong></div>
-      ${isMikrotikProbe ? `<div><span>Health-check</span><strong>${escapeHtml(link.mikrotikHealthTarget || "-")}</strong><small>${link.mikrotikHealthReceived ?? 0}/${link.mikrotikHealthSent ?? 0} respostas</small></div>` : ""}
-      <div><span>Latencia</span><strong>${link.lastLatencyMs ?? "-"} ms</strong></div>
-      <div><span>Perda</span><strong>${link.lastPacketLossPercent ?? "-"}%</strong></div>
-      <div><span>Jitter</span><strong>${link.lastJitterMs ?? "-"} ms</strong></div>
-      <div><span>Ultima checagem</span><strong>${formatDate(link.lastCheckedAt)}</strong></div>
-      <div><span>Intervalo</span><strong>${link.checkInterval || 10}s</strong></div>
-      <div><span>Falhas para offline</span><strong>${link.failureThreshold || 3}</strong></div>
-      <div><span>Tipo</span><strong>${networkLinkTypeLabel(link.linkType)}</strong></div>
-      <div><span>Interface</span><strong>${escapeHtml(link.interfaceName || "-")}</strong></div>
-      <div><span>Limite latencia</span><strong>${link.degradedLatencyMs || 120} ms</strong></div>
-      <div><span>Limite perda</span><strong>${link.degradedPacketLossPercent ?? 10}%</strong></div>
-    </div>
+    <article class="profile-section">
+      <div class="panel-title compact-title">
+        <h3>Conectividade</h3>
+        <span>${networkStatusLabel(status)}</span>
+      </div>
+      <div class="profile-stat-grid">
+        <div class="detail-stat"><span>${escapeHtml(activeTargetTitle(link))}</span><strong>${escapeHtml(activeLabel)}</strong></div>
+        <div class="detail-stat"><span>Metodo do ativo</span><strong>${escapeHtml(activeMethod)}</strong></div>
+        <div class="detail-stat"><span>Motivo do status</span><strong>${escapeHtml(networkStatusReasonLabel(link))}</strong></div>
+        <div class="detail-stat"><span>Alvos externos</span><strong>${escapeHtml(targetLabels.join(", ") || "-")}</strong></div>
+      </div>
+    </article>
+
+    <article class="profile-section">
+      <div class="panel-title compact-title">
+        <h3>Identificacao</h3>
+        <span>${escapeHtml(collectorLabel)}</span>
+      </div>
+      <div class="profile-stat-grid">
+        <div class="detail-stat"><span>IP publico observado</span><strong>${escapeHtml(link.observedPublicIp || "-")}</strong></div>
+        <div class="detail-stat"><span>Rede WAN esperada</span><strong>${escapeHtml(link.expectedPublicIp ? `${link.expectedPublicIp}${link.expectedPublicPrefixLength ? `/${link.expectedPublicPrefixLength}` : ""}` : "-")}</strong></div>
+        <div class="detail-stat"><span>Coletor</span><strong>${escapeHtml(collectorLabel)}</strong></div>
+        <div class="detail-stat"><span>ID do agente</span><strong>${escapeHtml(collectorId || "-")}</strong></div>
+        <div class="detail-stat"><span>Source IP</span><strong>${escapeHtml(link.linkProbeSourceIp || "-")}</strong></div>
+        <div class="detail-stat"><span>Versao do agente</span><strong>${escapeHtml(link.mikrotikVersion || link.linkProbeVersion || "-")}</strong></div>
+      </div>
+    </article>
+
+    <article class="profile-section">
+      <div class="panel-title compact-title">
+        <h3>Desempenho</h3>
+        <span>${link.lastLatencyMs ?? "-"} ms</span>
+      </div>
+      <div class="profile-stat-grid">
+        <div class="detail-stat"><span>Latencia</span><strong>${link.lastLatencyMs ?? "-"} ms</strong></div>
+        <div class="detail-stat"><span>Perda</span><strong>${link.lastPacketLossPercent ?? "-"}%</strong></div>
+        <div class="detail-stat"><span>Jitter</span><strong>${link.lastJitterMs ?? "-"} ms</strong></div>
+        <div class="detail-stat"><span>Sucesso</span><strong>${link.linkProbeSuccessRate === null || link.linkProbeSuccessRate === undefined ? "-" : `${Math.round(Number(link.linkProbeSuccessRate) * 100)}%`}</strong></div>
+        ${isMikrotikProbe ? `<div class="detail-stat"><span>Health-check</span><strong>${escapeHtml(link.mikrotikHealthTarget || "-")}</strong><small>${link.mikrotikHealthReceived ?? 0}/${link.mikrotikHealthSent ?? 0} respostas</small></div>` : ""}
+      </div>
+    </article>
+
+    <article class="profile-section">
+      <div class="panel-title compact-title">
+        <h3>Configuracao</h3>
+        <span>${networkLinkTypeLabel(link.linkType)}</span>
+      </div>
+      <div class="profile-stat-grid">
+        <div class="detail-stat"><span>Ultima checagem</span><strong>${formatDate(link.lastCheckedAt)}</strong></div>
+        <div class="detail-stat"><span>Intervalo</span><strong>${link.checkInterval || 10}s</strong></div>
+        <div class="detail-stat"><span>Falhas para offline</span><strong>${link.failureThreshold || 3}</strong></div>
+        <div class="detail-stat"><span>Tipo</span><strong>${networkLinkTypeLabel(link.linkType)}</strong></div>
+        <div class="detail-stat"><span>Interface</span><strong>${escapeHtml(link.interfaceName || "-")}</strong></div>
+        <div class="detail-stat"><span>Limite latencia</span><strong>${link.degradedLatencyMs || 120} ms</strong></div>
+        <div class="detail-stat"><span>Limite perda</span><strong>${link.degradedPacketLossPercent ?? 10}%</strong></div>
+      </div>
+    </article>
     ${
       Array.isArray(link.targetResults) && link.targetResults.length
         ? `<section class="profile-section">
@@ -4652,10 +5361,7 @@ function render() {
   updateActiveFilterCount();
   renderMetrics();
   renderSimpleDashboard();
-  renderExecutiveDashboard();
   renderCompanyNav();
-  renderServers();
-  renderDetail();
   renderServerDirectory();
   renderServerProfile();
   renderNetworks();
@@ -4664,6 +5370,7 @@ function render() {
   renderGroups();
   renderProbes();
   renderUsers();
+  renderBackups();
   renderBrandingForm();
   renderAlertSettingsForm();
 }
@@ -4765,6 +5472,16 @@ function closeGroupDialog() {
   els.groupDialog.close();
 }
 
+function renderUserSectionsPicker(selectedSections = SECTION_KEYS) {
+  if (!els.userSectionsFieldset || !els.userRole) return;
+  const isRestrictedUser = els.userRole.value !== "admin";
+  els.userSectionsFieldset.hidden = !isRestrictedUser;
+  const selected = new Set(selectedSections);
+  els.userSectionsFieldset.querySelectorAll('input[name="userSection"]').forEach((input) => {
+    input.checked = selected.has(input.value);
+  });
+}
+
 function renderUserCompanyPicker(selectedIds = []) {
   if (!els.userCompanyFieldset || !els.userCompanyList || !els.userRole) return;
   const isRestrictedUser = els.userRole.value !== "admin";
@@ -4797,6 +5514,7 @@ function openUserDialog(user = null) {
   els.userPassword.placeholder = user ? "Deixe em branco para manter a senha" : "Minimo 6 caracteres";
   els.userPassword.required = !user;
   renderUserCompanyPicker(user?.groupIds || []);
+  renderUserSectionsPicker(user?.allowedSections || SECTION_KEYS);
   els.userDialog.showModal();
 }
 
@@ -4994,7 +5712,10 @@ async function submitUser(event) {
     isActive: els.userActive.value === "true",
     groupIds: els.userRole.value === "admin"
       ? []
-      : [...(els.userCompanyList?.querySelectorAll("input[type='checkbox']:checked") || [])].map((input) => input.value)
+      : [...(els.userCompanyList?.querySelectorAll("input[type='checkbox']:checked") || [])].map((input) => input.value),
+    allowedSections: els.userRole.value === "admin"
+      ? SECTION_KEYS
+      : [...(els.userSectionsFieldset?.querySelectorAll('input[name="userSection"]:checked') || [])].map((input) => input.value)
   };
   if (els.userPassword.value) payload.password = els.userPassword.value;
   try {
@@ -5355,6 +6076,20 @@ function bindEvents() {
       if (els.groupFilter) els.groupFilter.value = state.filters.groupId;
       setActiveView("dashboard");
       render();
+      return;
+    }
+
+    const backupClientButton = eventClosest(event, "[data-simple-backup-client-id]");
+    if (backupClientButton?.dataset.simpleBackupClientId) {
+      state.selectedBackupClientId = backupClientButton.dataset.simpleBackupClientId;
+      state.backupLinkEditorOpen = null;
+      setActiveView("backups");
+      renderBackups();
+      return;
+    }
+
+    if (eventClosest(event, "[data-offline-trigger]")) {
+      openOfflineServersDialog();
     }
   });
 
@@ -5391,10 +6126,10 @@ function bindEvents() {
     document.querySelectorAll(".segment").forEach((item) => {
       item.classList.toggle("active", item.dataset.status === state.filters.status);
     });
-    document.querySelector("#dashboardDetails")?.setAttribute("open", "");
+    setActiveView("servers");
     updateActiveFilterCount();
     renderMetrics();
-    renderServers();
+    renderServerDirectory();
   });
 
   els.companyScopeSearch?.addEventListener("input", () => {
@@ -5496,7 +6231,7 @@ function bindEvents() {
       state.filters.status = button.dataset.status;
       updateActiveFilterCount();
       renderMetrics();
-      renderServers();
+      renderServerDirectory();
     });
   });
 
@@ -5504,14 +6239,14 @@ function bindEvents() {
     state.filters.query = els.searchInput.value.trim();
     updateActiveFilterCount();
     renderMetrics();
-    renderServers();
+    renderServerDirectory();
   });
 
   els.environmentFilter.addEventListener("change", () => {
     state.filters.environment = els.environmentFilter.value;
     updateActiveFilterCount();
     renderMetrics();
-    renderServers();
+    renderServerDirectory();
   });
 
   els.groupFilter.addEventListener("change", () => {
@@ -5596,7 +6331,6 @@ function bindEvents() {
     }
   });
 
-  document.querySelector("#openServerForm").addEventListener("click", () => openDialog());
   document.querySelector("#closeDialog").addEventListener("click", closeDialog);
   document.querySelector("#cancelForm").addEventListener("click", closeDialog);
   els.serverDialog?.addEventListener("click", (event) => closeDialogFromBackdrop(event, closeDialog));
@@ -5618,7 +6352,7 @@ function bindEvents() {
       if (allExpanded) state.topologyExpanded.delete(id);
       else state.topologyExpanded.add(id);
     });
-    renderServers();
+    renderServerDirectory();
   });
   els.serverForm.addEventListener("submit", submitServer);
 
@@ -5736,6 +6470,92 @@ function bindEvents() {
     }
   });
 
+  els.refreshBackupsButton?.addEventListener("click", async () => {
+    try {
+      const response = await api("/api/backups/refresh", { method: "POST" });
+      state.cloudBackup = response.backups || state.cloudBackup;
+      renderBackups();
+      showToast("Backups atualizados", "Os dados de backup foram atualizados agora.");
+    } catch (error) {
+      showToast("Falha ao atualizar backups", error.message);
+    }
+  });
+
+  els.backupsKpiRow?.addEventListener("click", (event) => {
+    if (event.target.closest("[data-backup-errors-trigger]")) openBackupErrorsDialog();
+  });
+
+  els.backupsSetsSummary?.addEventListener("click", (event) => {
+    if (event.target.closest("[data-backup-errors-trigger]")) openBackupErrorsDialog();
+  });
+
+  els.closeBackupErrorsDialog?.addEventListener("click", () => {
+    els.backupErrorsDialog?.close();
+  });
+
+  els.closeOfflineServersDialog?.addEventListener("click", () => {
+    els.offlineServersDialog?.close();
+  });
+
+  function selectBackupClient(clientId) {
+    state.selectedBackupClientId = clientId;
+    state.backupLinkEditorOpen = null;
+    renderBackups();
+    requestAnimationFrame(() => {
+      els.backupsProfilePanel?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+  }
+
+  els.backupsAttentionList?.addEventListener("click", (event) => {
+    const button = event.target.closest("[data-backup-attention-client]");
+    if (!button) return;
+    selectBackupClient(button.dataset.backupAttentionClient);
+  });
+
+  els.backupsClientGrid?.addEventListener("click", (event) => {
+    const button = event.target.closest("[data-backup-client-jump]");
+    if (!button) return;
+    selectBackupClient(button.dataset.backupClientJump);
+  });
+
+  els.backupsDirectoryList?.addEventListener("click", (event) => {
+    const button = event.target.closest("[data-backup-client-id]");
+    if (!button) return;
+    state.selectedBackupClientId = button.dataset.backupClientId;
+    state.backupLinkEditorOpen = null;
+    renderBackups();
+  });
+
+  els.backupsProfilePanel?.addEventListener("click", (event) => {
+    const button = event.target.closest("[data-backup-link-edit]");
+    if (!button) return;
+    state.backupLinkEditorOpen = button.dataset.backupLinkEdit;
+    renderBackups();
+    requestAnimationFrame(() => {
+      els.backupsProfilePanel?.querySelector("[data-backup-client-link]")?.focus();
+    });
+  });
+
+  els.backupsProfilePanel?.addEventListener("change", async (event) => {
+    const select = event.target.closest("[data-backup-client-link]");
+    if (!select) return;
+    const clientId = select.dataset.backupClientLink;
+    const groupId = select.value || null;
+    try {
+      const response = await api("/api/backups/link", {
+        method: "POST",
+        body: JSON.stringify({ clientId, groupId })
+      });
+      state.cloudBackup = response.backups || state.cloudBackup;
+      state.backupLinkEditorOpen = null;
+      renderBackups();
+      showToast("Vinculo atualizado", "O cliente de backup foi vinculado a empresa selecionada.");
+    } catch (error) {
+      showToast("Falha ao vincular cliente", error.message);
+      renderBackups();
+    }
+  });
+
   els.probeDetailPanel?.addEventListener("click", async (event) => {
     const serverRow = eventClosest(event, "[data-server-id]");
     if (serverRow) {
@@ -5809,12 +6629,22 @@ function bindEvents() {
   document.querySelector("#openUserForm").addEventListener("click", () => openUserDialog());
   document.querySelector("#closeUserDialog").addEventListener("click", closeUserDialog);
   document.querySelector("#cancelUserForm").addEventListener("click", closeUserDialog);
-  els.userRole?.addEventListener("change", () => renderUserCompanyPicker(
-    [...(els.userCompanyList?.querySelectorAll("input[type='checkbox']:checked") || [])].map((input) => input.value)
-  ));
+  els.userRole?.addEventListener("change", () => {
+    renderUserCompanyPicker(
+      [...(els.userCompanyList?.querySelectorAll("input[type='checkbox']:checked") || [])].map((input) => input.value)
+    );
+    renderUserSectionsPicker(
+      [...(els.userSectionsFieldset?.querySelectorAll('input[name="userSection"]:checked') || [])].map((input) => input.value)
+    );
+  });
   els.userForm.addEventListener("submit", submitUser);
   els.brandingForm?.addEventListener("submit", submitBranding);
   els.themeSettingsForm?.addEventListener("submit", submitThemeSettings);
+  els.themeModeInputs?.forEach((input) => {
+    input.addEventListener("change", () => {
+      state.themeDraft = input.value;
+    });
+  });
   els.alertSettingsForm?.addEventListener("submit", submitAlertSettings);
 
   document.querySelectorAll("[data-admin-view]").forEach((button) => {
@@ -5868,7 +6698,7 @@ function bindEvents() {
     if (group && button.dataset.groupAction === "delete") deleteGroup(group);
   });
 
-  els.serverList.addEventListener("click", (event) => {
+  els.serverDirectoryList?.addEventListener("click", (event) => {
     const topologyToggle = eventClosest(event, "[data-topology-toggle]");
     if (topologyToggle) {
       event.preventDefault();
@@ -5876,49 +6706,9 @@ function bindEvents() {
       const serverId = topologyToggle.dataset.topologyToggle;
       if (state.topologyExpanded.has(serverId)) state.topologyExpanded.delete(serverId);
       else state.topologyExpanded.add(serverId);
-      renderServers();
+      renderServerDirectory();
       return;
     }
-
-    const groupHeader = eventClosest(event, "[data-server-group-id]");
-    if (groupHeader) {
-      selectServerGroup(groupHeader.dataset.serverGroupId);
-      return;
-    }
-
-    const row = eventClosest(event, "[data-server-id]");
-    if (!row) return;
-    selectServer(row.dataset.serverId);
-  });
-
-  els.detailPanel.addEventListener("click", async (event) => {
-    const networkLink = eventClosest(event, "[data-network-link-id]");
-    if (networkLink) {
-      state.selectedNetworkLinkId = networkLink.dataset.networkLinkId;
-      state.selectedNetworkGroupId = null;
-      setActiveView("networks");
-      renderNetworks();
-      return;
-    }
-
-    const profileServer = eventClosest(event, "[data-profile-server-id]");
-    if (profileServer) {
-      selectServer(profileServer.dataset.profileServerId);
-      return;
-    }
-
-    const profileButton = eventClosest(event, "[data-view-server]");
-    if (profileButton) {
-      selectServer(profileButton.dataset.viewServer, { view: "servers" });
-      return;
-    }
-
-    const button = eventClosest(event, "[data-action]");
-    if (!button) return;
-    await handleServerAction(button);
-  });
-
-  els.serverDirectoryList?.addEventListener("click", (event) => {
     const groupButton = eventClosest(event, "[data-profile-server-group-id]");
     if (groupButton) {
       selectServerGroup(groupButton.dataset.profileServerGroupId);
@@ -5966,7 +6756,6 @@ function bindEvents() {
         renderAlerts();
         renderMetrics();
         renderSimpleDashboard();
-        renderExecutiveDashboard();
         showToast("Alerta reconhecido", `${alert.serverName} foi marcado como tratado.`);
       } catch (error) {
         showToast("Falha ao reconhecer alerta", error.message);
@@ -6025,6 +6814,6 @@ api("/api/auth/session")
   .catch(() => showLogin());
 setInterval(() => {
   if (!state.currentUser) return;
-  renderServers();
-  renderDetail();
+  renderServerDirectory();
+  renderServerProfile();
 }, 1000);

@@ -4,6 +4,7 @@ import { spawn } from "node:child_process";
 import { join, resolve } from "node:path";
 import os from "node:os";
 import { createAlertsHandler } from "./routes/alerts.js";
+import { createBackupsHandler } from "./routes/backups.js";
 import { createDownloadHandler } from "./routes/downloads.js";
 import { createGroupsHandler } from "./routes/groups.js";
 import { createHealthHandler } from "./routes/health.js";
@@ -16,6 +17,7 @@ import { createStaticHandler } from "./routes/static.js";
 import { createUsersHandler } from "./routes/users.js";
 import { createStorage } from "./storage/index.js";
 import { createAlertService } from "./services/alert.js";
+import { emptyCloudBackupState, fetchCloudBackupSummary } from "./services/cloudBackup.js";
 import {
   clearSessionCookie,
   hashPassword,
@@ -127,8 +129,9 @@ const SESSION_COOKIE = "sw_session";
 const SESSION_TTL_MS = 8 * 60 * 60 * 1000;
 const DEFAULT_ADMIN_EMAIL = process.env.SERVERWATCH_ADMIN_EMAIL || "admin@serverwatch.local";
 const DEFAULT_ADMIN_PASSWORD = process.env.SERVERWATCH_ADMIN_PASSWORD || "admin123";
-const PROBE_COLLECTOR_VERSION = "0.6.7";
-const PROBE_UPDATE_SUPPORTED_PLATFORMS = new Set(["linux"]);
+const PROBE_COLLECTOR_VERSION = "0.6.8";
+const CLOUDBACKUP_POLL_MS = 5 * 60 * 1000;
+const PROBE_UPDATE_SUPPORTED_PLATFORMS = new Set(["linux", "windows"]);
 
 function routerosQuote(value) {
   return `"${String(value ?? "")
@@ -332,6 +335,7 @@ let state = {
   events: [],
   alerts: [],
   probeUpdateRequests: [],
+  cloudBackup: emptyCloudBackupState(),
   settings: {
     defaultInterval: 10,
     defaultFailureThreshold: 2,
@@ -807,6 +811,10 @@ function normalizeGroup(payload, existing = {}) {
     description: String(payload.description ?? existing.description ?? "").trim(),
     logoDataUrl,
     type: String(payload.type || existing.type || "company"),
+    cloudBackupClientId:
+      payload.cloudBackupClientId !== undefined
+        ? String(payload.cloudBackupClientId || "").trim() || null
+        : existing.cloudBackupClientId ?? null,
     updatedAt: nowIso()
   };
 }
@@ -916,6 +924,17 @@ function canAccessGroup(user, groupId) {
   return userGroupIds(user).has(String(groupId));
 }
 
+const ALL_SECTIONS = ["servers", "networks", "backups", "alerts", "history"];
+
+function userAllowedSections(user) {
+  if (!user || isAdminUser(user)) return new Set(ALL_SECTIONS);
+  return new Set(Array.isArray(user.allowedSections) ? user.allowedSections.filter((section) => ALL_SECTIONS.includes(section)) : ALL_SECTIONS);
+}
+
+function canAccessSection(user, section) {
+  return userAllowedSections(user).has(section);
+}
+
 function visibleGroups(user = null) {
   const groups = listedGroups();
   if (!user || isAdminUser(user)) return groups;
@@ -924,21 +943,83 @@ function visibleGroups(user = null) {
 }
 
 function scopedServers(user = null) {
+  if (user && !canAccessSection(user, "servers")) return [];
   const servers = listedServers();
   if (!user || isAdminUser(user)) return servers;
   return servers.filter((server) => canAccessGroup(user, server.groupId));
 }
 
 function scopedNetworkDevices(user = null) {
+  if (user && !canAccessSection(user, "networks")) return [];
   const devices = listedNetworkDevices();
   if (!user || isAdminUser(user)) return devices;
   return devices.filter((device) => canAccessGroup(user, device.groupId));
 }
 
 function scopedNetworkLinks(user = null) {
+  if (user && !canAccessSection(user, "networks")) return [];
   const links = listedNetworkLinks();
   if (!user || isAdminUser(user)) return links;
   return links.filter((link) => canAccessGroup(user, link.groupId));
+}
+
+function decorateCloudBackupClients(clients) {
+  return (clients || []).map((client) => {
+    const group = listedGroups().find((item) => String(item.cloudBackupClientId || "") === String(client.id));
+    return { ...client, groupId: group ? group.id : null, groupName: group ? group.name : null };
+  });
+}
+
+function scopedCloudBackup(user = null) {
+  if (user && !canAccessSection(user, "backups")) return emptyCloudBackupState();
+  const backups = state.cloudBackup || emptyCloudBackupState();
+  const decoratedClients = decorateCloudBackupClients(backups.clients);
+  if (!user || isAdminUser(user)) {
+    return { ...backups, clients: decoratedClients };
+  }
+  const allowedGroupIds = userGroupIds(user);
+  const allowedClientIds = new Set(
+    listedGroups()
+      .filter((group) => allowedGroupIds.has(group.id) && group.cloudBackupClientId)
+      .map((group) => String(group.cloudBackupClientId))
+  );
+  const clients = decoratedClients.filter((client) => allowedClientIds.has(String(client.id)));
+  const status = clients.reduce(
+    (acc, client) => {
+      acc.info += client.status.info;
+      acc.success += client.status.success;
+      acc.warning += client.status.warning;
+      acc.error += client.status.error;
+      acc.nomon += client.status.nomon;
+      acc.total += client.status.total;
+      return acc;
+    },
+    { info: 0, success: 0, warning: 0, error: 0, nomon: 0, total: 0 }
+  );
+  return { ...backups, clients, status };
+}
+
+function setCloudBackupClientLink(clientId, groupId) {
+  const id = String(clientId || "").trim();
+  if (!id) {
+    const error = new Error("Cliente de backup invalido.");
+    error.statusCode = 400;
+    throw error;
+  }
+  for (const group of state.groups) {
+    if (String(group.cloudBackupClientId || "") === id) group.cloudBackupClientId = null;
+  }
+  if (groupId) {
+    const group = state.groups.find((item) => item.id === groupId && !item.deletedAt);
+    if (!group) {
+      const error = new Error("Empresa nao encontrada.");
+      error.statusCode = 404;
+      throw error;
+    }
+    group.cloudBackupClientId = id;
+  }
+  scheduleSave();
+  broadcastSnapshot();
 }
 
 function canAccessServer(user, serverId) {
@@ -962,18 +1043,21 @@ function canAccessEvent(user, event) {
 }
 
 function scopedEvents(user = null) {
+  if (user && !canAccessSection(user, "history")) return [];
   const events = state.events || [];
   if (!user || isAdminUser(user)) return events;
   return events.filter((event) => canAccessEvent(user, event));
 }
 
 function scopedNetworkEvents(user = null) {
+  if (user && !canAccessSection(user, "networks")) return [];
   const events = state.networkEvents || [];
   if (!user || isAdminUser(user)) return events;
   return events.filter((event) => canAccessEvent(user, event));
 }
 
 function scopedAlerts(user = null) {
+  if (user && !canAccessSection(user, "alerts")) return [];
   const alerts = state.alerts || [];
   if (!user || isAdminUser(user)) return alerts;
   return alerts.filter((alert) => canAccessServer(user, alert.serverId));
@@ -1052,6 +1136,12 @@ function normalizeUser(payload, existing = {}) {
   const groupIds = role === "admin"
     ? []
     : [...new Set(requestedGroupIds.map((id) => String(id || "").trim()).filter((id) => id && listedGroups().some((group) => group.id === id)))];
+  const requestedSections = Array.isArray(payload.allowedSections) ? payload.allowedSections : existing.allowedSections;
+  const allowedSections = role === "admin"
+    ? ALL_SECTIONS
+    : Array.isArray(requestedSections)
+    ? [...new Set(requestedSections.filter((section) => ALL_SECTIONS.includes(section)))]
+    : ALL_SECTIONS;
 
   if (!name) {
     const error = new Error("Informe o nome do usuario.");
@@ -1086,6 +1176,7 @@ function normalizeUser(payload, existing = {}) {
     email,
     role,
     groupIds,
+    allowedSections,
     isActive: Boolean(payload.isActive ?? existing.isActive ?? true),
     passwordHash: password ? hashPassword(password) : existing.passwordHash,
     mustChangePassword: Boolean(payload.mustChangePassword ?? existing.mustChangePassword ?? false),
@@ -1245,6 +1336,16 @@ function scheduleSave() {
   saveTimer = setTimeout(() => {
     persistState().catch((error) => console.error("Falha ao salvar estado", error));
   }, 250);
+}
+
+let broadcastSnapshotTimer = null;
+
+function scheduleBroadcastSnapshot() {
+  if (broadcastSnapshotTimer) return;
+  broadcastSnapshotTimer = setTimeout(() => {
+    broadcastSnapshotTimer = null;
+    broadcastSnapshot();
+  }, 300);
 }
 
 function probeStaleAfterMs(server) {
@@ -1925,7 +2026,7 @@ function applyLinkProbeStatus(payload, req) {
   }
 
   scheduleSave();
-  broadcastSnapshot();
+  scheduleBroadcastSnapshot();
   return publicNetworkLink(link);
 }
 
@@ -2184,7 +2285,7 @@ function applyMikrotikUplinkStatus(payload, req) {
   }
 
   scheduleSave();
-  broadcastSnapshot();
+  scheduleBroadcastSnapshot();
   return {
     device: publicNetworkDevice(device),
     links: updatedLinks,
@@ -2236,7 +2337,8 @@ function snapshot(currentUser = null) {
     currentUser: currentUser ? publicUser(currentUser) : null,
     settings: publicSettings(currentUser),
     alerts: scopedAlerts(currentUser).slice(0, 50),
-    events: scopedEvents(currentUser).slice(0, 100)
+    events: scopedEvents(currentUser).slice(0, 100),
+    cloudBackup: scopedCloudBackup(currentUser)
   };
 }
 
@@ -2531,6 +2633,31 @@ function startMonitor() {
     }
     checkProbeStaleness(now).catch((error) => console.error("Falha ao verificar probes sem contato", error));
   }, CHECK_LOOP_MS);
+}
+
+function getCloudBackupApiKey() {
+  return String(process.env.CLOUDBACKUP_API_KEY || "").trim();
+}
+
+async function refreshCloudBackup() {
+  const apiKey = getCloudBackupApiKey();
+  if (!apiKey) {
+    state.cloudBackup = emptyCloudBackupState();
+    return;
+  }
+  try {
+    state.cloudBackup = await fetchCloudBackupSummary(apiKey);
+  } catch (error) {
+    state.cloudBackup = {
+      ...(state.cloudBackup || emptyCloudBackupState()),
+      configured: true,
+      error: error.message || "Falha ao consultar a API de backups."
+    };
+    throw error;
+  } finally {
+    scheduleSave();
+    scheduleBroadcastSnapshot();
+  }
 }
 
 function getProbeToken() {
@@ -3342,7 +3469,7 @@ async function handleApi(req, res) {
         if (!registered) return sendJson(res, 400, { error: "Informe probeId." });
         const ensuredServer = ensureProbeServer(registered.probe);
         scheduleSave();
-        if (registered.changed || ensuredServer.changed) broadcastSnapshot();
+        if (registered.changed || ensuredServer.changed) scheduleBroadcastSnapshot();
         const probeWork = probeTargets(registered.probe.id);
         return sendJson(res, 200, {
           probe: publicProbe(registered.probe),
@@ -3394,7 +3521,7 @@ async function handleApi(req, res) {
           if (applyNetworkLinkResult(link, result, probe.id)) acceptedNetworkResults += 1;
         }
         scheduleSave();
-        if (registered.changed || ensuredServer.changed || accepted > 0 || acceptedNetworkResults > 0) broadcastSnapshot();
+        if (registered.changed || ensuredServer.changed || accepted > 0 || acceptedNetworkResults > 0) scheduleBroadcastSnapshot();
         return sendJson(res, 200, { ok: true, accepted, acceptedNetworkResults });
       }
 
@@ -3455,6 +3582,10 @@ async function handleApi(req, res) {
       if (await handleNetwork(req, res, { parts, session })) return;
     }
 
+    if (parts[1] === "backups") {
+      if (await handleBackups(req, res, { parts, session })) return;
+    }
+
     if (parts[1] === "servers") {
       if (handleServerRead(req, res, { parts, url, session })) return;
 
@@ -3491,7 +3622,12 @@ function scopedRealtimePayload(user, payload) {
   return scoped;
 }
 
-const webSocketHub = createWebSocketHub({ getSession, snapshot, filterPayload: scopedRealtimePayload });
+const webSocketHub = createWebSocketHub({
+  getSession,
+  getFreshUser: (id) => listedUsers().find((user) => user.id === id && user.isActive !== false),
+  snapshot,
+  filterPayload: scopedRealtimePayload
+});
 const { broadcast, broadcastSnapshot, handleUpgrade } = webSocketHub;
 const healthPayload = createHealthHandler({
   nowIso,
@@ -3567,6 +3703,15 @@ const handleNetwork = createNetworkHandler({
   addLink: (link) => state.networkLinks.unshift(link),
   scheduleSave,
   broadcastSnapshot
+});
+
+const handleBackups = createBackupsHandler({
+  sendJson,
+  readBody,
+  requireAdmin,
+  getCloudBackupState: (user = null) => scopedCloudBackup(user),
+  refreshCloudBackup,
+  linkCloudBackupClient: setCloudBackupClientLink
 });
 const handleAlerts = createAlertsHandler({
   nowIso,
@@ -3701,4 +3846,8 @@ server.on("upgrade", handleUpgrade);
 
 await loadState();
 startMonitor();
+refreshCloudBackup().catch((error) => console.error("Falha ao buscar backups na inicializacao", error));
+setInterval(() => {
+  refreshCloudBackup().catch((error) => console.error("Falha ao atualizar backups", error));
+}, CLOUDBACKUP_POLL_MS);
 server.listen(PORT, HOST, printStartup);

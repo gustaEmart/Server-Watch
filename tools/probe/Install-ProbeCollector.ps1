@@ -81,7 +81,7 @@ $action = New-ScheduledTaskAction `
   -Argument "`"$InstallDir\collector.js`" --config `"$configPath`""
 $trigger = New-ScheduledTaskTrigger -AtStartup
 $principal = New-ScheduledTaskPrincipal -UserId "SYSTEM" -RunLevel Highest
-$settings = New-ScheduledTaskSettingsSet -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1)
+$settings = New-ScheduledTaskSettingsSet -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1) -ExecutionTimeLimit ([TimeSpan]::Zero) -DontStopOnIdleEnd -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
 
 Register-ScheduledTask `
   -TaskName "ServerWatch Probe Collector" `

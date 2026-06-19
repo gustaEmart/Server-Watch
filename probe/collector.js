@@ -5,7 +5,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const DEFAULT_CONFIG = new URL("./config.json", import.meta.url);
-const VERSION = "0.6.7";
+const VERSION = "0.6.8";
 const DEFAULT_QUEUE_MAX_BATCHES = 1000;
 const HOST_METRICS_CACHE_MS = 60 * 1000;
 const HOST_METRICS_TIMEOUT_MS = 7000;
@@ -1048,15 +1048,26 @@ function spawnDetached(command, args) {
   child.unref();
 }
 
-async function handleUpdateRequest(config, request) {
-  if (!request?.id || handledUpdateRequests.has(request.id)) return;
-  handledUpdateRequests.add(request.id);
-
-  if (os.platform() !== "linux") {
-    await reportUpdateStatus(config, request, "unsupported", "Atualizacao remota automatica disponivel apenas para Linux.");
-    return;
+async function downloadToFile(config, urlPath, destination) {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 5 * 60 * 1000);
+  try {
+    const response = await fetch(`${config.serverUrl}${urlPath}`, {
+      signal: controller.signal,
+      headers: {
+        Authorization: `Bearer ${config.token}`,
+        "X-ServerWatch-Probe-Token": config.token
+      }
+    });
+    if (!response.ok) throw new Error(`Download retornou HTTP ${response.status}`);
+    const buffer = Buffer.from(await response.arrayBuffer());
+    await writeFile(destination, buffer);
+  } finally {
+    clearTimeout(timeoutId);
   }
+}
 
+async function handleLinuxUpdateRequest(config, request) {
   const installCommand = [
     `curl -fsSL ${shellQuote(`${config.serverUrl}/downloads/probe/linux-installer`)}`,
     "|",
@@ -1088,6 +1099,38 @@ async function handleUpdateRequest(config, request) {
   } catch (error) {
     await reportUpdateStatus(config, request, "failed", error.message);
   }
+}
+
+async function handleWindowsUpdateRequest(config, request) {
+  await reportUpdateStatus(config, request, "running");
+  try {
+    const tempDir = resolve(os.tmpdir(), `serverwatch-probe-update-${Date.now()}`);
+    await mkdir(tempDir, { recursive: true });
+    const exePath = resolve(tempDir, "ServerWatchProbeSetup.exe");
+    await downloadToFile(config, "/downloads/probe/windows-installer", exePath);
+    spawnDetached(exePath, ["--silent-repair"]);
+    console.log(`Scheduled probe update ${request.id} to ${request.targetVersion || "latest"}`);
+  } catch (error) {
+    await reportUpdateStatus(config, request, "failed", error.message);
+  }
+}
+
+async function handleUpdateRequest(config, request) {
+  if (!request?.id || handledUpdateRequests.has(request.id)) return;
+  handledUpdateRequests.add(request.id);
+
+  const platform = os.platform();
+  if (platform === "linux") {
+    await handleLinuxUpdateRequest(config, request);
+    return;
+  }
+
+  if (platform === "win32") {
+    await handleWindowsUpdateRequest(config, request);
+    return;
+  }
+
+  await reportUpdateStatus(config, request, "unsupported", "Atualizacao remota automatica disponivel apenas para Linux e Windows.");
 }
 
 async function runLoop(config) {

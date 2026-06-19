@@ -4,14 +4,19 @@ Resumo das versoes estaveis publicadas do ServerWatch.
 
 ## Unreleased
 
-## v2.1.0 - 2026-06-16
+## v3.0.0 - 2026-06-19
 
-- Adiciona gerador guiado de comandos na aba Probes para Server Probe Linux/Proxmox, LinkProbe Linux e MikroTik RouterOS.
-- Gera comandos RouterOS com multiplos uplinks, incluindo nome, interface, gateway, mascara e alvo de teste por link.
-- Permite pausar e reativar o monitoramento de links sem excluir o cadastro; links pausados nao contam como falha nas visualizacoes.
-- Impede checagem manual em links pausados ate que o monitoramento seja reativado.
-- Evita que resultados novos do MikroTik gerem evento de queda enquanto o link estiver pausado.
-- Corrige carregamento e persistencia de gateways RouterOS com nomes contendo espaco, como `LINK-VIVO GLOBAL`.
+- Adiciona o modulo de monitoramento de backups integrado a API do MSP Cloud Backup Pro.
+- Adiciona a pagina `Backups` com resumo executivo, indicadores de sucesso, erros, alertas e conjuntos sem monitoramento.
+- Exibe tentativas de backup nas ultimas 24 horas, saude por cliente e clientes que precisam de atencao.
+- Adiciona detalhamento expandido por cliente com status, destinos, resumo operacional, ultima tentativa, ultimo sucesso e lista de trabalhos.
+- Permite vincular clientes retornados pela API de backup as empresas cadastradas no ServerWatch.
+- Restringe a atualizacao manual e o gerenciamento de vinculos de backup aos administradores.
+- Aplica o escopo de empresas dos usuarios aos dados de backup exibidos.
+- Preserva a posicao de rolagem das listas e do painel expandido durante atualizacoes em tempo real.
+- Corrige contraste dos cards neutros, textos fora dos blocos e organizacao visual da lista de trabalhos de backup.
+- Mantem altura controlada e rolagem interna para listas extensas de clientes e trabalhos.
+
 - Adiciona o agente LinkProbe em Go para monitoramento de links de dentro para fora com multiplos alvos, policy route no firewall e envio para `POST /api/link-status`.
 - Adiciona recebimento backend de status do LinkProbe, criando ou atualizando links automaticamente pelo `agent_id`.
 - Publica binarios LinkProbe para Windows x64, Linux x64 e Linux ARM64 na area de downloads do ServerWatch.

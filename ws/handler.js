@@ -19,14 +19,19 @@ function encodeWebSocketFrame(payload) {
   return Buffer.concat([header, data]);
 }
 
-export function createWebSocketHub({ getSession, snapshot, filterPayload = (_user, payload) => payload }) {
+export function createWebSocketHub({ getSession, getFreshUser, snapshot, filterPayload = (_user, payload) => payload }) {
   const sockets = new Set();
+
+  function resolveClientUser(client) {
+    if (!client.userId) return null;
+    return getFreshUser(client.userId) || null;
+  }
 
   function broadcast(payload) {
     for (const client of sockets) {
       const socket = client.socket || client;
       if (socket.destroyed) continue;
-      const scopedPayload = filterPayload(client.user || null, payload);
+      const scopedPayload = filterPayload(resolveClientUser(client), payload);
       if (scopedPayload) socket.write(encodeWebSocketFrame(scopedPayload));
     }
   }
@@ -34,7 +39,7 @@ export function createWebSocketHub({ getSession, snapshot, filterPayload = (_use
   function broadcastSnapshot() {
     for (const client of sockets) {
       const socket = client.socket || client;
-      if (!socket.destroyed) socket.write(encodeWebSocketFrame(snapshot(client.user || null)));
+      if (!socket.destroyed) socket.write(encodeWebSocketFrame(snapshot(resolveClientUser(client))));
     }
   }
 
@@ -70,7 +75,7 @@ export function createWebSocketHub({ getSession, snapshot, filterPayload = (_use
       ].join("\r\n")
     );
 
-    const client = { socket, user: session.user };
+    const client = { socket, userId: session.user.id };
     sockets.add(client);
     socket.write(encodeWebSocketFrame(snapshot(session.user)));
     socket.on("close", () => sockets.delete(client));

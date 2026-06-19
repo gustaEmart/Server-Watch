@@ -1,6 +1,6 @@
 {
   "name": "serverwatch-mvp",
-  "version": "2.1.0",
+  "version": "3.0.0",
   "description": "ServerWatch MVP - monitoramento de disponibilidade via ping em rede local.",
   "main": "server.js",
   "type": "module",
@@ -9,7 +9,7 @@
     "dev": "node --watch server.js",
     "probe:setup": "node probe/setup-server.js",
     "migrate:json-to-mongo": "node scripts/migrate-json-to-mongo.js",
-    "check": "node --check server.js && node --check public/app.js && node --check probe/collector.js && node --check probe/setup-server.js && node --check routes/alerts.js && node --check routes/downloads.js && node --check routes/groups.js && node --check routes/health.js && node --check routes/meta.js && node --check routes/network.js && node --check routes/probes.js && node --check routes/servers.js && node --check routes/settings.js && node --check routes/static.js && node --check routes/users.js && node --check services/monitor.js && node --check services/alert.js && node --check services/auth.js && node --check services/http.js && node --check ws/handler.js",
+    "check": "node --check server.js && node --check public/app.js && node --check probe/collector.js && node --check probe/setup-server.js && node --check routes/alerts.js && node --check routes/backups.js && node --check routes/downloads.js && node --check routes/groups.js && node --check routes/health.js && node --check routes/meta.js && node --check routes/network.js && node --check routes/probes.js && node --check routes/servers.js && node --check routes/settings.js && node --check routes/static.js && node --check routes/users.js && node --check services/monitor.js && node --check services/alert.js && node --check services/auth.js && node --check services/cloudBackup.js && node --check services/http.js && node --check ws/handler.js",
     "test": "node --test test/monitor.test.js"
   },
   "dependencies": {

@@ -24,8 +24,14 @@ internal static class Program
     private static readonly string LegacyNodePath = Path.Combine(InstallDir, "node.exe");
 
     [STAThread]
-    private static void Main()
+    private static void Main(string[] args)
     {
+        if (args.Contains("--silent-repair", StringComparer.OrdinalIgnoreCase))
+        {
+            Environment.Exit(RunSilentRepair());
+            return;
+        }
+
         ApplicationConfiguration.Initialize();
 
         if (!IsAdministrator())
@@ -52,6 +58,77 @@ internal static class Program
         }
 
         Application.Run(new InstallerForm());
+    }
+
+    private static int RunSilentRepair()
+    {
+        try
+        {
+            if (!File.Exists(ConfigPath))
+            {
+                Console.Error.WriteLine($"config.json nao encontrado em {ConfigPath}; reparo silencioso requer uma instalacao existente.");
+                return 1;
+            }
+
+            var json = File.ReadAllText(ConfigPath);
+            var node = JsonNode.Parse(json) ?? throw new InvalidOperationException("config.json invalido.");
+            var probeId = node["probeId"]?.GetValue<string>() ?? "";
+            var config = new ProbeConfig(
+                node["serverUrl"]?.GetValue<string>() ?? "",
+                probeId,
+                node["name"]?.GetValue<string>() ?? probeId,
+                node["token"]?.GetValue<string>() ?? "",
+                node["intervalSeconds"]?.GetValue<int?>() ?? 10,
+                node["timeoutMs"]?.GetValue<int?>() ?? 2500
+            );
+
+            Console.WriteLine("Reparo silencioso iniciado.");
+            InstallerForm.Validate(config);
+
+            var backupDir = InstallerForm.CreateBackup();
+            try
+            {
+                Console.WriteLine("Parando instalacao anterior, se existir...");
+                InstallerForm.StopExistingProbe();
+                Directory.CreateDirectory(InstallDir);
+
+                Console.WriteLine("Copiando arquivos do collector...");
+                InstallerForm.WriteResource("collector.js", Path.Combine(InstallDir, "collector.js"));
+                InstallerForm.WriteResource("setup-server.js", Path.Combine(InstallDir, "setup-server.js"));
+                InstallerForm.RemoveLegacyNodeRuntime();
+
+                Console.WriteLine("Preparando runtime Node.js...");
+                InstallerForm.EnsureNodeRuntime(config);
+
+                Console.WriteLine("Salvando configuracao...");
+                InstallerForm.WriteConfig(config);
+
+                Console.WriteLine("Reconfigurando tarefa agendada...");
+                InstallerForm.RegisterTask();
+
+                Console.WriteLine("Iniciando Probe Collector...");
+                InstallerForm.RunTask();
+
+                Console.WriteLine("Registrando probe no ServerWatch...");
+                InstallerForm.RegisterProbe(config);
+
+                InstallerForm.RemoveBackup(backupDir);
+            }
+            catch
+            {
+                Console.Error.WriteLine("Falha no reparo; restaurando instalacao anterior...");
+                InstallerForm.RestoreBackup(backupDir);
+                throw;
+            }
+
+            Console.WriteLine("Reparo silencioso concluido com sucesso.");
+            return 0;
+        }
+        catch (Exception error)
+        {
+            Console.Error.WriteLine($"Falha no reparo silencioso: {error.Message}");
+            return 1;
+        }
     }
 
     private static bool IsAdministrator()
@@ -325,10 +402,13 @@ internal static class Program
             {
                 var values = ReadValues();
                 Validate(values);
+                SetProgress(8, "Validando URL e token no ServerWatch...");
                 ValidateServerWatch(values);
+                SetProgress(14, "Criando backup da instalacao atual...");
                 var backupDir = CreateBackup();
                 try
                 {
+                    SetProgress(12, "Parando instalacao anterior, se existir...");
                     StopExistingProbe();
                     Directory.CreateDirectory(InstallDir);
 
@@ -344,11 +424,13 @@ internal static class Program
                     RegisterTask();
                     SetProgress(82, "Iniciando Probe Collector...");
                     RunTask();
+                    SetProgress(90, "Registrando probe no ServerWatch...");
                     RegisterProbe(values);
                     RemoveBackup(backupDir);
                 }
                 catch
                 {
+                    SetProgress(5, "Restaurando instalacao anterior...");
                     RestoreBackup(backupDir);
                     throw;
                 }
@@ -400,7 +482,7 @@ internal static class Program
             );
         }
 
-        private static void Validate(ProbeConfig config)
+        internal static void Validate(ProbeConfig config)
         {
             if (!Uri.TryCreate(config.ServerUrl, UriKind.Absolute, out var uri) ||
                 (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps))
@@ -419,9 +501,8 @@ internal static class Program
             }
         }
 
-        private void ValidateServerWatch(ProbeConfig config)
+        private static void ValidateServerWatch(ProbeConfig config)
         {
-            SetProgress(8, "Validando URL e token no ServerWatch...");
             var url = $"{config.ServerUrl.TrimEnd('/')}/api/probe/validate?probeId={Uri.EscapeDataString(config.ProbeId)}";
             using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(15) };
             using var request = new HttpRequestMessage(HttpMethod.Get, url);
@@ -434,9 +515,8 @@ internal static class Program
             }
         }
 
-        private void RegisterProbe(ProbeConfig config)
+        internal static void RegisterProbe(ProbeConfig config)
         {
-            SetProgress(90, "Registrando probe no ServerWatch...");
             var url =
                 $"{config.ServerUrl.TrimEnd('/')}/api/probe/targets" +
                 $"?probeId={Uri.EscapeDataString(config.ProbeId)}" +
@@ -455,7 +535,7 @@ internal static class Program
             }
         }
 
-        private static void WriteResource(string name, string destination)
+        internal static void WriteResource(string name, string destination)
         {
             var assembly = Assembly.GetExecutingAssembly();
             using var input = assembly.GetManifestResourceStream(name)
@@ -464,7 +544,7 @@ internal static class Program
             input.CopyTo(output);
         }
 
-        private static void WriteConfig(ProbeConfig config)
+        internal static void WriteConfig(ProbeConfig config)
         {
             var payload = new
             {
@@ -479,24 +559,70 @@ internal static class Program
             File.WriteAllText(ConfigPath, json + Environment.NewLine);
         }
 
-        private static void RegisterTask()
+        private static string EscapeXmlText(string value) =>
+            value.Replace("&", "&amp;").Replace("<", "&lt;").Replace(">", "&gt;");
+
+        internal static void RegisterTask()
         {
             var collectorPath = Path.Combine(InstallDir, "collector.js");
-            var taskCommand = $"\"{NodePath}\" \"{collectorPath}\" --config \"{ConfigPath}\"";
-            RunProcess(
-                "schtasks.exe",
-                $"/Create /TN \"{TaskName}\" /SC ONSTART /RU SYSTEM /RL HIGHEST /TR \"{taskCommand}\" /F"
-            );
+            var taskArguments = $"\"{collectorPath}\" --config \"{ConfigPath}\"";
+            var xmlPath = Path.Combine(Path.GetTempPath(), $"serverwatch-probe-task-{Guid.NewGuid():N}.xml");
+            var taskXml =
+                "<?xml version=\"1.0\" encoding=\"UTF-16\"?>\n" +
+                "<Task version=\"1.2\" xmlns=\"http://schemas.microsoft.com/windows/2004/02/mit/task\">\n" +
+                "  <RegistrationInfo>\n" +
+                "    <Description>ServerWatch Probe Collector</Description>\n" +
+                "  </RegistrationInfo>\n" +
+                "  <Triggers>\n" +
+                "    <BootTrigger>\n" +
+                "      <Enabled>true</Enabled>\n" +
+                "    </BootTrigger>\n" +
+                "  </Triggers>\n" +
+                "  <Principals>\n" +
+                "    <Principal id=\"Author\">\n" +
+                "      <UserId>S-1-5-18</UserId>\n" +
+                "      <RunLevel>HighestAvailable</RunLevel>\n" +
+                "    </Principal>\n" +
+                "  </Principals>\n" +
+                "  <Settings>\n" +
+                "    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>\n" +
+                "    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>\n" +
+                "    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>\n" +
+                "    <AllowHardTerminate>true</AllowHardTerminate>\n" +
+                "    <StartWhenAvailable>true</StartWhenAvailable>\n" +
+                "    <RunOnlyIfNetworkAvailable>false</RunOnlyIfNetworkAvailable>\n" +
+                "    <ExecutionTimeLimit>PT0S</ExecutionTimeLimit>\n" +
+                "    <Priority>7</Priority>\n" +
+                "    <RestartOnFailure>\n" +
+                "      <Interval>PT1M</Interval>\n" +
+                "      <Count>999</Count>\n" +
+                "    </RestartOnFailure>\n" +
+                "  </Settings>\n" +
+                "  <Actions Context=\"Author\">\n" +
+                "    <Exec>\n" +
+                $"      <Command>{EscapeXmlText(NodePath)}</Command>\n" +
+                $"      <Arguments>{EscapeXmlText(taskArguments)}</Arguments>\n" +
+                "    </Exec>\n" +
+                "  </Actions>\n" +
+                "</Task>\n";
+            File.WriteAllText(xmlPath, taskXml, new System.Text.UnicodeEncoding(bigEndian: false, byteOrderMark: true));
+            try
+            {
+                RunProcess("schtasks.exe", $"/Create /TN \"{TaskName}\" /XML \"{xmlPath}\" /F");
+            }
+            finally
+            {
+                try { File.Delete(xmlPath); } catch { /* best effort cleanup */ }
+            }
         }
 
-        private static void RunTask()
+        internal static void RunTask()
         {
             RunProcess("schtasks.exe", $"/Run /TN \"{TaskName}\"");
         }
 
-        private void StopExistingProbe()
+        internal static void StopExistingProbe()
         {
-            SetProgress(12, "Parando instalacao anterior, se existir...");
             RunProcess("schtasks.exe", $"/End /TN \"{TaskName}\"", allowFailure: true);
             var managedNodePaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
             {
@@ -519,12 +645,11 @@ internal static class Program
             }
         }
 
-        private void EnsureNodeRuntime(ProbeConfig config)
+        internal static void EnsureNodeRuntime(ProbeConfig config)
         {
             if (File.Exists(NodePath))
             {
                 ValidateNodeRuntime();
-                SetProgress(48, "Runtime Node.js existente validado.");
                 return;
             }
 
@@ -534,10 +659,8 @@ internal static class Program
             try
             {
                 Directory.CreateDirectory(tempRoot);
-                SetProgress(38, "Baixando runtime Node.js do ServerWatch...");
                 DownloadRuntime(config, zipPath);
 
-                SetProgress(45, "Extraindo runtime Node.js...");
                 ZipFile.ExtractToDirectory(zipPath, extractDir);
                 var extractedNode = Directory.GetFiles(extractDir, "node.exe", SearchOption.AllDirectories).FirstOrDefault();
                 if (string.IsNullOrWhiteSpace(extractedNode))
@@ -632,7 +755,7 @@ internal static class Program
             }
         }
 
-        private static void RemoveLegacyNodeRuntime()
+        internal static void RemoveLegacyNodeRuntime()
         {
             try
             {
@@ -647,14 +770,13 @@ internal static class Program
             }
         }
 
-        private string? CreateBackup()
+        internal static string? CreateBackup()
         {
             if (!Directory.Exists(InstallDir))
             {
                 return null;
             }
 
-            SetProgress(14, "Criando backup da instalacao atual...");
             var backupDir = Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
                 $"ServerWatchProbe.backup.{DateTime.Now:yyyyMMddHHmmss}"
@@ -663,7 +785,7 @@ internal static class Program
             return backupDir;
         }
 
-        private void RestoreBackup(string? backupDir)
+        internal static void RestoreBackup(string? backupDir)
         {
             if (string.IsNullOrWhiteSpace(backupDir) || !Directory.Exists(backupDir))
             {
@@ -672,7 +794,6 @@ internal static class Program
 
             try
             {
-                SetProgress(5, "Restaurando instalacao anterior...");
                 RunProcess("schtasks.exe", $"/End /TN \"{TaskName}\"", allowFailure: true);
                 RunProcess("schtasks.exe", $"/Delete /TN \"{TaskName}\" /F", allowFailure: true);
                 if (Directory.Exists(InstallDir))
@@ -685,11 +806,11 @@ internal static class Program
             }
             catch (Exception error)
             {
-                logBox.AppendText($"[{DateTime.Now:HH:mm:ss}] Nao foi possivel restaurar automaticamente: {error.Message}{Environment.NewLine}");
+                Console.Error.WriteLine($"Nao foi possivel restaurar automaticamente: {error.Message}");
             }
         }
 
-        private static void RemoveBackup(string? backupDir)
+        internal static void RemoveBackup(string? backupDir)
         {
             if (!string.IsNullOrWhiteSpace(backupDir) && Directory.Exists(backupDir))
             {

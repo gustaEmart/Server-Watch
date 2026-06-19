@@ -384,6 +384,7 @@ function Restore-ProbeBackup($backupDir) {
       $settings = New-ScheduledTaskSettingsSet `
         -RestartCount 999 `
         -RestartInterval (New-TimeSpan -Minutes 1) `
+        -ExecutionTimeLimit ([TimeSpan]::Zero) `
         -AllowStartIfOnBatteries `
         -DontStopIfGoingOnBatteries
       Register-ScheduledTask `
@@ -453,6 +454,7 @@ function Install-Probe($values) {
     $settings = New-ScheduledTaskSettingsSet `
       -RestartCount 999 `
       -RestartInterval (New-TimeSpan -Minutes 1) `
+      -ExecutionTimeLimit ([TimeSpan]::Zero) `
       -AllowStartIfOnBatteries `
       -DontStopIfGoingOnBatteries
 
