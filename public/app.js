@@ -294,6 +294,7 @@ const els = {
   backupsDirectoryCount: document.querySelector("#backupsDirectoryCount"),
   backupsDirectoryList: document.querySelector("#backupsDirectoryList"),
   backupsProfilePanel: document.querySelector("#backupsProfilePanel"),
+  backupsSyncMeta: document.querySelector("#backupsSyncMeta"),
   refreshBackupsButton: document.querySelector("#refreshBackupsButton"),
   backupErrorsDialog: document.querySelector("#backupErrorsDialog"),
   backupErrorsList: document.querySelector("#backupErrorsList"),
@@ -1778,9 +1779,10 @@ function renderSimpleDashboard() {
   const cloudBackup = state.cloudBackup || null;
   const backupsConfigured = Boolean(cloudBackup?.configured);
   const backupStatus = cloudBackup?.status || { info: 0, success: 0, warning: 0, error: 0, nomon: 0, total: 0 };
-  const backupsTotal = backupStatus.total || 0;
   const backupsMonitoredTotal = backupClientMonitoredTotal(backupStatus);
-  const backupDonutTotal = Math.max(1, backupsTotal);
+  const backupsUnmonitoredTotal = backupClientUnmonitoredTotal(backupStatus);
+  const backupHealthPct = backupClientHealthPct(backupStatus);
+  const backupDonutTotal = Math.max(1, backupsMonitoredTotal);
   const backupSuccessDeg = (backupStatus.success / backupDonutTotal) * 360;
   const backupErrorDeg = (backupStatus.error / backupDonutTotal) * 360;
   const backupWarningDeg = (backupStatus.warning / backupDonutTotal) * 360;
@@ -1891,19 +1893,19 @@ function renderSimpleDashboard() {
       <section class="simple-panel">
         <div class="panel-title compact-title">
           <h2>Estado atual dos backups</h2>
-          <span>${backupsConfigured ? `${backupsTotal} monitorados` : "Nao configurado"}</span>
+          <span>${backupsConfigured ? `${backupsMonitoredTotal} monitorados` : "Nao configurado"}</span>
         </div>
         ${
           backupsConfigured
             ? `<div class="simple-status-chart">
                 <div class="simple-status-donut" style="--online-deg:${backupSuccessDeg}deg; --offline-deg:${backupErrorDeg}deg; --attention-deg:${backupWarningDeg}deg;" aria-hidden="true">
-                  <strong>${backupsTotal ? Math.round((backupStatus.success / backupsTotal) * 100) : 0}%</strong>
+                  <strong>${backupHealthPct}%</strong>
                 </div>
                 <div class="simple-status-legend">
                   <span><i class="success"></i>${backupStatus.success} sucesso</span>
                   <span><i class="danger"></i>${backupStatus.error} erro</span>
                   <span><i class="warning"></i>${backupStatus.warning} alerta</span>
-                  <span><i class="neutral"></i>${backupStatus.nomon + backupStatus.info} sem monitor/info</span>
+                  <span><i class="neutral"></i>${backupsUnmonitoredTotal} sem monitoramento</span>
                 </div>
               </div>`
             : `<div class="simple-empty">Configure a API de Cloud Backup para ver os dados.</div>`
@@ -3186,7 +3188,11 @@ function filteredAlerts() {
 }
 
 function backupClientMonitoredTotal(status) {
-  return status.success + status.error + status.warning + status.info;
+  return status.success + status.error + status.warning;
+}
+
+function backupClientUnmonitoredTotal(status) {
+  return status.nomon + status.info;
 }
 
 function backupClientHealthPct(status) {
@@ -3231,12 +3237,24 @@ function renderBackups() {
   const status = backups?.status || { info: 0, success: 0, warning: 0, error: 0, nomon: 0, total: 0 };
   const clients = Array.isArray(backups?.clients) ? backups.clients : [];
   const total = status.total || 0;
+  const monitoredTotal = backupClientMonitoredTotal(status);
+  const unmonitoredTotal = backupClientUnmonitoredTotal(status);
   const healthPct = configured ? backupClientHealthPct(status) : 0;
+  if (els.backupsSyncMeta) {
+    els.backupsSyncMeta.textContent = backups?.fetchedAt
+      ? `Ultima atualizacao: ${formatDate(backups.fetchedAt)}`
+      : configured
+      ? "Dados recebidos, aguardando horario da sincronizacao"
+      : "Integracao ainda nao configurada";
+  }
   const clientsWithIssues = clients
-    .filter((client) => client.status.error > 0 || client.status.nomon > 0)
-    .sort((left, right) => (right.status.error + right.status.nomon) - (left.status.error + left.status.nomon));
+    .filter((client) => client.status.error > 0 || backupClientUnmonitoredTotal(client.status) > 0)
+    .sort((left, right) =>
+      (right.status.error + backupClientUnmonitoredTotal(right.status)) -
+      (left.status.error + backupClientUnmonitoredTotal(left.status))
+    );
 
-  const tone = !configured ? "warning" : status.error > 0 ? "danger" : status.nomon > 0 ? "warning" : "success";
+  const tone = !configured ? "warning" : status.error > 0 ? "danger" : unmonitoredTotal > 0 ? "warning" : "success";
   const headline = !configured
     ? "Integracao nao configurada"
     : tone === "danger"
@@ -3247,9 +3265,9 @@ function renderBackups() {
   const message = !configured
     ? "Cadastre a API key do Cloud Backup para comecar a receber dados aqui."
     : tone === "danger"
-    ? `${status.error} backup${status.error === 1 ? "" : "s"} com erro e ${status.nomon} sem monitoramento.`
+    ? `${status.error} backup${status.error === 1 ? "" : "s"} com erro e ${unmonitoredTotal} sem monitoramento.`
     : tone === "warning"
-    ? `${status.nomon} backup${status.nomon === 1 ? "" : "s"} sem monitoramento ativo, sem erro critico confirmado.`
+    ? `${unmonitoredTotal} backup${unmonitoredTotal === 1 ? "" : "s"} sem monitoramento ativo, sem erro critico confirmado.`
     : "Nenhum erro critico de backup no momento.";
 
   els.backupsHero.className = `simple-hero ${tone}`;
@@ -3264,10 +3282,10 @@ function renderBackups() {
 
   if (els.backupsKpiRow) {
     els.backupsKpiRow.innerHTML = `
-      <article><span>Total</span><strong>${total}</strong><small>monitorados</small></article>
+      <article><span>Monitorados</span><strong>${monitoredTotal}</strong><small>com coleta ativa</small></article>
       <article class="success"><span>Sucesso</span><strong>${status.success}</strong><small>concluidos</small></article>
       <article class="${status.error ? "danger" : "success"}" data-backup-errors-trigger="1"><span>Erro</span><strong>${status.error}</strong><small>com falha</small></article>
-      <article class="${status.nomon ? "warning" : "success"}"><span>Sem monitor</span><strong>${status.nomon}</strong><small>sem coleta ativa</small></article>
+      <article class="${unmonitoredTotal ? "warning" : "success"}"><span>Sem monitor</span><strong>${unmonitoredTotal}</strong><small>sem coleta ativa</small></article>
       <article class="${clientsWithIssues.length ? "danger" : "success"}"><span>Clientes</span><strong>${clients.length}</strong><small>${clientsWithIssues.length} com problema</small></article>
     `;
   }
@@ -3333,26 +3351,28 @@ function renderBackups() {
       `;
   }
 
-  const donutTotal = Math.max(1, total);
+  const donutTotal = Math.max(1, monitoredTotal);
   const successDeg = (status.success / donutTotal) * 360;
   const errorDeg = (status.error / donutTotal) * 360;
   const warningDeg = (status.warning / donutTotal) * 360;
 
-  if (els.backupsDonutMeta) els.backupsDonutMeta.textContent = `${total} monitorado${total === 1 ? "" : "s"}`;
+  if (els.backupsDonutMeta) {
+    els.backupsDonutMeta.textContent = `${monitoredTotal} monitorado${monitoredTotal === 1 ? "" : "s"}`;
+  }
   if (els.backupsStatusDonut) {
     els.backupsStatusDonut.style.setProperty("--online-deg", `${successDeg}deg`);
     els.backupsStatusDonut.style.setProperty("--offline-deg", `${errorDeg}deg`);
     els.backupsStatusDonut.style.setProperty("--attention-deg", `${warningDeg}deg`);
   }
   if (els.backupsStatusDonutValue) {
-    els.backupsStatusDonutValue.textContent = `${total ? Math.round((status.success / total) * 100) : 0}%`;
+    els.backupsStatusDonutValue.textContent = `${healthPct}%`;
   }
   if (els.backupsDonutLegend) {
     els.backupsDonutLegend.innerHTML = `
       <span><i class="success"></i>${status.success} sucesso</span>
       <span><i class="danger"></i>${status.error} erro</span>
       <span><i class="warning"></i>${status.warning} alerta</span>
-      <span><i class="neutral"></i>${status.nomon + status.info} sem monitor/info</span>
+      <span><i class="neutral"></i>${unmonitoredTotal} sem monitoramento</span>
     `;
   }
 
@@ -3403,9 +3423,9 @@ function renderBackups() {
             <button class="simple-attention-item ${client.status.error > 0 ? "offline" : "probe_stale"}" type="button" data-backup-attention-client="${escapeHtml(String(client.id))}">
               <span>
                 <strong>${escapeHtml(client.groupName || client.name)}</strong>
-                <small>${client.status.total} jobs monitorados</small>
+                <small>${backupClientMonitoredTotal(client.status)} jobs monitorados</small>
               </span>
-              <em>${client.status.error > 0 ? `${client.status.error} erro${client.status.error === 1 ? "" : "s"}` : `${client.status.nomon} sem monitor`}</em>
+              <em>${client.status.error > 0 ? `${client.status.error} erro${client.status.error === 1 ? "" : "s"}` : `${backupClientUnmonitoredTotal(client.status)} sem monitor`}</em>
             </button>
           `)
           .join("")
@@ -3439,8 +3459,8 @@ function renderBackups() {
 
   const clientTilesSorted = clients.slice().sort((left, right) => {
     const toneOrder = { danger: 0, warning: 1, success: 2 };
-    const leftTone = left.status.error > 0 ? "danger" : left.status.nomon > 0 ? "warning" : "success";
-    const rightTone = right.status.error > 0 ? "danger" : right.status.nomon > 0 ? "warning" : "success";
+    const leftTone = left.status.error > 0 ? "danger" : backupClientUnmonitoredTotal(left.status) > 0 ? "warning" : "success";
+    const rightTone = right.status.error > 0 ? "danger" : backupClientUnmonitoredTotal(right.status) > 0 ? "warning" : "success";
     return (
       (toneOrder[leftTone] ?? 3) - (toneOrder[rightTone] ?? 3) ||
       compareAlpha(left.groupName || left.name, right.groupName || right.name)
@@ -3454,12 +3474,12 @@ function renderBackups() {
       : clientTiles.length
       ? clientTiles
           .map((client) => {
-            const tileTone = client.status.error > 0 ? "danger" : client.status.nomon > 0 ? "warning" : "success";
+            const tileTone = client.status.error > 0 ? "danger" : backupClientUnmonitoredTotal(client.status) > 0 ? "warning" : "success";
             const pct = backupClientHealthPct(client.status);
             return `
               <button class="simple-client-card ${tileTone}" type="button" data-backup-client-jump="${escapeHtml(String(client.id))}">
                 <strong>${escapeHtml(client.groupName || client.name)}</strong>
-                <span>${client.status.success}/${client.status.total} sucesso</span>
+                <span>${client.status.success}/${backupClientMonitoredTotal(client.status)} sucesso</span>
                 <small>${client.status.error ? `${client.status.error} erro${client.status.error === 1 ? "" : "s"}` : `${pct}% saude`}</small>
               </button>
             `;
@@ -3491,8 +3511,8 @@ function renderBackups() {
           .map((client) => {
             const clientId = String(client.id);
             const selected = clientId === state.selectedBackupClientId ? "selected" : "";
-            const pulseStatus = client.status.error > 0 ? "offline" : client.status.nomon > 0 ? "paused" : "online";
-            const badgeLabel = client.status.error > 0 ? "ATENCAO" : client.status.nomon > 0 ? "VERIFICAR" : "OK";
+            const pulseStatus = client.status.error > 0 ? "offline" : backupClientUnmonitoredTotal(client.status) > 0 ? "paused" : "online";
+            const badgeLabel = client.status.error > 0 ? "ATENCAO" : backupClientUnmonitoredTotal(client.status) > 0 ? "VERIFICAR" : "OK";
             return `
               <button class="server-directory-item ${selected}" type="button" data-backup-client-id="${escapeHtml(clientId)}">
                 <span class="status-pulse ${pulseStatus}"></span>
@@ -3532,13 +3552,15 @@ function renderBackupClientProfile(client) {
   const clientId = String(client.id);
   const jobs = Array.isArray(client.backupSets) ? client.backupSets : [];
   const c = client.status;
-  const clientTotal = Math.max(1, c.total);
+  const clientMonitoredTotal = backupClientMonitoredTotal(c);
+  const clientUnmonitoredTotal = backupClientUnmonitoredTotal(c);
+  const clientTotal = Math.max(1, clientMonitoredTotal);
   const clientHealthPct = backupClientHealthPct(c);
   const successDeg = (c.success / clientTotal) * 360;
   const errorDeg = (c.error / clientTotal) * 360;
   const warningDeg = (c.warning / clientTotal) * 360;
-  const badgeTone = c.error > 0 ? "offline" : c.nomon > 0 ? "probe_stale" : "online";
-  const badgeLabel = c.error > 0 ? "ATENCAO" : c.nomon > 0 ? "VERIFICAR" : "OK";
+  const badgeTone = c.error > 0 ? "offline" : clientUnmonitoredTotal > 0 ? "probe_stale" : "online";
+  const badgeLabel = c.error > 0 ? "ATENCAO" : clientUnmonitoredTotal > 0 ? "VERIFICAR" : "OK";
   const backupJobTimestamp = (value) => {
     if (!value) return 0;
     const timestamp = new Date(String(value).replace(" ", "T")).getTime();
@@ -3596,7 +3618,7 @@ function renderBackupClientProfile(client) {
       <div class="company-profile-title">
         <div>
           <h2>${escapeHtml(client.groupName || client.name)}</h2>
-          <div class="detail-meta">${c.total} job${c.total === 1 ? "" : "s"} monitorado${c.total === 1 ? "" : "s"}${client.groupName ? ` &middot; API: ${escapeHtml(client.name)}` : ""}</div>
+          <div class="detail-meta">${clientMonitoredTotal} job${clientMonitoredTotal === 1 ? "" : "s"} monitorado${clientMonitoredTotal === 1 ? "" : "s"}${clientUnmonitoredTotal ? ` &middot; ${clientUnmonitoredTotal} sem monitoramento` : ""}${client.groupName ? ` &middot; API: ${escapeHtml(client.name)}` : ""}</div>
         </div>
       </div>
       <span class="status-badge ${badgeTone}">${badgeLabel}</span>
@@ -3606,17 +3628,17 @@ function renderBackupClientProfile(client) {
       <article class="company-insight-card">
         <div class="panel-title compact-title">
           <h3>Status dos backups</h3>
-          <span>${c.total} monitorado${c.total === 1 ? "" : "s"}</span>
+          <span>${clientMonitoredTotal} monitorado${clientMonitoredTotal === 1 ? "" : "s"}</span>
         </div>
         <div class="simple-status-chart company-status-chart">
           <div class="simple-status-donut" style="--online-deg:${successDeg}deg; --offline-deg:${errorDeg}deg; --attention-deg:${warningDeg}deg;" aria-hidden="true">
-            <strong>${c.total ? Math.round((c.success / c.total) * 100) : 0}%</strong>
+            <strong>${clientHealthPct}%</strong>
           </div>
           <div class="simple-status-legend">
             <span><i class="success"></i>${c.success} sucesso</span>
             <span><i class="danger"></i>${c.error} erro</span>
             <span><i class="warning"></i>${c.warning} alerta</span>
-            <span><i class="neutral"></i>${c.nomon} sem monitor</span>
+            <span><i class="neutral"></i>${clientUnmonitoredTotal} sem monitoramento</span>
           </div>
         </div>
       </article>
@@ -3648,12 +3670,12 @@ function renderBackupClientProfile(client) {
       <article class="company-insight-card">
         <div class="panel-title compact-title">
           <h3>Saude da coleta</h3>
-          <span>${c.nomon} sem monitor</span>
+          <span>${clientUnmonitoredTotal} sem monitor</span>
         </div>
         <div class="company-health-meter">
           <strong>${clientHealthPct}%</strong>
           <span><i style="width:${Math.max(0, Math.min(100, clientHealthPct))}%"></i></span>
-          <small>${c.nomon ? `${c.nomon} sem monitorar` : "Coleta respondendo"}</small>
+          <small>${clientUnmonitoredTotal ? `${clientUnmonitoredTotal} sem monitorar` : "Coleta respondendo"}</small>
         </div>
         <div class="company-mini-list">${loginItems}</div>
       </article>
@@ -3662,10 +3684,10 @@ function renderBackupClientProfile(client) {
     <section class="detail-section backup-summary-section">
       <h3>Resumo do cliente</h3>
       <div class="detail-grid backup-detail-grid">
-        <div class="detail-stat"><span>Total</span><strong>${c.total}</strong><small>jobs monitorados</small></div>
+        <div class="detail-stat"><span>Monitorados</span><strong>${clientMonitoredTotal}</strong><small>jobs com coleta ativa</small></div>
         <div class="detail-stat"><span>Sucesso</span><strong>${c.success}</strong><small>ultima coleta validada</small></div>
         <div class="detail-stat ${c.error ? "backup-stat-danger" : ""}"><span>Erros</span><strong>${c.error}</strong><small>falhas confirmadas</small></div>
-        <div class="detail-stat ${c.nomon ? "watch-limit-stat" : ""}"><span>Sem monitor</span><strong>${c.nomon}</strong><small>coleta desativada</small></div>
+        <div class="detail-stat ${clientUnmonitoredTotal ? "watch-limit-stat" : ""}"><span>Sem monitor</span><strong>${clientUnmonitoredTotal}</strong><small>coleta desativada</small></div>
         <div class="detail-stat"><span>Ultima tentativa</span><strong>${escapeHtml(lastAttemptLabel)}</strong><small>${escapeHtml(lastAttemptJob?.destinationName || "sem destino")}</small></div>
         <div class="detail-stat"><span>Ultimo sucesso</span><strong>${escapeHtml(lastSuccessLabel)}</strong><small>${escapeHtml(lastSuccessJob?.destinationName || "sem destino")}</small></div>
       </div>
@@ -6471,13 +6493,22 @@ function bindEvents() {
   });
 
   els.refreshBackupsButton?.addEventListener("click", async () => {
+    const button = els.refreshBackupsButton;
+    const originalLabel = button.textContent;
+    button.disabled = true;
+    button.textContent = "Atualizando...";
+    if (els.backupsSyncMeta) els.backupsSyncMeta.textContent = "Consultando a API de backups...";
     try {
       const response = await api("/api/backups/refresh", { method: "POST" });
       state.cloudBackup = response.backups || state.cloudBackup;
       renderBackups();
       showToast("Backups atualizados", "Os dados de backup foram atualizados agora.");
     } catch (error) {
+      renderBackups();
       showToast("Falha ao atualizar backups", error.message);
+    } finally {
+      button.disabled = false;
+      button.textContent = originalLabel;
     }
   });
 

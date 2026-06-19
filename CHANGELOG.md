@@ -4,6 +4,11 @@ Resumo das versoes estaveis publicadas do ServerWatch.
 
 ## Unreleased
 
+- Restaura a barra lateral com icones e secoes, alem dos cards de backup no dashboard, apos uma implantacao baseada em arquivos locais desatualizados.
+- Corrige a taxa de sucesso dos backups para considerar somente jobs efetivamente monitorados.
+- Separa os jobs sem monitoramento dos totais monitorados em dashboards e detalhes por cliente.
+- Adiciona no topo da pagina de Backups um botao de atualizacao manual com horario da ultima sincronizacao da API.
+
 ## v3.0.0 - 2026-06-19
 
 - Adiciona o modulo de monitoramento de backups integrado a API do MSP Cloud Backup Pro.

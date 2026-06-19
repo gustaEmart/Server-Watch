@@ -9,7 +9,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="/styles.css?v=20260615-mikrotik-health" />
+    <link rel="stylesheet" href="/styles.css?v=20260619-ui-restored-backup-refresh" />
   </head>
   <body>
     <section class="bootstrap-screen" id="bootScreen" aria-label="Carregando ServerWatch">
@@ -303,6 +303,14 @@
         </section>
 
         <section class="view" id="backupsView">
+          <section class="backup-sync-bar" aria-label="Sincronizacao dos backups">
+            <div>
+              <strong>Dados do MSP Cloud Backup Pro</strong>
+              <span id="backupsSyncMeta">Aguardando sincronizacao</span>
+            </div>
+            <button class="primary-button compact admin-only" id="refreshBackupsButton" type="button">Atualizar dados</button>
+          </section>
+
           <div class="simple-dashboard" id="backupsSimpleDashboard">
             <div class="simple-hero" id="backupsHero"></div>
 
@@ -372,7 +380,6 @@
                 <h2>Clientes monitorados</h2>
                 <span id="backupsClientCountHint">0 clientes</span>
               </div>
-              <button class="ghost-button compact admin-only" id="refreshBackupsButton" type="button">Atualizar agora</button>
             </div>
 
             <div class="empty-state" id="backupsEmptyState">
@@ -1454,6 +1461,6 @@
     </dialog>
 
     <div class="toast-stack" id="toastStack" aria-live="polite"></div>
-    <script src="/app.js?v=20260615-mikrotik-health" type="module"></script>
+    <script src="/app.js?v=20260619-ui-restored-backup-refresh" type="module"></script>
   </body>
 </html>
