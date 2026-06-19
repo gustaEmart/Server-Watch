@@ -4,6 +4,7 @@ Resumo das versoes estaveis publicadas do ServerWatch.
 
 ## Unreleased
 
+- Adiciona um widget de backups na visao expandida das empresas na pagina Servidores, com saude, totais e acesso direto aos detalhes do cliente vinculado.
 - Restaura a barra lateral com icones e secoes, alem dos cards de backup no dashboard, apos uma implantacao baseada em arquivos locais desatualizados.
 - Corrige a taxa de sucesso dos backups para considerar somente jobs efetivamente monitorados.
 - Separa os jobs sem monitoramento dos totais monitorados em dashboards e detalhes por cliente.

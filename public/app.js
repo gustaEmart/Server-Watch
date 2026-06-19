@@ -2432,6 +2432,24 @@ function renderServerGroupDetail(group, target = els.detailPanel) {
       const order = { offline: 0, dependency_down: 1, probe_stale: 2 };
       return (order[displayStatus(left)] ?? 3) - (order[displayStatus(right)] ?? 3) || compareAlpha(serverSortLabel(left), serverSortLabel(right));
     });
+  const groupBackupClients = canSeeSection("backups")
+    ? (state.cloudBackup?.clients || []).filter((client) => String(client.groupId || "") === String(group.id))
+    : [];
+  const groupBackupStatus = groupBackupClients.reduce(
+    (acc, client) => {
+      acc.info += Number(client.status?.info) || 0;
+      acc.success += Number(client.status?.success) || 0;
+      acc.warning += Number(client.status?.warning) || 0;
+      acc.error += Number(client.status?.error) || 0;
+      acc.nomon += Number(client.status?.nomon) || 0;
+      return acc;
+    },
+    { info: 0, success: 0, warning: 0, error: 0, nomon: 0 }
+  );
+  const groupBackupMonitored = backupClientMonitoredTotal(groupBackupStatus);
+  const groupBackupUnmonitored = backupClientUnmonitoredTotal(groupBackupStatus);
+  const groupBackupHealth = backupClientHealthPct(groupBackupStatus);
+  const groupBackupClient = groupBackupClients[0] || null;
   const statusTone = counts.offline ? "offline" : counts.probe_stale || counts.dependency_down ? "probe_stale" : "online";
 
   target.innerHTML = `
@@ -2446,7 +2464,7 @@ function renderServerGroupDetail(group, target = els.detailPanel) {
       <span class="status-badge ${statusTone}">${counts.offline ? "ATENCAO" : counts.probe_stale || counts.dependency_down ? "VERIFICAR" : "ONLINE"}</span>
     </div>
 
-    <section class="company-insight-grid" aria-label="Visao visual da empresa">
+    <section class="company-insight-grid server-company-insight-grid" aria-label="Visao visual da empresa">
       <article class="company-insight-card">
         <div class="panel-title compact-title">
           <h3>Estado atual</h3>
@@ -2533,6 +2551,39 @@ function renderServerGroupDetail(group, target = els.detailPanel) {
           }
         </div>
       </article>
+
+      ${
+        canSeeSection("backups")
+          ? `<article class="company-insight-card company-backup-widget">
+              <div class="panel-title compact-title">
+                <h3>Backups</h3>
+                <span>${groupBackupMonitored} monitorado${groupBackupMonitored === 1 ? "" : "s"}</span>
+              </div>
+              ${
+                state.cloudBackup?.configured && groupBackupClient
+                  ? `<div class="company-health-meter">
+                      <strong>${groupBackupHealth}%</strong>
+                      <span><i style="width:${Math.max(0, Math.min(100, groupBackupHealth))}%"></i></span>
+                      <small>${groupBackupStatus.success} sucesso · ${groupBackupStatus.error} erro</small>
+                    </div>
+                    <div class="simple-network-summary company-backup-summary">
+                      <article><strong>${groupBackupStatus.success}</strong><span>sucesso</span></article>
+                      <article class="${groupBackupStatus.error ? "danger" : ""}"><strong>${groupBackupStatus.error}</strong><span>erro</span></article>
+                      <article class="${groupBackupUnmonitored ? "warning" : ""}"><strong>${groupBackupUnmonitored}</strong><span>sem monitor</span></article>
+                    </div>
+                    <div class="company-mini-list">
+                      <button type="button" data-company-backup-client-id="${escapeHtml(String(groupBackupClient.id))}">
+                        <span>Abrir detalhes</span>
+                        <strong class="status-badge ${groupBackupStatus.error ? "offline" : groupBackupUnmonitored ? "probe_stale" : "online"}">
+                          ${groupBackupStatus.error ? "ATENCAO" : groupBackupUnmonitored ? "VERIFICAR" : "OK"}
+                        </strong>
+                      </button>
+                    </div>`
+                  : `<div class="empty-list compact">Nenhum cliente de backup vinculado a esta empresa.</div>`
+              }
+            </article>`
+          : ""
+      }
     </section>
 
     <section class="detail-section">
@@ -6751,6 +6802,18 @@ function bindEvents() {
   });
 
   els.serverProfilePanel?.addEventListener("click", async (event) => {
+    const backupClient = eventClosest(event, "[data-company-backup-client-id]");
+    if (backupClient) {
+      state.selectedBackupClientId = backupClient.dataset.companyBackupClientId;
+      state.backupLinkEditorOpen = null;
+      setActiveView("backups");
+      renderBackups();
+      requestAnimationFrame(() => {
+        els.backupsProfilePanel?.scrollIntoView({ behavior: "smooth", block: "start" });
+      });
+      return;
+    }
+
     const networkLink = eventClosest(event, "[data-network-link-id]");
     if (networkLink) {
       state.selectedNetworkLinkId = networkLink.dataset.networkLinkId;
