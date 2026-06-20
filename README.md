@@ -32,6 +32,9 @@ Para planejar monitoramento de links, roteadores e firewalls, veja `docs/NETWORK
 
 Para usar MongoDB no backend, veja `docs/MONGODB.md`.
 
+Para o plano de integracao com Proxmox VE e Proxmox Backup Server, veja
+`docs/PROXMOX_BACKUP_SERVER.md`.
+
 A aplicacao sobe em `0.0.0.0:3000`, entao pode ser acessada pela propria maquina em:
 
 ```text
