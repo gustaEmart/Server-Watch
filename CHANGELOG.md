@@ -7,6 +7,7 @@ Resumo das versoes estaveis publicadas do ServerWatch.
 - Adiciona a integracao com Proxmox Backup Server, incluindo datastores, snapshots, vinculo de namespaces a empresas e associacao dos backups aos servidores monitorados.
 - Reorganiza a visualizacao do PBS com indicadores contrastantes, espacamento padronizado e lista vertical agrupada por empresa.
 - Exibe em cada empresa os totais de backups com sucesso, atencao e falha.
+- Mantem as empresas do PBS em blocos responsivos de altura uniforme, com suas VMs e rolagem interna.
 - Adiciona um widget de backups na visao expandida das empresas na pagina Servidores, com saude, totais e acesso direto aos detalhes do cliente vinculado.
 - Restaura a barra lateral com icones e secoes, alem dos cards de backup no dashboard, apos uma implantacao baseada em arquivos locais desatualizados.
 - Corrige a taxa de sucesso dos backups para considerar somente jobs efetivamente monitorados.

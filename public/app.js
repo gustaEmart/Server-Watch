@@ -3697,7 +3697,7 @@ function renderProxmoxBackups() {
               ${groupError ? `<span class="status-badge offline">${groupError} ${groupError === 1 ? "falha" : "falhas"}</span>` : ""}
             </div>
           </div>
-          <div class="proxmox-company-items">${orderedItems.map(itemRow).join("")}</div>
+          <div class="proxmox-company-items" data-proxmox-scroll-id="group-${escapeHtml(groupId)}">${orderedItems.map(itemRow).join("")}</div>
         </section>
       `;
     })
@@ -3716,7 +3716,7 @@ function renderProxmoxBackups() {
             <span class="status-badge probe_stale">${unmatchedGroupItems.length} sem vinculo</span>
           </div>
         </div>
-        <div class="proxmox-company-items">
+        <div class="proxmox-company-items" data-proxmox-scroll-id="unmatched">
           ${unmatchedNamespaces
             .sort(compareAlpha)
             .map((ns) => {
