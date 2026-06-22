@@ -243,6 +243,7 @@ const els = {
   groupId: document.querySelector("#groupId"),
   groupName: document.querySelector("#groupName"),
   groupDescription: document.querySelector("#groupDescription"),
+  groupContractInputs: document.querySelectorAll('input[name="groupContract"]'),
   groupLogoInput: document.querySelector("#groupLogoInput"),
   groupLogoPreview: document.querySelector("#groupLogoPreview"),
   groupLogoPreviewName: document.querySelector("#groupLogoPreviewName"),
@@ -4105,11 +4106,26 @@ function renderGroups() {
       const devices = state.networkDevices.filter((device) => device.groupId === group.id);
       const activeServers = servers.filter((server) => server.isActive);
       const offline = activeServers.filter((server) => server.currentStatus === "offline").length;
+      const contractLabels = {
+        support: "Suporte",
+        backup_msp: "Backup MSP",
+        backup_proxmox: "Backup Proxmox"
+      };
+      const contracts = Array.isArray(group.contracts) ? group.contracts.filter((contract) => contractLabels[contract]) : [];
       return `
         <article class="group-card">
-          <div>
+          <div class="group-card-main">
             <strong>${escapeHtml(group.name)}</strong>
             <span>${escapeHtml(group.description || "Sem descricao.")}</span>
+            <div class="company-contract-tags" aria-label="Contratos da empresa">
+              ${
+                contracts.length
+                  ? contracts
+                      .map((contract) => `<span class="company-contract-tag ${escapeHtml(contract)}">${escapeHtml(contractLabels[contract])}</span>`)
+                      .join("")
+                  : `<span class="company-contract-tag empty">Sem contratos marcados</span>`
+              }
+            </div>
           </div>
           <div class="group-stats">
             <span>${servers.length} ${servers.length === 1 ? "servidor" : "servidores"}</span>
@@ -5747,6 +5763,10 @@ function openGroupDialog(group = null) {
   els.groupDialogTitle.textContent = group ? "Editar empresa" : "Adicionar empresa";
   els.groupName.value = group?.name || "";
   els.groupDescription.value = group?.description || "";
+  const selectedContracts = new Set(Array.isArray(group?.contracts) ? group.contracts : []);
+  els.groupContractInputs?.forEach((input) => {
+    input.checked = selectedContracts.has(input.value);
+  });
   if (els.groupLogoInput) els.groupLogoInput.value = "";
   if (els.groupLogoPreviewName) els.groupLogoPreviewName.textContent = group?.name || "Logo da empresa";
   paintBrandLogo(els.groupLogoPreview, state.groupLogoDraft, group?.name || els.groupName.value || "SW");
@@ -5923,6 +5943,7 @@ async function submitGroup(event) {
   const payload = {
     name: els.groupName.value,
     description: els.groupDescription.value,
+    contracts: [...(els.groupContractInputs || [])].filter((input) => input.checked).map((input) => input.value),
     logoDataUrl: state.groupLogoDraft || "",
     type: "company"
   };

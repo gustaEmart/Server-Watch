@@ -4,6 +4,8 @@ Resumo das versoes estaveis publicadas do ServerWatch.
 
 ## Unreleased
 
+- Permite marcar os contratos `Suporte`, `Backup MSP` e `Backup Proxmox` no cadastro e na edicao das empresas.
+- Exibe os contratos ativos como etiquetas na aba Empresas, sem alterar os vinculos ou a visualizacao de usuarios.
 - Adiciona a integracao com Proxmox Backup Server, incluindo datastores, snapshots, vinculo de namespaces a empresas e associacao dos backups aos servidores monitorados.
 - Reorganiza a visualizacao do PBS com indicadores contrastantes, espacamento padronizado e lista vertical agrupada por empresa.
 - Exibe em cada empresa os totais de backups com sucesso, atencao e falha.

@@ -9,7 +9,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="/styles.css?v=20260622-pbs-company-cards" />
+    <link rel="stylesheet" href="/styles.css?v=20260622-company-contracts" />
   </head>
   <body>
     <section class="bootstrap-screen" id="bootScreen" aria-label="Carregando ServerWatch">
@@ -1327,6 +1327,25 @@
           <textarea id="groupDescription" rows="3" placeholder="Cliente, unidade, filial ou contexto do grupo"></textarea>
         </label>
 
+        <fieldset class="company-contract-fieldset">
+          <legend>Contratos ativos</legend>
+          <p>Selecione os servicos contratados por esta empresa.</p>
+          <div class="company-contract-options">
+            <label class="company-contract-option">
+              <input type="checkbox" name="groupContract" value="support" />
+              <span>Suporte</span>
+            </label>
+            <label class="company-contract-option">
+              <input type="checkbox" name="groupContract" value="backup_msp" />
+              <span>Backup MSP</span>
+            </label>
+            <label class="company-contract-option">
+              <input type="checkbox" name="groupContract" value="backup_proxmox" />
+              <span>Backup Proxmox</span>
+            </label>
+          </div>
+        </fieldset>
+
         <section class="group-logo-editor">
           <div class="brand-preview compact">
             <span class="brand-mark" id="groupLogoPreview" aria-hidden="true">
@@ -1480,6 +1499,6 @@
     </dialog>
 
     <div class="toast-stack" id="toastStack" aria-live="polite"></div>
-    <script src="/app.js?v=20260622-pbs-company-cards" type="module"></script>
+    <script src="/app.js?v=20260622-company-contracts" type="module"></script>
   </body>
 </html>

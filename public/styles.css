@@ -2508,6 +2508,10 @@ textarea:focus {
   gap: 14px;
 }
 
+.group-card-main {
+  min-width: 0;
+}
+
 .group-card strong,
 .group-card span {
   display: block;
@@ -2516,6 +2520,107 @@ textarea:focus {
 .group-card span {
   color: var(--muted);
   margin-top: 3px;
+}
+
+.company-contract-fieldset {
+  margin: 0;
+  padding: 12px;
+  border: 1px solid var(--border-muted);
+  border-radius: 8px;
+  background: var(--bg-elevated);
+}
+
+.company-contract-fieldset legend {
+  padding: 0 6px;
+  color: var(--text-primary);
+  font-weight: 800;
+}
+
+.company-contract-fieldset > p {
+  margin: 0 0 10px;
+  color: var(--text-secondary);
+  font-size: 0.78rem;
+}
+
+.company-contract-options {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.company-contract-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 36px;
+  padding: 7px 9px;
+  border: 1px solid var(--border-muted);
+  border-radius: 6px;
+  background: var(--bg-panel);
+  color: var(--text-primary);
+  font-size: 0.82rem;
+  font-weight: 750;
+  cursor: pointer;
+}
+
+.company-contract-option:has(input:checked) {
+  border-color: color-mix(in srgb, var(--color-accent) 62%, var(--border-muted));
+  background: var(--selected-bg);
+}
+
+.company-contract-option input {
+  width: 15px;
+  height: 15px;
+  flex: 0 0 auto;
+}
+
+.company-contract-option span {
+  margin: 0;
+  color: inherit;
+}
+
+.company-contract-tags {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: 9px;
+}
+
+.group-card .company-contract-tag {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  margin: 0;
+  padding: 4px 8px;
+  border: 1px solid var(--border-muted);
+  border-radius: 999px;
+  background: var(--chip-bg);
+  color: var(--text-secondary);
+  font-size: 0.72rem;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.group-card .company-contract-tag.support {
+  border-color: color-mix(in srgb, var(--color-accent) 42%, var(--border-muted));
+  color: var(--color-accent);
+}
+
+.group-card .company-contract-tag.backup_msp {
+  border-color: color-mix(in srgb, var(--color-success) 42%, var(--border-muted));
+  color: var(--color-success);
+}
+
+.group-card .company-contract-tag.backup_proxmox {
+  border-color: color-mix(in srgb, var(--color-warning) 48%, var(--border-muted));
+  color: var(--color-warning);
+}
+
+.group-card .company-contract-tag.empty {
+  border-style: dashed;
+  color: var(--text-muted);
+  font-weight: 700;
 }
 
 .user-card {

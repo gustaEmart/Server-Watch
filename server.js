@@ -795,6 +795,11 @@ function syncVirtualizerChildren(parent, childIds = [], actorName = "Sistema") {
 function normalizeGroup(payload, existing = {}) {
   const name = String(payload.name || existing.name || "").trim();
   const logoDataUrl = String(payload.logoDataUrl ?? existing.logoDataUrl ?? "").trim();
+  const allowedContracts = new Set(["support", "backup_msp", "backup_proxmox"]);
+  const contractsSource = payload.contracts !== undefined ? payload.contracts : existing.contracts;
+  const contracts = Array.isArray(contractsSource)
+    ? [...new Set(contractsSource.map((contract) => String(contract || "").trim()).filter((contract) => allowedContracts.has(contract)))]
+    : [];
   if (!name) {
     const error = new Error("Informe o nome da empresa/grupo.");
     error.statusCode = 400;
@@ -813,6 +818,7 @@ function normalizeGroup(payload, existing = {}) {
     ...existing,
     name,
     description: String(payload.description ?? existing.description ?? "").trim(),
+    contracts,
     logoDataUrl,
     type: String(payload.type || existing.type || "company"),
     cloudBackupClientId:
@@ -1607,6 +1613,7 @@ function publicGroup(group) {
     id: group.id,
     name: group.name,
     description: group.description,
+    contracts: Array.isArray(group.contracts) ? group.contracts : [],
     type: group.type || "company",
     serverCount: servers.length,
     activeServerCount: activeServers.length,
