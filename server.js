@@ -2944,10 +2944,14 @@ function publicSettings(currentUser = null) {
     probeTokenSource: process.env.SERVERWATCH_PROBE_TOKEN ? "environment" : "generated",
     cloudBackupConfigured: Boolean(getCloudBackupApiKey()),
     cloudBackupSource: process.env.CLOUDBACKUP_API_KEY ? "environment" : state.settings.cloudBackupApiKey ? "configured" : "none",
+    cloudBackupApiKey: isAdminUser(currentUser) ? getCloudBackupApiKey() : "",
     proxmoxConfigured: Boolean(getProxmoxConfig()),
     proxmoxSource: process.env.PROXMOX_PBS_BASE_URL ? "environment" : state.settings.proxmoxPbsBaseUrl ? "configured" : "none",
     proxmoxBaseUrl: isAdminUser(currentUser) ? state.settings.proxmoxPbsBaseUrl || process.env.PROXMOX_PBS_BASE_URL || "" : "",
     proxmoxTokenId: isAdminUser(currentUser) ? state.settings.proxmoxPbsTokenId || process.env.PROXMOX_PBS_TOKEN_ID || "" : "",
+    proxmoxTokenSecret: isAdminUser(currentUser)
+      ? state.settings.proxmoxPbsTokenSecret || process.env.PROXMOX_PBS_TOKEN_SECRET || ""
+      : "",
     proxmoxTlsFingerprint: isAdminUser(currentUser)
       ? state.settings.proxmoxPbsTlsFingerprint || process.env.PROXMOX_PBS_TLS_FINGERPRINT || ""
       : ""

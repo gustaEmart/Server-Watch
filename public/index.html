@@ -9,7 +9,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="/styles.css?v=20260622-company-contracts" />
+    <link rel="stylesheet" href="/styles.css?v=20260622-integrations-view" />
   </head>
   <body>
     <section class="bootstrap-screen" id="bootScreen" aria-label="Carregando ServerWatch">
@@ -65,6 +65,7 @@
           <a class="nav-tab admin-only" href="/empresas" data-view="groups"><svg class="nav-tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="3" width="14" height="18" rx="1"/><rect x="8" y="7" width="2" height="2"/><rect x="14" y="7" width="2" height="2"/><rect x="8" y="13" width="2" height="2"/><rect x="14" y="13" width="2" height="2"/></svg><span>Empresas</span></a>
           <a class="nav-tab admin-only" href="/probes" data-view="probes"><svg class="nav-tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="2"/><path d="M16.24 7.76a6 6 0 0 1 0 8.49"/><path d="M7.76 16.24a6 6 0 0 1 0-8.49"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/><path d="M4.93 19.07a10 10 0 0 1 0-14.14"/></svg><span>Probes</span></a>
           <a class="nav-tab admin-only" href="/usuarios" data-view="users"><svg class="nav-tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="9" cy="8" r="3"/><path d="M3 20c0-3.3 2.7-6 6-6s6 2.7 6 6"/><circle cx="17.5" cy="9" r="2.3"/><path d="M15.7 14.4c2.3.5 4 2.5 4 5.6"/></svg><span>Usuarios</span></a>
+          <a class="nav-tab admin-only" href="/integracoes" data-view="integrations"><svg class="nav-tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 12h8"/><path d="M12 8v8"/><path d="M7 3v4"/><path d="M17 3v4"/><path d="M7 17v4"/><path d="M17 17v4"/><rect x="4" y="7" width="16" height="10" rx="3"/></svg><span>Integracoes</span></a>
           <a class="nav-tab route-only admin-only" href="/admin" data-view="admin"><svg class="nav-tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="3" width="14" height="18" rx="1"/><rect x="8" y="7" width="2" height="2"/><rect x="14" y="7" width="2" height="2"/><rect x="8" y="13" width="2" height="2"/><rect x="14" y="13" width="2" height="2"/></svg><span>Administracao</span></a>
           <span class="sidebar-section-title">Sistema</span>
           <a class="nav-tab" href="/configuracoes" data-view="settings"><svg class="nav-tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 13a7.97 7.97 0 0 0 0-2l2-1.5-2-3.4-2.4.9a8 8 0 0 0-1.7-1l-.3-2.5h-4l-.3 2.5a8 8 0 0 0-1.7 1l-2.4-.9-2 3.4 2 1.5a7.97 7.97 0 0 0 0 2l-2 1.5 2 3.4 2.4-.9c.5.4 1.1.8 1.7 1l.3 2.5h4l.3-2.5a8 8 0 0 0 1.7-1l2.4.9 2-3.4Z"/></svg><span>Configuracoes</span></a>
@@ -303,12 +304,19 @@
         </section>
 
         <section class="view" id="backupsView">
-          <div class="provider-toggle" role="group" aria-label="Selecionar provedor de backup">
+          <div class="provider-toggle" id="backupsProviderToggle" role="group" aria-label="Selecionar provedor de backup" hidden>
             <button class="provider-segment active" type="button" data-backup-provider="msp">MSP Cloud Backup Pro</button>
             <button class="provider-segment" type="button" data-backup-provider="proxmox">Proxmox Backup Server</button>
           </div>
 
-          <div id="backupsMspView">
+          <div class="wide-panel" id="backupsNoProviders" hidden>
+            <div class="empty-state">
+              <strong>Nenhum provedor de backup configurado</strong>
+              <span id="backupsNoProvidersHint">Configure um provedor na area administrativa de integracoes.</span>
+            </div>
+          </div>
+
+          <div id="backupsMspView" hidden>
           <section class="backup-sync-bar" aria-label="Sincronizacao dos backups">
             <div>
               <strong>Dados do MSP Cloud Backup Pro</strong>
@@ -451,6 +459,76 @@
                 <strong>Acessos do sistema</strong>
                 <small>Crie usuarios, altere papeis e desative contas quando necessario.</small>
               </button>
+              <button class="admin-card" type="button" data-admin-view="integrations">
+                <span>Integracoes</span>
+                <strong>APIs e provedores externos</strong>
+                <small>Gerencie credenciais e conexoes com servicos integrados ao ServerWatch.</small>
+              </button>
+            </div>
+          </div>
+        </section>
+
+        <section class="view admin-only" id="integrationsView">
+          <div class="wide-panel">
+            <div class="panel-title">
+              <div>
+                <h2>Integracoes</h2>
+                <span>APIs, credenciais e provedores externos</span>
+              </div>
+            </div>
+
+            <div class="integration-grid">
+              <form class="integration-card" id="cloudBackupSettingsForm">
+                <div class="integration-card-header">
+                  <div>
+                    <span class="integration-kicker">Backups</span>
+                    <h3>MSP Cloud Backup Pro</h3>
+                  </div>
+                  <span class="integration-status" id="cloudBackupSourceLabel">Nao configurado</span>
+                </div>
+                <p>Importa clientes, jobs, status e ultimas execucoes do MSP Cloud Backup Pro.</p>
+                <label>
+                  API Key
+                  <input id="cloudBackupApiKeyInput" type="text" autocomplete="off" spellcheck="false" placeholder="Cole a API key do MSP Cloud Backup Pro" />
+                </label>
+                <div class="dialog-actions">
+                  <button class="primary-button compact" type="submit">Salvar integracao MSP</button>
+                </div>
+              </form>
+
+              <form class="integration-card" id="proxmoxSettingsForm">
+                <div class="integration-card-header">
+                  <div>
+                    <span class="integration-kicker">Backups</span>
+                    <h3>Proxmox Backup Server</h3>
+                  </div>
+                  <span class="integration-status" id="proxmoxSourceLabel">Nao configurado</span>
+                </div>
+                <p>Consulta datastores e snapshots do PBS para relacionar backups as empresas e servidores.</p>
+                <div class="form-grid">
+                  <label>
+                    URL do PBS
+                    <input id="proxmoxBaseUrlInput" type="text" spellcheck="false" placeholder="https://pbs.exemplo.com:8007" />
+                  </label>
+                  <label>
+                    Token ID
+                    <input id="proxmoxTokenIdInput" type="text" spellcheck="false" placeholder="usuario@realm!nome-do-token" />
+                  </label>
+                </div>
+                <div class="form-grid">
+                  <label>
+                    Token Secret
+                    <input id="proxmoxTokenSecretInput" type="text" autocomplete="off" spellcheck="false" placeholder="Cole o token secret do PBS" />
+                  </label>
+                  <label>
+                    Fingerprint TLS (SHA-256)
+                    <input id="proxmoxTlsFingerprintInput" type="text" spellcheck="false" placeholder="AA:BB:CC:..." />
+                  </label>
+                </div>
+                <div class="dialog-actions">
+                  <button class="primary-button compact" type="submit">Salvar integracao Proxmox</button>
+                </div>
+              </form>
             </div>
           </div>
         </section>
@@ -1499,6 +1577,6 @@
     </dialog>
 
     <div class="toast-stack" id="toastStack" aria-live="polite"></div>
-    <script src="/app.js?v=20260622-company-contracts" type="module"></script>
+    <script src="/app.js?v=20260622-integrations-view" type="module"></script>
   </body>
 </html>

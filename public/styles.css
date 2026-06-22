@@ -2360,6 +2360,85 @@ textarea:focus {
   gap: 12px;
 }
 
+.integration-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.integration-card {
+  display: grid;
+  align-content: start;
+  gap: 14px;
+  min-width: 0;
+  min-height: 330px;
+  padding: 16px;
+  border: 1px solid var(--border-default);
+  border-radius: 8px;
+  background: var(--bg-elevated);
+}
+
+.integration-card-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border-muted);
+}
+
+.integration-card-header > div {
+  min-width: 0;
+}
+
+.integration-card-header h3 {
+  margin: 3px 0 0;
+  color: var(--text-primary);
+  font-size: 1.08rem;
+}
+
+.integration-kicker {
+  color: var(--color-accent);
+  font-size: 0.68rem;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.integration-status {
+  flex: 0 0 auto;
+  min-height: 26px;
+  padding: 5px 9px;
+  border: 1px solid color-mix(in srgb, var(--color-success) 40%, var(--border-muted));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--color-success) 14%, var(--bg-surface));
+  color: var(--color-success);
+  font-size: 0.72rem;
+  font-weight: 900;
+  line-height: 1.2;
+}
+
+.integration-status.inactive {
+  border-color: var(--border-muted);
+  background: var(--chip-bg);
+  color: var(--text-muted);
+}
+
+.integration-card > p {
+  margin: 0;
+  color: var(--text-secondary);
+  line-height: 1.45;
+}
+
+.integration-card input {
+  font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+}
+
+.integration-card .dialog-actions {
+  align-self: end;
+  margin-top: auto;
+}
+
 .admin-card {
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -4050,6 +4129,16 @@ label {
   .server-meta {
     grid-column: 2;
     text-align: left;
+  }
+}
+
+@media (max-width: 980px) {
+  .integration-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .integration-card {
+    min-height: 0;
   }
 }
 

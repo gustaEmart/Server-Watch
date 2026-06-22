@@ -23,6 +23,7 @@ const state = {
   themeDraft: null,
   topologyExpanded: new Set(),
   selectedBackupClientId: null,
+  backupProvider: "msp",
   backupLinkEditorOpen: null,
   probeInstallTarget: "linux",
   commandGeneratorMode: "server",
@@ -197,6 +198,15 @@ const els = {
   brandingForm: document.querySelector("#brandingForm"),
   themeSettingsForm: document.querySelector("#themeSettingsForm"),
   alertSettingsForm: document.querySelector("#alertSettingsForm"),
+  cloudBackupSettingsForm: document.querySelector("#cloudBackupSettingsForm"),
+  cloudBackupApiKeyInput: document.querySelector("#cloudBackupApiKeyInput"),
+  cloudBackupSourceLabel: document.querySelector("#cloudBackupSourceLabel"),
+  proxmoxSettingsForm: document.querySelector("#proxmoxSettingsForm"),
+  proxmoxBaseUrlInput: document.querySelector("#proxmoxBaseUrlInput"),
+  proxmoxTokenIdInput: document.querySelector("#proxmoxTokenIdInput"),
+  proxmoxTokenSecretInput: document.querySelector("#proxmoxTokenSecretInput"),
+  proxmoxTlsFingerprintInput: document.querySelector("#proxmoxTlsFingerprintInput"),
+  proxmoxSourceLabel: document.querySelector("#proxmoxSourceLabel"),
   brandNameInput: document.querySelector("#brandNameInput"),
   brandSubtitleInput: document.querySelector("#brandSubtitleInput"),
   brandLogoInput: document.querySelector("#brandLogoInput"),
@@ -314,6 +324,7 @@ const VIEW_ROUTES = {
   groups: "/empresas",
   probes: "/probes",
   users: "/usuarios",
+  integrations: "/integracoes",
   settings: "/configuracoes",
   history: "/historico",
   alerts: "/alertas"
@@ -462,8 +473,9 @@ function showApp(user) {
   });
   SECTION_KEYS.forEach((section) => {
     const tab = document.querySelector(`.nav-tab[data-view="${section}"]`);
-    if (tab) tab.hidden = !canSeeSection(section);
+    if (tab) tab.hidden = section === "backups" ? true : !canSeeSection(section);
   });
+  updateBackupNavigationVisibility();
   syncViewFromLocation({ replace: true });
 }
 
@@ -982,6 +994,7 @@ function updateTopbarContext() {
     groups: ["Organizacao operacional", "Empresas e grupos"],
     probes: ["Instalacao e coleta", "Probe Collector"],
     users: ["Controle de acesso", "Usuarios"],
+    integrations: ["Conexoes externas", "Integracoes"],
     settings: ["Identidade do sistema", "Configuracoes"],
     history: ["Auditoria operacional", "Historico de eventos"],
     alerts: ["Incidentes e recuperacoes", "Historico de alertas"]
@@ -1613,7 +1626,7 @@ function renderSimpleDashboard() {
   const scrollPositions = captureSimpleDashboardScroll();
   const canServers = canSeeSection("servers");
   const canNetworks = canSeeSection("networks");
-  const canBackups = canSeeSection("backups");
+  const canBackups = canSeeSection("backups") && backupProviderConfigured("msp");
   const canAlerts = canSeeSection("alerts");
   const scopedServers = state.servers.filter((server) => groupIdMatches(state.filters.groupId, server.groupId));
   const scopedServerIds = new Set(scopedServers.map((server) => server.id));
@@ -2434,7 +2447,7 @@ function renderServerGroupDetail(group, target = els.detailPanel) {
       const order = { offline: 0, dependency_down: 1, probe_stale: 2 };
       return (order[displayStatus(left)] ?? 3) - (order[displayStatus(right)] ?? 3) || compareAlpha(serverSortLabel(left), serverSortLabel(right));
     });
-  const groupBackupClients = canSeeSection("backups")
+  const groupBackupClients = canSeeSection("backups") && backupProviderConfigured("msp")
     ? (state.cloudBackup?.clients || []).filter((client) => String(client.groupId || "") === String(group.id))
     : [];
   const groupBackupStatus = groupBackupClients.reduce(
@@ -2555,7 +2568,7 @@ function renderServerGroupDetail(group, target = els.detailPanel) {
       </article>
 
       ${
-        canSeeSection("backups")
+        canSeeSection("backups") && backupProviderConfigured("msp")
           ? `<article class="company-insight-card company-backup-widget">
               <div class="panel-title compact-title">
                 <h3>Backups</h3>
@@ -3282,6 +3295,73 @@ function restoreBackupsScroll(positions) {
   }
 }
 
+function backupProviderConfigured(provider) {
+  if (provider === "msp") return Boolean(state.settings.cloudBackupConfigured ?? state.cloudBackup?.configured);
+  if (provider === "proxmox") return Boolean(state.settings.proxmoxConfigured ?? state.proxmoxBackup?.configured);
+  return false;
+}
+
+function configuredBackupProviders() {
+  return ["msp", "proxmox"].filter(backupProviderConfigured);
+}
+
+function updateBackupNavigationVisibility() {
+  const tab = document.querySelector('.nav-tab[data-view="backups"]');
+  if (!tab) return;
+  const visible = canSeeSection("backups") && configuredBackupProviders().length > 0;
+  tab.hidden = !visible;
+  if (!visible && activeViewName() === "backups") {
+    setActiveView(isAdmin() ? "integrations" : "dashboard");
+  }
+}
+
+function applyBackupProvider(provider) {
+  state.backupProvider = provider;
+  document.querySelectorAll(".provider-segment").forEach((item) => {
+    item.classList.toggle("active", item.dataset.backupProvider === provider);
+  });
+  const mspView = document.getElementById("backupsMspView");
+  const proxmoxView = document.getElementById("backupsProxmoxView");
+  if (mspView) mspView.hidden = provider !== "msp";
+  if (proxmoxView) proxmoxView.hidden = provider !== "proxmox";
+}
+
+function updateBackupProviderVisibility() {
+  const toggle = document.getElementById("backupsProviderToggle");
+  const emptyState = document.getElementById("backupsNoProviders");
+  const mspView = document.getElementById("backupsMspView");
+  const proxmoxView = document.getElementById("backupsProxmoxView");
+  if (!toggle || !emptyState || !mspView || !proxmoxView) return;
+
+  const configuredProviders = configuredBackupProviders();
+  document.querySelectorAll(".provider-segment").forEach((button) => {
+    button.hidden = !configuredProviders.includes(button.dataset.backupProvider);
+  });
+
+  if (!configuredProviders.length) {
+    toggle.hidden = true;
+    mspView.hidden = true;
+    proxmoxView.hidden = true;
+    emptyState.hidden = false;
+    const hint = document.getElementById("backupsNoProvidersHint");
+    if (hint) {
+      hint.textContent = isAdmin()
+        ? "Configure um provedor na aba Integracoes para comecar o monitoramento."
+        : "Nenhum provedor de backup foi configurado pela administracao.";
+    }
+    updateBackupNavigationVisibility();
+    return;
+  }
+
+  emptyState.hidden = true;
+  toggle.hidden = configuredProviders.length < 2;
+  if (!configuredProviders.includes(state.backupProvider)) {
+    state.backupProvider = configuredProviders[0];
+  }
+  applyBackupProvider(state.backupProvider);
+  updateBackupNavigationVisibility();
+}
+
 function renderBackups() {
   if (!els.backupsHero) return;
   const backupsScrollPositions = captureBackupsScroll();
@@ -3592,6 +3672,7 @@ function renderBackups() {
 
   restoreBackupsScroll(backupsScrollPositions);
   renderProxmoxBackups();
+  updateBackupProviderVisibility();
 }
 
 function renderProxmoxBackups() {
@@ -4218,6 +4299,78 @@ function renderAlertSettingsForm() {
   els.severityDevelopment.value = current.alertSeverityByEnvironment.development;
   els.soundAlertsEnabled.checked = current.soundAlertsEnabled;
   els.browserNotificationsEnabled.checked = current.browserNotificationsEnabled;
+}
+
+function backupIntegrationSourceLabel(source) {
+  if (source === "environment") return "Variavel de ambiente";
+  if (source === "configured") return "Configurado";
+  return "Nao configurado";
+}
+
+function setIntegrationStatus(element, source) {
+  if (!element) return;
+  element.textContent = backupIntegrationSourceLabel(source);
+  element.className = `integration-status ${source === "none" ? "inactive" : "active"}`;
+}
+
+function renderBackupIntegrationSettingsForm() {
+  if (!isAdmin()) return;
+  if (els.cloudBackupSettingsForm) {
+    setIntegrationStatus(els.cloudBackupSourceLabel, state.settings.cloudBackupSource || "none");
+    if (document.activeElement !== els.cloudBackupApiKeyInput) {
+      els.cloudBackupApiKeyInput.value = state.settings.cloudBackupApiKey || "";
+    }
+  }
+  if (els.proxmoxSettingsForm) {
+    setIntegrationStatus(els.proxmoxSourceLabel, state.settings.proxmoxSource || "none");
+    if (document.activeElement !== els.proxmoxBaseUrlInput) {
+      els.proxmoxBaseUrlInput.value = state.settings.proxmoxBaseUrl || "";
+    }
+    if (document.activeElement !== els.proxmoxTokenIdInput) {
+      els.proxmoxTokenIdInput.value = state.settings.proxmoxTokenId || "";
+    }
+    if (document.activeElement !== els.proxmoxTlsFingerprintInput) {
+      els.proxmoxTlsFingerprintInput.value = state.settings.proxmoxTlsFingerprint || "";
+    }
+    if (document.activeElement !== els.proxmoxTokenSecretInput) {
+      els.proxmoxTokenSecretInput.value = state.settings.proxmoxTokenSecret || "";
+    }
+  }
+}
+
+async function submitCloudBackupSettings(event) {
+  event.preventDefault();
+  try {
+    const settings = await api("/api/settings/cloudbackup", {
+      method: "PUT",
+      body: JSON.stringify({ apiKey: els.cloudBackupApiKeyInput.value.trim() })
+    });
+    state.settings = { ...state.settings, ...settings };
+    applySnapshot(await api("/api/snapshot"));
+    showToast("MSP Cloud Backup atualizado", "As credenciais foram salvas e a sincronizacao foi atualizada.");
+  } catch (error) {
+    showToast("Falha ao salvar MSP Cloud Backup", error.message);
+  }
+}
+
+async function submitProxmoxSettings(event) {
+  event.preventDefault();
+  try {
+    const settings = await api("/api/settings/proxmox", {
+      method: "PUT",
+      body: JSON.stringify({
+        baseUrl: els.proxmoxBaseUrlInput.value.trim(),
+        tokenId: els.proxmoxTokenIdInput.value.trim(),
+        tokenSecret: els.proxmoxTokenSecretInput.value.trim(),
+        tlsFingerprint: els.proxmoxTlsFingerprintInput.value.trim()
+      })
+    });
+    state.settings = { ...state.settings, ...settings };
+    applySnapshot(await api("/api/snapshot"));
+    showToast("Proxmox Backup Server atualizado", "As credenciais foram salvas e a sincronizacao foi atualizada.");
+  } catch (error) {
+    showToast("Falha ao salvar Proxmox Backup Server", error.message);
+  }
 }
 
 function readLogoFile(file) {
@@ -5674,6 +5827,7 @@ function render() {
   renderBackups();
   renderBrandingForm();
   renderAlertSettingsForm();
+  renderBackupIntegrationSettingsForm();
 }
 
 function showToast(title, message) {
@@ -6968,13 +7122,7 @@ function bindEvents() {
 
   document.querySelectorAll(".provider-segment").forEach((button) => {
     button.addEventListener("click", () => {
-      document.querySelectorAll(".provider-segment").forEach((item) => item.classList.remove("active"));
-      button.classList.add("active");
-      const provider = button.dataset.backupProvider;
-      const mspView = document.getElementById("backupsMspView");
-      const proxmoxView = document.getElementById("backupsProxmoxView");
-      if (mspView) mspView.hidden = provider !== "msp";
-      if (proxmoxView) proxmoxView.hidden = provider !== "proxmox";
+      applyBackupProvider(button.dataset.backupProvider);
     });
   });
   els.brandingForm?.addEventListener("submit", submitBranding);
@@ -6985,6 +7133,8 @@ function bindEvents() {
     });
   });
   els.alertSettingsForm?.addEventListener("submit", submitAlertSettings);
+  els.cloudBackupSettingsForm?.addEventListener("submit", submitCloudBackupSettings);
+  els.proxmoxSettingsForm?.addEventListener("submit", submitProxmoxSettings);
 
   document.querySelectorAll("[data-admin-view]").forEach((button) => {
     button.addEventListener("click", () => setActiveView(button.dataset.adminView));

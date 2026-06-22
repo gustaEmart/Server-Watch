@@ -4,6 +4,9 @@ Resumo das versoes estaveis publicadas do ServerWatch.
 
 ## Unreleased
 
+- Adiciona a pagina administrativa `Integracoes` para centralizar APIs e credenciais de provedores externos.
+- Permite que administradores visualizem e editem a API do MSP Cloud Backup Pro e as credenciais do Proxmox Backup Server.
+- Oculta a aba Backups, provedores e widgets relacionados quando nenhum monitoramento correspondente estiver configurado.
 - Permite marcar os contratos `Suporte`, `Backup MSP` e `Backup Proxmox` no cadastro e na edicao das empresas.
 - Exibe os contratos ativos como etiquetas na aba Empresas, sem alterar os vinculos ou a visualizacao de usuarios.
 - Adiciona a integracao com Proxmox Backup Server, incluindo datastores, snapshots, vinculo de namespaces a empresas e associacao dos backups aos servidores monitorados.
