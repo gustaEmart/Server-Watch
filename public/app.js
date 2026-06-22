@@ -885,6 +885,7 @@ function applySnapshot(payload) {
   state.alerts = payload.alerts || [];
   state.events = payload.events || [];
   state.cloudBackup = payload.cloudBackup || null;
+  state.proxmoxBackup = payload.proxmoxBackup || null;
   if (state.selectedServerId && !state.servers.some((server) => server.id === state.selectedServerId)) {
     state.selectedServerId = null;
   }
@@ -3589,6 +3590,217 @@ function renderBackups() {
   }
 
   restoreBackupsScroll(backupsScrollPositions);
+  renderProxmoxBackups();
+}
+
+function renderProxmoxBackups() {
+  const container = document.getElementById("proxmoxBackupsContent");
+  const summaryEl = document.getElementById("proxmoxBackupsSummary");
+  if (!container) return;
+  if (document.activeElement && container.contains(document.activeElement)) return;
+  const scrollPositions = {};
+  container.querySelectorAll("[data-proxmox-scroll-id]").forEach((element) => {
+    scrollPositions[element.dataset.proxmoxScrollId] = element.scrollTop;
+  });
+  const data = state.proxmoxBackup || { configured: false, items: [], error: null };
+  if (!data.configured) {
+    if (summaryEl) summaryEl.textContent = "Nao configurado";
+    container.innerHTML = `<div class="simple-empty">Configure o Proxmox Backup Server (PROXMOX_PBS_BASE_URL) para ver os dados aqui.</div>`;
+    return;
+  }
+  const items = data.items || [];
+  if (summaryEl) summaryEl.textContent = `${items.length} ${items.length === 1 ? "backup monitorado" : "backups monitorados"}`;
+
+  const successCount = items.filter((item) => item.status === "success").length;
+  const warningCount = items.filter((item) => item.status === "warning").length;
+  const errorCount = items.filter((item) => item.status === "error").length;
+  const unmatchedGroupItems = items.filter((item) => !item.groupId);
+  const unmatchedServerItems = items.filter((item) => item.groupId && !item.serverId);
+
+  const groupOptions = sortedByAlpha(state.groups, groupSortLabel)
+    .map((group) => `<option value="${escapeHtml(group.id)}">${escapeHtml(group.name)}</option>`)
+    .join("");
+
+  function serverOptionsFor(groupId) {
+    const candidates = groupId ? state.servers.filter((server) => server.groupId === groupId) : state.servers;
+    return sortedByAlpha(candidates, serverSortLabel)
+      .map((server) => `<option value="${escapeHtml(server.id)}">${escapeHtml(server.name)}</option>`)
+      .join("");
+  }
+
+  function itemLabel(item) {
+    return item.serverName || item.comment || `${item.backupType} ${item.backupId}`;
+  }
+
+  function itemRow(item) {
+    const label = itemLabel(item);
+    const size = formatBytes(item.sizeBytes);
+    const when = item.lastSnapshotAt ? formatDate(item.lastSnapshotAt) : "-";
+    const badgeClass = item.status === "error" ? "offline" : item.status === "warning" ? "probe_stale" : "online";
+    const badgeLabel = item.status === "error" ? "Erro" : item.status === "warning" ? "Atencao" : "Sucesso";
+    const needsServer = item.groupId && !item.serverId;
+    return `
+      <div class="proxmox-backup-row ${escapeHtml(item.status || "unknown")}">
+        <div class="proxmox-backup-identity">
+          <strong>${escapeHtml(label)}</strong>
+          <small>${escapeHtml(item.namespace)} · ${escapeHtml(item.backupType)} ${escapeHtml(item.backupId)} · ${size}</small>
+        </div>
+        <span class="status-badge ${badgeClass}">${badgeLabel}</span>
+        <small class="proxmox-backup-date">${when}</small>
+        ${
+          needsServer
+            ? `<select class="compact-select" data-proxmox-link-server data-namespace="${escapeHtml(item.namespace)}" data-backup-id="${escapeHtml(item.backupId)}">
+                <option value="">Vincular servidor...</option>
+                ${serverOptionsFor(item.groupId)}
+              </select>`
+            : ""
+        }
+      </div>
+    `;
+  }
+
+  const statusOrder = { error: 0, warning: 1, success: 2 };
+  const sortBackupItems = (left, right) =>
+    (statusOrder[left.status] ?? 3) - (statusOrder[right.status] ?? 3) ||
+    compareAlpha(itemLabel(left), itemLabel(right));
+
+  const grouped = new Map();
+  for (const item of items) {
+    if (!item.groupId) continue;
+    const list = grouped.get(item.groupId) || [];
+    list.push(item);
+    grouped.set(item.groupId, list);
+  }
+
+  const groupSections = [...grouped.entries()]
+    .sort(([leftGroupId], [rightGroupId]) => {
+      const leftGroup = state.groups.find((candidate) => candidate.id === leftGroupId);
+      const rightGroup = state.groups.find((candidate) => candidate.id === rightGroupId);
+      return compareAlpha(leftGroup?.name || "Empresa", rightGroup?.name || "Empresa");
+    })
+    .map(([groupId, groupItems]) => {
+      const group = state.groups.find((candidate) => candidate.id === groupId);
+      const orderedItems = [...groupItems].sort(sortBackupItems);
+      const groupSuccess = groupItems.filter((item) => item.status === "success").length;
+      const groupWarning = groupItems.filter((item) => item.status === "warning").length;
+      const groupError = groupItems.filter((item) => item.status === "error").length;
+      return `
+        <section class="proxmox-company-section">
+          <div class="proxmox-company-header">
+            <div>
+              <strong>${escapeHtml(group?.name || "Empresa")}</strong>
+              <span>${groupItems.length} ${groupItems.length === 1 ? "backup monitorado" : "backups monitorados"}</span>
+            </div>
+            <div class="proxmox-company-counts">
+              <span class="status-badge online">${groupSuccess} sucesso${groupSuccess === 1 ? "" : "s"}</span>
+              ${groupWarning ? `<span class="status-badge probe_stale">${groupWarning} atencao</span>` : ""}
+              ${groupError ? `<span class="status-badge offline">${groupError} ${groupError === 1 ? "falha" : "falhas"}</span>` : ""}
+            </div>
+          </div>
+          <div class="proxmox-company-items">${orderedItems.map(itemRow).join("")}</div>
+        </section>
+      `;
+    })
+    .join("");
+
+  const unmatchedNamespaces = [...new Set(unmatchedGroupItems.map((item) => item.namespace))];
+  const unmatchedSection = unmatchedNamespaces.length
+    ? `
+      <section class="proxmox-company-section unmatched">
+        <div class="proxmox-company-header">
+          <div>
+            <strong>Sem empresa vinculada</strong>
+            <span>${unmatchedNamespaces.length} ${unmatchedNamespaces.length === 1 ? "namespace pendente" : "namespaces pendentes"}</span>
+          </div>
+          <div class="proxmox-company-counts">
+            <span class="status-badge probe_stale">${unmatchedGroupItems.length} sem vinculo</span>
+          </div>
+        </div>
+        <div class="proxmox-company-items">
+          ${unmatchedNamespaces
+            .sort(compareAlpha)
+            .map((ns) => {
+              const namespaceItems = unmatchedGroupItems.filter((item) => item.namespace === ns);
+              const count = namespaceItems.length;
+              const namespaceSuccess = namespaceItems.filter((item) => item.status === "success").length;
+              const namespaceError = namespaceItems.filter((item) => item.status === "error").length;
+              return `
+                <div class="proxmox-namespace-row">
+                  <div>
+                    <strong>${escapeHtml(ns)}</strong>
+                    <small>${count} ${count === 1 ? "backup" : "backups"} · ${namespaceSuccess} sucesso${namespaceSuccess === 1 ? "" : "s"}${namespaceError ? ` · ${namespaceError} ${namespaceError === 1 ? "falha" : "falhas"}` : ""}</small>
+                  </div>
+                  <select class="compact-select" data-proxmox-link-namespace data-namespace="${escapeHtml(ns)}">
+                    <option value="">Vincular empresa...</option>
+                    ${groupOptions}
+                  </select>
+                </div>
+              `;
+            })
+            .join("")}
+        </div>
+      </section>
+    `
+    : "";
+
+  const capacityCards = (data.datastores || [])
+    .map((ds) => {
+      const pct = ds.totalBytes ? Math.round((ds.usedBytes / ds.totalBytes) * 100) : 0;
+      return `
+        <div class="detail-stat metric-stat">
+          <span>${escapeHtml(ds.datastore)}</span>
+          <strong>${formatBytes(ds.usedBytes)} / ${formatBytes(ds.totalBytes)}</strong>
+          ${metricBar(pct)}
+          <small>${pct}% usado · ${formatBytes(ds.availBytes)} livres</small>
+        </div>
+      `;
+    })
+    .join("");
+
+  container.innerHTML = `
+    <div class="simple-kpi-row proxmox-kpi-row">
+      <article class="success"><span>Sucesso</span><strong>${successCount}</strong><small>dentro da janela esperada</small></article>
+      <article class="${warningCount ? "warning" : "success"}"><span>Atencao</span><strong>${warningCount}</strong><small>proximos do limite</small></article>
+      <article class="${errorCount ? "danger" : "success"}"><span>Erro</span><strong>${errorCount}</strong><small>atrasados ou com falha</small></article>
+      <article class="${unmatchedGroupItems.length ? "warning" : "success"}"><span>Sem empresa</span><strong>${unmatchedGroupItems.length}</strong><small>aguardando vinculo</small></article>
+      <article class="${unmatchedServerItems.length ? "warning" : "success"}"><span>Sem servidor</span><strong>${unmatchedServerItems.length}</strong><small>nao associados</small></article>
+    </div>
+    ${
+      capacityCards
+        ? `<div class="profile-stat-grid proxmox-capacity-grid">${capacityCards}</div>`
+        : ""
+    }
+    <div class="proxmox-groups-list" data-proxmox-scroll-id="companies">
+      ${groupSections}
+      ${unmatchedSection}
+    </div>
+  `;
+  container.querySelectorAll("[data-proxmox-scroll-id]").forEach((element) => {
+    const saved = scrollPositions[element.dataset.proxmoxScrollId];
+    if (saved) element.scrollTop = saved;
+  });
+}
+
+async function linkProxmoxNamespaceToGroup(namespace, groupId) {
+  try {
+    const result = await api("/api/proxmox-backups/link-namespace", { method: "POST", body: JSON.stringify({ namespace, groupId: groupId || null }) });
+    state.proxmoxBackup = result.proxmoxBackup;
+    renderProxmoxBackups();
+    showToast("Empresa vinculada", `${namespace} associado com sucesso.`);
+  } catch (error) {
+    showToast("Falha ao vincular empresa", error.message);
+  }
+}
+
+async function linkProxmoxBackupToServer(namespace, backupId, serverId) {
+  try {
+    const result = await api("/api/proxmox-backups/link-server", { method: "POST", body: JSON.stringify({ namespace, backupId, serverId: serverId || null }) });
+    state.proxmoxBackup = result.proxmoxBackup;
+    renderProxmoxBackups();
+    showToast("Servidor vinculado", "Backup associado ao servidor selecionado.");
+  } catch (error) {
+    showToast("Falha ao vincular servidor", error.message);
+  }
 }
 
 function renderBackupClientProfile(client) {
@@ -6720,6 +6932,30 @@ function bindEvents() {
     );
   });
   els.userForm.addEventListener("submit", submitUser);
+
+  document.getElementById("proxmoxBackupsContent")?.addEventListener("change", (event) => {
+    const nsSelect = event.target.closest("[data-proxmox-link-namespace]");
+    if (nsSelect) {
+      linkProxmoxNamespaceToGroup(nsSelect.dataset.namespace, nsSelect.value);
+      return;
+    }
+    const serverSelect = event.target.closest("[data-proxmox-link-server]");
+    if (serverSelect) {
+      linkProxmoxBackupToServer(serverSelect.dataset.namespace, serverSelect.dataset.backupId, serverSelect.value);
+    }
+  });
+
+  document.querySelectorAll(".provider-segment").forEach((button) => {
+    button.addEventListener("click", () => {
+      document.querySelectorAll(".provider-segment").forEach((item) => item.classList.remove("active"));
+      button.classList.add("active");
+      const provider = button.dataset.backupProvider;
+      const mspView = document.getElementById("backupsMspView");
+      const proxmoxView = document.getElementById("backupsProxmoxView");
+      if (mspView) mspView.hidden = provider !== "msp";
+      if (proxmoxView) proxmoxView.hidden = provider !== "proxmox";
+    });
+  });
   els.brandingForm?.addEventListener("submit", submitBranding);
   els.themeSettingsForm?.addEventListener("submit", submitThemeSettings);
   els.themeModeInputs?.forEach((input) => {

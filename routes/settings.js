@@ -6,6 +6,10 @@ export function createSettingsHandler({
   setSettings,
   normalizeBranding,
   normalizeAlertSettings,
+  normalizeCloudBackupSettings,
+  normalizeProxmoxSettings,
+  refreshCloudBackup,
+  refreshProxmoxBackup,
   publicSettings,
   scheduleSave,
   broadcastSnapshot
@@ -44,6 +48,32 @@ export function createSettingsHandler({
       const payload = await readBody(req);
       setSettings(normalizeBranding(payload, getSettings()));
       scheduleSave();
+      broadcastSnapshot();
+      return sendJson(res, 200, publicSettings(session.user));
+    }
+
+    if (req.method === "PUT" && parts[2] === "cloudbackup") {
+      const payload = await readBody(req);
+      setSettings(normalizeCloudBackupSettings(payload, getSettings()));
+      scheduleSave();
+      try {
+        await refreshCloudBackup();
+      } catch {
+        // erro ja fica registrado no estado do cloudBackup; nao bloqueia o salvamento
+      }
+      broadcastSnapshot();
+      return sendJson(res, 200, publicSettings(session.user));
+    }
+
+    if (req.method === "PUT" && parts[2] === "proxmox") {
+      const payload = await readBody(req);
+      setSettings(normalizeProxmoxSettings(payload, getSettings()));
+      scheduleSave();
+      try {
+        await refreshProxmoxBackup();
+      } catch {
+        // erro ja fica registrado no estado do proxmoxBackup; nao bloqueia o salvamento
+      }
       broadcastSnapshot();
       return sendJson(res, 200, publicSettings(session.user));
     }

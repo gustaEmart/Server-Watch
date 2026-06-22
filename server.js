@@ -5,6 +5,7 @@ import { join, resolve } from "node:path";
 import os from "node:os";
 import { createAlertsHandler } from "./routes/alerts.js";
 import { createBackupsHandler } from "./routes/backups.js";
+import { createProxmoxBackupsHandler } from "./routes/proxmoxBackups.js";
 import { createDownloadHandler } from "./routes/downloads.js";
 import { createGroupsHandler } from "./routes/groups.js";
 import { createHealthHandler } from "./routes/health.js";
@@ -18,6 +19,7 @@ import { createUsersHandler } from "./routes/users.js";
 import { createStorage } from "./storage/index.js";
 import { createAlertService } from "./services/alert.js";
 import { emptyCloudBackupState, fetchCloudBackupSummary } from "./services/cloudBackup.js";
+import { emptyProxmoxBackupState, fetchProxmoxBackupSummary, proxmoxItemStatus, normalizeMatchKey } from "./services/proxmoxBackup.js";
 import {
   clearSessionCookie,
   hashPassword,
@@ -131,6 +133,7 @@ const DEFAULT_ADMIN_EMAIL = process.env.SERVERWATCH_ADMIN_EMAIL || "admin@server
 const DEFAULT_ADMIN_PASSWORD = process.env.SERVERWATCH_ADMIN_PASSWORD || "admin123";
 const PROBE_COLLECTOR_VERSION = "0.6.8";
 const CLOUDBACKUP_POLL_MS = 5 * 60 * 1000;
+const PROXMOX_POLL_MS = 5 * 60 * 1000;
 const PROBE_UPDATE_SUPPORTED_PLATFORMS = new Set(["linux", "windows"]);
 
 function routerosQuote(value) {
@@ -336,6 +339,7 @@ let state = {
   alerts: [],
   probeUpdateRequests: [],
   cloudBackup: emptyCloudBackupState(),
+  proxmoxBackup: emptyProxmoxBackupState(),
   settings: {
     defaultInterval: 10,
     defaultFailureThreshold: 2,
@@ -1017,6 +1021,107 @@ function setCloudBackupClientLink(clientId, groupId) {
       throw error;
     }
     group.cloudBackupClientId = id;
+  }
+  scheduleSave();
+  broadcastSnapshot();
+}
+
+function resolveProxmoxItemGroup(item) {
+  const manual = listedGroups().find(
+    (group) => group.proxmoxNamespace && normalizeMatchKey(group.proxmoxNamespace) === normalizeMatchKey(item.namespace)
+  );
+  if (manual) return manual;
+  const key = normalizeMatchKey(item.namespace);
+  if (!key) return null;
+  const exact = listedGroups().find((group) => normalizeMatchKey(group.name) === key);
+  if (exact) return exact;
+  return (
+    listedGroups().find((group) => {
+      const groupKey = normalizeMatchKey(group.name);
+      return groupKey && (groupKey.includes(key) || key.includes(groupKey));
+    }) || null
+  );
+}
+
+function resolveProxmoxItemServer(item, group) {
+  const itemKey = `${item.namespace}:${item.backupId}`;
+  const manual = listedServers().find((server) => server.proxmoxBackupKey === itemKey);
+  if (manual) return manual;
+  const key = normalizeMatchKey(item.comment);
+  if (!key) return null;
+  const candidates = group ? listedServers().filter((server) => server.groupId === group.id) : listedServers();
+  return candidates.find((server) => normalizeMatchKey(server.name) === key || normalizeMatchKey(server.hostname) === key) || null;
+}
+
+function decorateProxmoxItems(items) {
+  return (items || []).map((item) => {
+    const group = resolveProxmoxItemGroup(item);
+    const server = resolveProxmoxItemServer(item, group);
+    return {
+      ...item,
+      groupId: group ? group.id : null,
+      groupName: group ? group.name : null,
+      serverId: server ? server.id : null,
+      serverName: server ? server.name : null,
+      status: proxmoxItemStatus(item)
+    };
+  });
+}
+
+function scopedProxmoxBackup(user = null) {
+  if (user && !canAccessSection(user, "backups")) return emptyProxmoxBackupState();
+  const backups = state.proxmoxBackup || emptyProxmoxBackupState();
+  const decorated = decorateProxmoxItems(backups.items);
+  if (!user || isAdminUser(user)) {
+    return { ...backups, items: decorated };
+  }
+  const allowedGroupIds = userGroupIds(user);
+  return { ...backups, items: decorated.filter((item) => item.groupId && allowedGroupIds.has(item.groupId)) };
+}
+
+function linkProxmoxNamespace(namespace, groupId) {
+  const ns = String(namespace || "").trim();
+  if (!ns) {
+    const error = new Error("Namespace invalido.");
+    error.statusCode = 400;
+    throw error;
+  }
+  for (const group of state.groups) {
+    if (group.proxmoxNamespace === ns) group.proxmoxNamespace = null;
+  }
+  if (groupId) {
+    const group = state.groups.find((item) => item.id === groupId && !item.deletedAt);
+    if (!group) {
+      const error = new Error("Empresa nao encontrada.");
+      error.statusCode = 404;
+      throw error;
+    }
+    group.proxmoxNamespace = ns;
+  }
+  scheduleSave();
+  broadcastSnapshot();
+}
+
+function linkProxmoxServer(namespace, backupId, serverId) {
+  const ns = String(namespace || "").trim();
+  const guestId = String(backupId || "").trim();
+  if (!ns || !guestId) {
+    const error = new Error("Namespace e backupId sao obrigatorios.");
+    error.statusCode = 400;
+    throw error;
+  }
+  const key = `${ns}:${guestId}`;
+  for (const server of state.servers) {
+    if (server.proxmoxBackupKey === key) server.proxmoxBackupKey = null;
+  }
+  if (serverId) {
+    const server = state.servers.find((item) => item.id === serverId && !item.deletedAt);
+    if (!server) {
+      const error = new Error("Servidor nao encontrado.");
+      error.statusCode = 404;
+      throw error;
+    }
+    server.proxmoxBackupKey = key;
   }
   scheduleSave();
   broadcastSnapshot();
@@ -2338,7 +2443,8 @@ function snapshot(currentUser = null) {
     settings: publicSettings(currentUser),
     alerts: scopedAlerts(currentUser).slice(0, 50),
     events: scopedEvents(currentUser).slice(0, 100),
-    cloudBackup: scopedCloudBackup(currentUser)
+    cloudBackup: scopedCloudBackup(currentUser),
+    proxmoxBackup: scopedProxmoxBackup(currentUser)
   };
 }
 
@@ -2636,7 +2742,12 @@ function startMonitor() {
 }
 
 function getCloudBackupApiKey() {
-  return String(process.env.CLOUDBACKUP_API_KEY || "").trim();
+  return String(process.env.CLOUDBACKUP_API_KEY || state.settings.cloudBackupApiKey || "").trim();
+}
+
+function normalizeCloudBackupSettings(payload, existing = {}) {
+  const apiKey = payload.apiKey !== undefined ? String(payload.apiKey || "").trim() || null : existing.cloudBackupApiKey ?? null;
+  return { ...existing, cloudBackupApiKey: apiKey };
 }
 
 async function refreshCloudBackup() {
@@ -2652,6 +2763,55 @@ async function refreshCloudBackup() {
       ...(state.cloudBackup || emptyCloudBackupState()),
       configured: true,
       error: error.message || "Falha ao consultar a API de backups."
+    };
+    throw error;
+  } finally {
+    scheduleSave();
+    scheduleBroadcastSnapshot();
+  }
+}
+
+function getProxmoxConfig() {
+  const baseUrl = String(process.env.PROXMOX_PBS_BASE_URL || state.settings.proxmoxPbsBaseUrl || "").trim().replace(/\/+$/, "");
+  const tokenId = String(process.env.PROXMOX_PBS_TOKEN_ID || state.settings.proxmoxPbsTokenId || "").trim();
+  const tokenSecret = String(process.env.PROXMOX_PBS_TOKEN_SECRET || state.settings.proxmoxPbsTokenSecret || "").trim();
+  const tlsFingerprint = String(process.env.PROXMOX_PBS_TLS_FINGERPRINT || state.settings.proxmoxPbsTlsFingerprint || "").trim();
+  if (!baseUrl || !tokenId || !tokenSecret) return null;
+  return { baseUrl, tokenId, tokenSecret, tlsFingerprint };
+}
+
+function normalizeProxmoxSettings(payload, existing = {}) {
+  const baseUrl =
+    payload.baseUrl !== undefined ? String(payload.baseUrl || "").trim().replace(/\/+$/, "") || null : existing.proxmoxPbsBaseUrl ?? null;
+  const tokenId = payload.tokenId !== undefined ? String(payload.tokenId || "").trim() || null : existing.proxmoxPbsTokenId ?? null;
+  const tokenSecret =
+    payload.tokenSecret !== undefined ? String(payload.tokenSecret || "").trim() || null : existing.proxmoxPbsTokenSecret ?? null;
+  const tlsFingerprint =
+    payload.tlsFingerprint !== undefined
+      ? String(payload.tlsFingerprint || "").trim() || null
+      : existing.proxmoxPbsTlsFingerprint ?? null;
+  return {
+    ...existing,
+    proxmoxPbsBaseUrl: baseUrl,
+    proxmoxPbsTokenId: tokenId,
+    proxmoxPbsTokenSecret: tokenSecret,
+    proxmoxPbsTlsFingerprint: tlsFingerprint
+  };
+}
+
+async function refreshProxmoxBackup() {
+  const config = getProxmoxConfig();
+  if (!config) {
+    state.proxmoxBackup = emptyProxmoxBackupState();
+    return;
+  }
+  try {
+    state.proxmoxBackup = await fetchProxmoxBackupSummary(config);
+  } catch (error) {
+    state.proxmoxBackup = {
+      ...(state.proxmoxBackup || emptyProxmoxBackupState()),
+      configured: true,
+      error: error.message || "Falha ao consultar o Proxmox Backup Server."
     };
     throw error;
   } finally {
@@ -2774,7 +2934,16 @@ function publicSettings(currentUser = null) {
       development: state.settings.alertSeverityByEnvironment?.development || "info"
     },
     probeToken: isAdminUser(currentUser) ? getProbeToken() : "",
-    probeTokenSource: process.env.SERVERWATCH_PROBE_TOKEN ? "environment" : "generated"
+    probeTokenSource: process.env.SERVERWATCH_PROBE_TOKEN ? "environment" : "generated",
+    cloudBackupConfigured: Boolean(getCloudBackupApiKey()),
+    cloudBackupSource: process.env.CLOUDBACKUP_API_KEY ? "environment" : state.settings.cloudBackupApiKey ? "configured" : "none",
+    proxmoxConfigured: Boolean(getProxmoxConfig()),
+    proxmoxSource: process.env.PROXMOX_PBS_BASE_URL ? "environment" : state.settings.proxmoxPbsBaseUrl ? "configured" : "none",
+    proxmoxBaseUrl: isAdminUser(currentUser) ? state.settings.proxmoxPbsBaseUrl || process.env.PROXMOX_PBS_BASE_URL || "" : "",
+    proxmoxTokenId: isAdminUser(currentUser) ? state.settings.proxmoxPbsTokenId || process.env.PROXMOX_PBS_TOKEN_ID || "" : "",
+    proxmoxTlsFingerprint: isAdminUser(currentUser)
+      ? state.settings.proxmoxPbsTlsFingerprint || process.env.PROXMOX_PBS_TLS_FINGERPRINT || ""
+      : ""
   };
 }
 
@@ -3586,6 +3755,10 @@ async function handleApi(req, res) {
       if (await handleBackups(req, res, { parts, session })) return;
     }
 
+    if (parts[1] === "proxmox-backups") {
+      if (await handleProxmoxBackups(req, res, { parts, session })) return;
+    }
+
     if (parts[1] === "servers") {
       if (handleServerRead(req, res, { parts, url, session })) return;
 
@@ -3650,6 +3823,10 @@ const handleSettings = createSettingsHandler({
   },
   normalizeBranding,
   normalizeAlertSettings,
+  normalizeCloudBackupSettings,
+  normalizeProxmoxSettings,
+  refreshCloudBackup,
+  refreshProxmoxBackup,
   publicSettings,
   scheduleSave,
   broadcastSnapshot
@@ -3712,6 +3889,15 @@ const handleBackups = createBackupsHandler({
   getCloudBackupState: (user = null) => scopedCloudBackup(user),
   refreshCloudBackup,
   linkCloudBackupClient: setCloudBackupClientLink
+});
+const handleProxmoxBackups = createProxmoxBackupsHandler({
+  sendJson,
+  readBody,
+  requireAdmin,
+  getProxmoxBackupState: (user = null) => scopedProxmoxBackup(user),
+  refreshProxmoxBackup,
+  linkProxmoxNamespace,
+  linkProxmoxServer
 });
 const handleAlerts = createAlertsHandler({
   nowIso,
@@ -3847,7 +4033,11 @@ server.on("upgrade", handleUpgrade);
 await loadState();
 startMonitor();
 refreshCloudBackup().catch((error) => console.error("Falha ao buscar backups na inicializacao", error));
+refreshProxmoxBackup().catch((error) => console.error("Falha ao buscar Proxmox Backup Server na inicializacao", error));
 setInterval(() => {
   refreshCloudBackup().catch((error) => console.error("Falha ao atualizar backups", error));
 }, CLOUDBACKUP_POLL_MS);
+setInterval(() => {
+  refreshProxmoxBackup().catch((error) => console.error("Falha ao atualizar Proxmox Backup Server", error));
+}, PROXMOX_POLL_MS);
 server.listen(PORT, HOST, printStartup);

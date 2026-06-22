@@ -9,7 +9,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="/styles.css?v=20260619-company-backup-widget" />
+    <link rel="stylesheet" href="/styles.css?v=20260622-pbs-visual-groups" />
   </head>
   <body>
     <section class="bootstrap-screen" id="bootScreen" aria-label="Carregando ServerWatch">
@@ -303,12 +303,20 @@
         </section>
 
         <section class="view" id="backupsView">
+          <div class="provider-toggle" role="group" aria-label="Selecionar provedor de backup">
+            <button class="provider-segment active" type="button" data-backup-provider="msp">MSP Cloud Backup Pro</button>
+            <button class="provider-segment" type="button" data-backup-provider="proxmox">Proxmox Backup Server</button>
+          </div>
+
+          <div id="backupsMspView">
           <section class="backup-sync-bar" aria-label="Sincronizacao dos backups">
             <div>
               <strong>Dados do MSP Cloud Backup Pro</strong>
               <span id="backupsSyncMeta">Aguardando sincronizacao</span>
             </div>
-            <button class="primary-button compact admin-only" id="refreshBackupsButton" type="button">Atualizar dados</button>
+            <div class="backup-sync-bar-actions">
+              <button class="primary-button compact admin-only" id="refreshBackupsButton" type="button">Atualizar dados</button>
+            </div>
           </section>
 
           <div class="simple-dashboard" id="backupsSimpleDashboard">
@@ -406,6 +414,17 @@
               </section>
             </div>
           </section>
+          </div>
+
+          <div id="backupsProxmoxView" hidden>
+          <section class="wide-panel" id="proxmoxBackupsPanel" aria-label="Proxmox Backup Server">
+            <div class="panel-title compact-title">
+              <h2>Proxmox Backup Server</h2>
+              <span id="proxmoxBackupsSummary">Carregando...</span>
+            </div>
+            <div id="proxmoxBackupsContent"></div>
+          </section>
+          </div>
         </section>
 
         <section class="view" id="adminView">
@@ -1461,6 +1480,6 @@
     </dialog>
 
     <div class="toast-stack" id="toastStack" aria-live="polite"></div>
-    <script src="/app.js?v=20260619-company-backup-widget" type="module"></script>
+    <script src="/app.js?v=20260622-pbs-visual-groups" type="module"></script>
   </body>
 </html>
