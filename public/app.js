@@ -3311,8 +3311,8 @@ function restoreBackupsScroll(positions) {
 }
 
 function backupProviderConfigured(provider) {
-  if (provider === "msp") return Boolean(state.settings.cloudBackupConfigured ?? state.cloudBackup?.configured);
-  if (provider === "proxmox") return Boolean(state.settings.proxmoxConfigured ?? state.proxmoxBackup?.configured);
+  if (provider === "msp") return Boolean(state.settings.cloudBackupConfigured || state.cloudBackup?.configured);
+  if (provider === "proxmox") return Boolean(state.settings.proxmoxConfigured || state.proxmoxBackup?.configured);
   return false;
 }
 
