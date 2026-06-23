@@ -4,6 +4,13 @@ Resumo das versoes estaveis publicadas do ServerWatch.
 
 ## Unreleased
 
+- Adiciona integracao com a API oficial local do UniFi Network em controladores UniFi OS.
+- Importa sites, access points, switches, gateways, clientes conectados e metricas de CPU, memoria e uptime.
+- Adiciona a visualizacao `UniFi Network` na pagina Redes sem alterar o monitoramento atual de links.
+- Vincula automaticamente sites UniFi a empresas pelo nome e oferece vinculo manual para os sites restantes.
+- Protege controladores com certificado autoassinado por fingerprint TLS SHA-256.
+- Mantem o ultimo estado UniFi valido quando uma coleta falha, diferenciando falha da integracao de dispositivo offline.
+
 ## v3.1.0 - 2026-06-23
 
 - Adiciona a pagina administrativa `Integracoes` para centralizar APIs e credenciais de provedores externos.

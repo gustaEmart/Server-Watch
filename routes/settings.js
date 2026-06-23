@@ -8,8 +8,10 @@ export function createSettingsHandler({
   normalizeAlertSettings,
   normalizeCloudBackupSettings,
   normalizeProxmoxSettings,
+  normalizeUnifiSettings,
   refreshCloudBackup,
   refreshProxmoxBackup,
+  refreshUnifiNetwork,
   publicSettings,
   scheduleSave,
   broadcastSnapshot
@@ -73,6 +75,19 @@ export function createSettingsHandler({
         await refreshProxmoxBackup();
       } catch {
         // erro ja fica registrado no estado do proxmoxBackup; nao bloqueia o salvamento
+      }
+      broadcastSnapshot();
+      return sendJson(res, 200, publicSettings(session.user));
+    }
+
+    if (req.method === "PUT" && parts[2] === "unifi") {
+      const payload = await readBody(req);
+      setSettings(normalizeUnifiSettings(payload, getSettings()));
+      scheduleSave();
+      try {
+        await refreshUnifiNetwork();
+      } catch {
+        // erro fica registrado no estado do UniFi; credenciais continuam salvas para correcao
       }
       broadcastSnapshot();
       return sendJson(res, 200, publicSettings(session.user));

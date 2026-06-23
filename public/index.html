@@ -9,7 +9,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="/styles.css?v=20260622-integrations-view" />
+    <link rel="stylesheet" href="/styles.css?v=20260623-unifi-network" />
   </head>
   <body>
     <section class="bootstrap-screen" id="bootScreen" aria-label="Carregando ServerWatch">
@@ -249,6 +249,11 @@
         </section>
 
         <section class="view" id="networksView">
+          <div class="provider-toggle" id="networkProviderToggle" role="group" aria-label="Selecionar provedor de rede" hidden>
+            <button class="provider-segment active" type="button" data-network-provider="connectivity">Links e conectividade</button>
+            <button class="provider-segment" type="button" data-network-provider="unifi">UniFi Network</button>
+          </div>
+          <div id="networkConnectivityView">
           <div class="wide-panel">
             <div class="panel-title">
               <div>
@@ -300,6 +305,28 @@
                 </div>
               </aside>
             </div>
+          </div>
+          </div>
+
+          <div id="networkUnifiView" hidden>
+            <section class="backup-sync-bar" aria-label="Sincronizacao do UniFi Network">
+              <div>
+                <strong>Dados do UniFi Network</strong>
+                <span id="unifiSyncMeta">Aguardando sincronizacao</span>
+              </div>
+              <div class="backup-sync-bar-actions">
+                <button class="primary-button compact admin-only" id="refreshUnifiButton" type="button">Atualizar dados</button>
+              </div>
+            </section>
+            <section class="wide-panel" aria-label="Sites UniFi">
+              <div class="panel-title">
+                <div>
+                  <h2>UniFi Network</h2>
+                  <span id="unifiSummary">Carregando...</span>
+                </div>
+              </div>
+              <div id="unifiContent"></div>
+            </section>
           </div>
         </section>
 
@@ -527,6 +554,38 @@
                 </div>
                 <div class="dialog-actions">
                   <button class="primary-button compact" type="submit">Salvar integracao Proxmox</button>
+                </div>
+              </form>
+
+              <form class="integration-card" id="unifiSettingsForm">
+                <div class="integration-card-header">
+                  <div>
+                    <span class="integration-kicker">Redes</span>
+                    <h3>UniFi Network</h3>
+                  </div>
+                  <span class="integration-status" id="unifiSourceLabel">Nao configurado</span>
+                </div>
+                <p>Importa sites, access points, switches, gateways, clientes conectados e metricas da API oficial UniFi.</p>
+                <div class="form-grid">
+                  <label>
+                    URL do UniFi OS
+                    <input id="unifiBaseUrlInput" type="text" spellcheck="false" placeholder="https://10.10.10.39:11443" />
+                  </label>
+                  <label>
+                    Caminho da API
+                    <input id="unifiApiBasePathInput" type="text" spellcheck="false" placeholder="/proxy/network/integration" />
+                  </label>
+                </div>
+                <label>
+                  API Key
+                  <input id="unifiApiKeyInput" type="text" autocomplete="off" spellcheck="false" placeholder="Cole a API key oficial do UniFi Network" />
+                </label>
+                <label>
+                  Fingerprint TLS (SHA-256)
+                  <input id="unifiTlsFingerprintInput" type="text" spellcheck="false" placeholder="AA:BB:CC:..." />
+                </label>
+                <div class="dialog-actions">
+                  <button class="primary-button compact" type="submit">Salvar integracao UniFi</button>
                 </div>
               </form>
             </div>
@@ -1577,6 +1636,6 @@
     </dialog>
 
     <div class="toast-stack" id="toastStack" aria-live="polite"></div>
-    <script src="/app.js?v=20260622-integrations-view" type="module"></script>
+    <script src="/app.js?v=20260623-unifi-network" type="module"></script>
   </body>
 </html>

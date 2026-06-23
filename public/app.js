@@ -24,6 +24,7 @@ const state = {
   topologyExpanded: new Set(),
   selectedBackupClientId: null,
   backupProvider: "msp",
+  networkProvider: "connectivity",
   backupLinkEditorOpen: null,
   probeInstallTarget: "linux",
   commandGeneratorMode: "server",
@@ -110,6 +111,13 @@ const els = {
   networkProbeStaleCount: document.querySelector("#networkProbeStaleCount"),
   networkLinksList: document.querySelector("#networkLinksList"),
   networkDetailPanel: document.querySelector("#networkDetailPanel"),
+  networkProviderToggle: document.querySelector("#networkProviderToggle"),
+  networkConnectivityView: document.querySelector("#networkConnectivityView"),
+  networkUnifiView: document.querySelector("#networkUnifiView"),
+  unifiSyncMeta: document.querySelector("#unifiSyncMeta"),
+  unifiSummary: document.querySelector("#unifiSummary"),
+  unifiContent: document.querySelector("#unifiContent"),
+  refreshUnifiButton: document.querySelector("#refreshUnifiButton"),
   linkProbeInstallCommand: document.querySelector("#linkProbeInstallCommand"),
   copyLinkProbeInstallCommand: document.querySelector("#copyLinkProbeInstallCommand"),
   mikrotikProbeInstallCommand: document.querySelector("#mikrotikProbeInstallCommand"),
@@ -207,6 +215,12 @@ const els = {
   proxmoxTokenSecretInput: document.querySelector("#proxmoxTokenSecretInput"),
   proxmoxTlsFingerprintInput: document.querySelector("#proxmoxTlsFingerprintInput"),
   proxmoxSourceLabel: document.querySelector("#proxmoxSourceLabel"),
+  unifiSettingsForm: document.querySelector("#unifiSettingsForm"),
+  unifiBaseUrlInput: document.querySelector("#unifiBaseUrlInput"),
+  unifiApiBasePathInput: document.querySelector("#unifiApiBasePathInput"),
+  unifiApiKeyInput: document.querySelector("#unifiApiKeyInput"),
+  unifiTlsFingerprintInput: document.querySelector("#unifiTlsFingerprintInput"),
+  unifiSourceLabel: document.querySelector("#unifiSourceLabel"),
   brandNameInput: document.querySelector("#brandNameInput"),
   brandSubtitleInput: document.querySelector("#brandSubtitleInput"),
   brandLogoInput: document.querySelector("#brandLogoInput"),
@@ -899,6 +913,7 @@ function applySnapshot(payload) {
   state.events = payload.events || [];
   state.cloudBackup = payload.cloudBackup || null;
   state.proxmoxBackup = payload.proxmoxBackup || null;
+  state.unifiNetwork = payload.unifiNetwork || null;
   if (state.selectedServerId && !state.servers.some((server) => server.id === state.selectedServerId)) {
     state.selectedServerId = null;
   }
@@ -3699,9 +3714,13 @@ function renderProxmoxBackups() {
   const unmatchedGroupItems = items.filter((item) => !item.groupId);
   const unmatchedServerItems = items.filter((item) => item.groupId && !item.serverId);
 
-  const groupOptions = sortedByAlpha(state.groups, groupSortLabel)
-    .map((group) => `<option value="${escapeHtml(group.id)}">${escapeHtml(group.name)}</option>`)
-    .join("");
+  const groupOptionsFor = (selectedGroupId) =>
+    sortedByAlpha(state.groups, groupSortLabel)
+      .map(
+        (group) =>
+          `<option value="${escapeHtml(group.id)}" ${group.id === selectedGroupId ? "selected" : ""}>${escapeHtml(group.name)}</option>`
+      )
+      .join("");
 
   function serverOptionsFor(groupId) {
     const candidates = groupId ? state.servers.filter((server) => server.groupId === groupId) : state.servers;
@@ -4336,6 +4355,21 @@ function renderBackupIntegrationSettingsForm() {
       els.proxmoxTokenSecretInput.value = state.settings.proxmoxTokenSecret || "";
     }
   }
+  if (els.unifiSettingsForm) {
+    setIntegrationStatus(els.unifiSourceLabel, state.settings.unifiSource || "none");
+    if (document.activeElement !== els.unifiBaseUrlInput) {
+      els.unifiBaseUrlInput.value = state.settings.unifiBaseUrl || "";
+    }
+    if (document.activeElement !== els.unifiApiBasePathInput) {
+      els.unifiApiBasePathInput.value = state.settings.unifiApiBasePath || "/proxy/network/integration";
+    }
+    if (document.activeElement !== els.unifiApiKeyInput) {
+      els.unifiApiKeyInput.value = state.settings.unifiApiKey || "";
+    }
+    if (document.activeElement !== els.unifiTlsFingerprintInput) {
+      els.unifiTlsFingerprintInput.value = state.settings.unifiTlsFingerprint || "";
+    }
+  }
 }
 
 async function submitCloudBackupSettings(event) {
@@ -4370,6 +4404,26 @@ async function submitProxmoxSettings(event) {
     showToast("Proxmox Backup Server atualizado", "As credenciais foram salvas e a sincronizacao foi atualizada.");
   } catch (error) {
     showToast("Falha ao salvar Proxmox Backup Server", error.message);
+  }
+}
+
+async function submitUnifiSettings(event) {
+  event.preventDefault();
+  try {
+    const settings = await api("/api/settings/unifi", {
+      method: "PUT",
+      body: JSON.stringify({
+        baseUrl: els.unifiBaseUrlInput.value.trim(),
+        apiBasePath: els.unifiApiBasePathInput.value.trim(),
+        apiKey: els.unifiApiKeyInput.value.trim(),
+        tlsFingerprint: els.unifiTlsFingerprintInput.value.trim()
+      })
+    });
+    state.settings = { ...state.settings, ...settings };
+    applySnapshot(await api("/api/snapshot"));
+    showToast("UniFi Network atualizado", "A integracao foi salva e os sites foram sincronizados.");
+  } catch (error) {
+    showToast("Falha ao salvar UniFi Network", error.message);
   }
 }
 
@@ -5762,6 +5816,175 @@ function renderNetworkCompanySection(group) {
   `;
 }
 
+function applyNetworkProvider(provider) {
+  state.networkProvider = provider === "unifi" && state.settings.unifiConfigured ? "unifi" : "connectivity";
+  document.querySelectorAll("[data-network-provider]").forEach((button) => {
+    button.classList.toggle("active", button.dataset.networkProvider === state.networkProvider);
+  });
+  if (els.networkConnectivityView) els.networkConnectivityView.hidden = state.networkProvider !== "connectivity";
+  if (els.networkUnifiView) els.networkUnifiView.hidden = state.networkProvider !== "unifi";
+}
+
+function updateNetworkProviderVisibility() {
+  const configured = Boolean(state.settings.unifiConfigured ?? state.unifiNetwork?.configured);
+  if (els.networkProviderToggle) els.networkProviderToggle.hidden = !configured;
+  const unifiButton = document.querySelector('[data-network-provider="unifi"]');
+  if (unifiButton) unifiButton.hidden = !configured;
+  if (!configured && state.networkProvider === "unifi") state.networkProvider = "connectivity";
+  applyNetworkProvider(state.networkProvider);
+}
+
+function unifiStatusLabel(status) {
+  return { online: "ONLINE", attention: "ATENCAO", offline: "OFFLINE", unknown: "SEM DADOS" }[status] || "SEM DADOS";
+}
+
+function unifiStatusClass(status) {
+  return status === "offline" ? "offline" : status === "attention" ? "probe_stale" : status === "online" ? "online" : "paused";
+}
+
+function unifiDeviceTypeLabel(type) {
+  return { access_point: "Access Point", switch: "Switch", gateway: "Gateway", device: "Dispositivo" }[type] || "Dispositivo";
+}
+
+function formatUptimeSeconds(value) {
+  const seconds = Number(value);
+  if (!Number.isFinite(seconds) || seconds <= 0) return "-";
+  const days = Math.floor(seconds / 86400);
+  const hours = Math.floor((seconds % 86400) / 3600);
+  return days ? `${days}d ${hours}h` : `${hours}h`;
+}
+
+function renderUnifiNetwork() {
+  if (!els.unifiContent) return;
+  const scrollPositions = {};
+  els.unifiContent.querySelectorAll("[data-unifi-scroll-id]").forEach((element) => {
+    scrollPositions[element.dataset.unifiScrollId] = element.scrollTop;
+  });
+  const data = state.unifiNetwork || { configured: false, sites: [], error: null };
+  const sites = Array.isArray(data.sites) ? data.sites : [];
+  if (els.unifiSyncMeta) {
+    els.unifiSyncMeta.textContent = data.error
+      ? `Falha na coleta: ${data.error}`
+      : data.fetchedAt
+      ? `Ultima atualizacao: ${formatDate(data.fetchedAt)}`
+      : "Aguardando sincronizacao";
+  }
+  if (els.unifiSummary) {
+    const devices = sites.reduce((sum, site) => sum + Number(site.deviceCount || 0), 0);
+    els.unifiSummary.textContent = `${sites.length} sites · ${devices} dispositivos`;
+  }
+  if (!data.configured) {
+    els.unifiContent.innerHTML = `<div class="simple-empty">Configure a API oficial do UniFi Network em Integracoes.</div>`;
+    return;
+  }
+
+  const allDevices = sites.flatMap((site) => site.devices || []);
+  const online = allDevices.filter((device) => device.status === "online").length;
+  const attention = allDevices.filter((device) => device.status === "attention" || device.status === "unknown").length;
+  const offline = allDevices.filter((device) => device.status === "offline").length;
+  const clients = sites.reduce((sum, site) => sum + Number(site.clientCount || 0), 0);
+  const groupOptions = sortedByAlpha(state.groups, groupSortLabel)
+    .map((group) => `<option value="${escapeHtml(group.id)}">${escapeHtml(group.name)}</option>`)
+    .join("");
+
+  const siteCards = sortedByAlpha(sites, (site) => site.groupName || site.name)
+    .map((site) => {
+      const devices = sortedByAlpha(site.devices || [], (device) => device.name);
+      const rows = devices.length
+        ? devices
+            .map(
+              (device) => `
+                <div class="unifi-device-row ${device.status}">
+                  <span class="status-dot ${unifiStatusClass(device.status)}"></span>
+                  <span class="unifi-device-identity">
+                    <strong>${escapeHtml(device.name)}</strong>
+                    <small>${escapeHtml(unifiDeviceTypeLabel(device.type))} · ${escapeHtml(device.model || "Modelo nao informado")} · ${escapeHtml(device.ipAddress || "Sem IP")}</small>
+                  </span>
+                  <span class="status-badge ${unifiStatusClass(device.status)}">${unifiStatusLabel(device.status)}</span>
+                  <span class="unifi-device-metrics">
+                    <small>${device.cpuUtilizationPct != null ? `CPU ${device.cpuUtilizationPct}%` : ""}</small>
+                    <small>${device.memoryUtilizationPct != null ? `RAM ${device.memoryUtilizationPct}%` : ""}</small>
+                    <small>${formatUptimeSeconds(device.uptimeSeconds)}</small>
+                  </span>
+                </div>
+              `
+            )
+            .join("")
+        : `<div class="simple-empty">Nenhum dispositivo adotado neste site.</div>`;
+      return `
+        <section class="proxmox-company-section unifi-site-section">
+          <div class="proxmox-company-header">
+            <div>
+              <strong>${escapeHtml(site.groupName || site.name)}</strong>
+              <span>${escapeHtml(site.name)} · ${site.deviceCount} dispositivos · ${site.clientCount} clientes</span>
+            </div>
+            <div class="proxmox-company-counts">
+              <span class="status-badge online">${site.counts?.online || 0} online</span>
+              ${site.counts?.attention || site.counts?.unknown ? `<span class="status-badge probe_stale">${(site.counts?.attention || 0) + (site.counts?.unknown || 0)} atencao</span>` : ""}
+              ${site.counts?.offline ? `<span class="status-badge offline">${site.counts.offline} offline</span>` : ""}
+            </div>
+          </div>
+          ${
+            isAdmin()
+              ? `<div class="unifi-site-link">
+                  <span>${site.groupId ? "Empresa vinculada" : "Site sem empresa vinculada"}</span>
+                  <select class="compact-select" data-unifi-link-site="${escapeHtml(site.id)}">
+                    <option value="">Vincular empresa...</option>
+                    ${groupOptionsFor(site.groupId)}
+                  </select>
+                </div>`
+              : ""
+          }
+          <div class="proxmox-company-items unifi-device-list" data-unifi-scroll-id="${escapeHtml(site.id)}">${rows}</div>
+        </section>
+      `;
+    })
+    .join("");
+
+  els.unifiContent.innerHTML = `
+    <div class="simple-kpi-row unifi-kpi-row">
+      <article class="success"><span>Online</span><strong>${online}</strong><small>dispositivos respondendo</small></article>
+      <article class="${attention ? "warning" : "success"}"><span>Atencao</span><strong>${attention}</strong><small>firmware ou estado pendente</small></article>
+      <article class="${offline ? "danger" : "success"}"><span>Offline</span><strong>${offline}</strong><small>dispositivos desconectados</small></article>
+      <article><span>Clientes</span><strong>${clients}</strong><small>conectados agora</small></article>
+    </div>
+    ${data.error ? `<div class="integration-warning">A coleta atual falhou; exibindo o ultimo estado valido. ${escapeHtml(data.error)}</div>` : ""}
+    <div class="proxmox-groups-list unifi-sites-list">${siteCards || `<div class="simple-empty">Nenhum site retornado pela API.</div>`}</div>
+  `;
+  els.unifiContent.querySelectorAll("[data-unifi-scroll-id]").forEach((element) => {
+    const saved = scrollPositions[element.dataset.unifiScrollId];
+    if (saved) element.scrollTop = saved;
+  });
+}
+
+async function refreshUnifiData() {
+  if (els.refreshUnifiButton) els.refreshUnifiButton.disabled = true;
+  try {
+    const response = await api("/api/unifi-network/refresh", { method: "POST" });
+    state.unifiNetwork = response.unifiNetwork || state.unifiNetwork;
+    renderNetworks();
+    showToast("UniFi atualizado", "Sites e dispositivos foram consultados agora.");
+  } catch (error) {
+    showToast("Falha ao atualizar UniFi", error.message);
+  } finally {
+    if (els.refreshUnifiButton) els.refreshUnifiButton.disabled = false;
+  }
+}
+
+async function linkUnifiSiteToGroup(siteId, groupId) {
+  try {
+    const response = await api("/api/unifi-network/link-site", {
+      method: "POST",
+      body: JSON.stringify({ siteId, groupId: groupId || null })
+    });
+    state.unifiNetwork = response.unifiNetwork || state.unifiNetwork;
+    renderNetworks();
+    showToast("Site vinculado", "O site UniFi foi associado a empresa.");
+  } catch (error) {
+    showToast("Falha ao vincular site", error.message);
+  }
+}
+
 function renderNetworks() {
   if (!els.networkLinksList) return;
   const links = sortedByAlpha(state.networkLinks || [], networkLinkSortLabel);
@@ -5807,6 +6030,8 @@ function renderNetworks() {
   const selectedGroup = state.selectedNetworkGroupId ? groupedLinks.find((group) => group.id === state.selectedNetworkGroupId) : null;
   if (selectedGroup) renderNetworkCompanyDetail(selectedGroup);
   else renderNetworkDetail(links.find((link) => link.id === state.selectedNetworkLinkId) || null);
+  renderUnifiNetwork();
+  updateNetworkProviderVisibility();
 }
 
 function render() {
@@ -7120,10 +7345,13 @@ function bindEvents() {
     }
   });
 
-  document.querySelectorAll(".provider-segment").forEach((button) => {
+  document.querySelectorAll("[data-backup-provider]").forEach((button) => {
     button.addEventListener("click", () => {
       applyBackupProvider(button.dataset.backupProvider);
     });
+  });
+  document.querySelectorAll("[data-network-provider]").forEach((button) => {
+    button.addEventListener("click", () => applyNetworkProvider(button.dataset.networkProvider));
   });
   els.brandingForm?.addEventListener("submit", submitBranding);
   els.themeSettingsForm?.addEventListener("submit", submitThemeSettings);
@@ -7135,6 +7363,12 @@ function bindEvents() {
   els.alertSettingsForm?.addEventListener("submit", submitAlertSettings);
   els.cloudBackupSettingsForm?.addEventListener("submit", submitCloudBackupSettings);
   els.proxmoxSettingsForm?.addEventListener("submit", submitProxmoxSettings);
+  els.unifiSettingsForm?.addEventListener("submit", submitUnifiSettings);
+  els.refreshUnifiButton?.addEventListener("click", refreshUnifiData);
+  els.unifiContent?.addEventListener("change", (event) => {
+    const select = event.target.closest("[data-unifi-link-site]");
+    if (select) linkUnifiSiteToGroup(select.dataset.unifiLinkSite, select.value);
+  });
 
   document.querySelectorAll("[data-admin-view]").forEach((button) => {
     button.addEventListener("click", () => setActiveView(button.dataset.adminView));

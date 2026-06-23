@@ -2,29 +2,26 @@
 
 ## Status da iniciativa
 
-**Pausada em 23 de junho de 2026.**
+**Reativada em 23 de junho de 2026.**
 
-O UniFi Network Server multisite atualmente utilizado nao disponibiliza, na
-interface administrativa desse ambiente, a criacao de uma chave para a API
-oficial local do UniFi Network. Por decisao de projeto, o ServerWatch nao
-utilizara como alternativa:
+O controlador foi migrado para UniFi OS Server com suporte a API oficial
+local autenticada por chave. A validacao tecnica confirmou:
 
-- autenticacao automatizada com usuario e senha;
-- cookies de sessao e tokens CSRF;
-- endpoints legados ou nao oficiais, como `/api/login` e
-  `/api/s/{site}/stat/*`;
-- credenciais administrativas do controlador.
+- UniFi Network 10.1.89;
+- UniFi OS Server acessivel internamente em `10.10.10.39:11443`;
+- API oficial sob `/proxy/network/integration/v1`;
+- autenticacao pelo header `X-API-KEY`;
+- certificado autoassinado protegido no ServerWatch por fingerprint
+  SHA-256.
 
-A integracao sera retomada futuramente somente por uma API oficial da
-Ubiquiti, autenticada por chave e suportada pela instalacao utilizada. Isso
-pode ocorrer apos migracao ou atualizacao do ambiente para uma plataforma
-que exponha a API oficial local, ou quando a API oficial do UniFi Site
-Manager oferecer os dados detalhados necessarios para o monitoramento.
+A listagem de sites, dispositivos, clientes e estatisticas depende de uma
+API key ativa no UniFi OS. Se a chave for revogada, expirar ou for criada
+para outro tipo de integracao, o ServerWatch exibira erro de autorizacao e
+preservara o ultimo estado valido.
 
-As fases e modelos descritos abaixo ficam preservados como referencia de
-arquitetura, mas **nao estao aprovados para implementacao no ambiente
-atual**. Na retomada, os endpoints e os requisitos de autenticacao deverao
-ser revalidados na documentacao oficial vigente.
+Continuam proibidos login automatizado, cookies de sessao e endpoints
+legados ou nao oficiais. A implementacao usa exclusivamente a API oficial
+local documentada pela Ubiquiti.
 
 Este documento define o plano de implementacao do monitoramento de Access
 Points, clientes sem fio e saude de rede via UniFi Network no ServerWatch.
@@ -234,56 +231,20 @@ identica.
 
 ## Endpoints externos consultados
 
-Os caminhos exatos devem ser validados na Fase 0 contra a versao da
-aplicacao UniFi Network instalada (eles mudaram entre versoes e entre
-controlador local classico vs. UniFi OS Console). Como referencia:
-
-### UniFi OS Console (UDM/UDM-Pro/Cloud Gateway) - API proxiada
-
-Base:
+O ambiente validado usa a API oficial local do UniFi Network 10.1.89:
 
 ```text
-https://CONTROLADOR/proxy/network/api
+Base: https://CONTROLADOR:11443/proxy/network/integration
+Header: X-API-KEY: <chave>
+
+GET /v1/sites
+GET /v1/sites/{siteId}/devices
+GET /v1/sites/{siteId}/devices/{deviceId}/statistics/latest
+GET /v1/sites/{siteId}/clients
 ```
 
-Autenticacao (validar qual esta disponivel na versao instalada, em ordem de
-preferencia):
-
-```text
-1) API Key nativa (UniFi Network 8+): header X-API-KEY
-2) Usuario/senha local + cookie de sessao + header X-CSRF-Token
-```
-
-Consultas previstas:
-
-```text
-GET /api/self/sites
-GET /s/{site}/stat/device
-GET /s/{site}/stat/health
-GET /s/{site}/stat/sta
-GET /s/{site}/rest/device  (alternativa em algumas versoes)
-```
-
-### Controlador classico (self-hosted, fora de um UniFi OS Console)
-
-Base:
-
-```text
-https://CONTROLADOR:8443/api
-```
-
-Login:
-
-```text
-POST /api/login  { "username": "...", "password": "..." }
-```
-
-Demais consultas seguem o mesmo padrao `GET /api/s/{site}/...` listado
-acima, sem o prefixo `/proxy/network`.
-
-O coletor deve detectar automaticamente qual layout responde (testar
-`/proxy/network/api/self/sites` primeiro; se 404, cair para
-`/api/self/sites`), documentando o resultado real na Fase 0.
+Nao existe fallback para login, cookie de sessao ou endpoints legados.
+Ambientes sem a API oficial devem permanecer como nao configurados.
 
 ## Autenticacao e seguranca
 
@@ -460,13 +421,11 @@ transicao, atualizar enquanto persistir, fechar na recuperacao.
 
 ### Fase 0 - Validacao tecnica
 
-- confirmar versao da aplicacao UniFi Network e se o controlador e
-  UniFi OS Console ou classico;
-- confirmar se a versao suporta API Key nativa; se nao, criar usuario local
-  somente leitura dedicado;
-- testar `GET /api/self/sites` (ou `/proxy/network/api/self/sites`) e
-  capturar o formato real da resposta;
-- testar `stat/device` e `stat/health` para pelo menos 2 sites reais;
+- confirmar versao da aplicacao UniFi Network e do UniFi OS;
+- criar uma API Key oficial na pagina Integrations;
+- testar `GET /proxy/network/integration/v1/sites` e capturar o formato
+  real da resposta;
+- testar dispositivos, clientes e estatisticas em pelo menos 2 sites reais;
 - capturar o fingerprint TLS do controlador (mesmo procedimento usado para
   o PBS via `openssl s_client`);
 - registrar amostras sanitizadas de dispositivo online, offline e

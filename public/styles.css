@@ -8013,3 +8013,113 @@ body {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 }
+
+#unifiContent {
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+}
+
+.unifi-sites-list {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  max-height: 650px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
+.unifi-site-section {
+  min-width: 0;
+}
+
+.unifi-device-list {
+  max-height: 310px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
+.unifi-device-row {
+  display: grid;
+  grid-template-columns: 12px minmax(0, 1fr) auto minmax(120px, auto);
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid var(--border-default);
+  background: var(--bg-elevated);
+}
+
+.unifi-device-row + .unifi-device-row {
+  border-top: 0;
+}
+
+.unifi-device-row.offline {
+  border-left: 3px solid var(--offline);
+  background: color-mix(in srgb, var(--offline) 8%, var(--bg-elevated));
+}
+
+.unifi-device-row.attention,
+.unifi-device-row.unknown {
+  border-left: 3px solid var(--warning);
+}
+
+.unifi-device-identity {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.unifi-device-identity strong,
+.unifi-device-identity small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.unifi-device-metrics {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.unifi-site-link {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border-default);
+  background: color-mix(in srgb, var(--warning) 8%, var(--bg-elevated));
+}
+
+.integration-warning {
+  padding: 12px 14px;
+  border: 1px solid color-mix(in srgb, var(--warning) 55%, var(--border-default));
+  background: color-mix(in srgb, var(--warning) 10%, var(--bg-elevated));
+  color: var(--text-primary);
+}
+
+@media (max-width: 1180px) {
+  .unifi-sites-list {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 760px) {
+  .unifi-device-row {
+    grid-template-columns: 12px minmax(0, 1fr) auto;
+  }
+
+  .unifi-device-metrics {
+    grid-column: 2 / -1;
+    justify-content: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .unifi-site-link {
+    align-items: stretch;
+    flex-direction: column;
+  }
+}

@@ -6,6 +6,7 @@ import os from "node:os";
 import { createAlertsHandler } from "./routes/alerts.js";
 import { createBackupsHandler } from "./routes/backups.js";
 import { createProxmoxBackupsHandler } from "./routes/proxmoxBackups.js";
+import { createUnifiNetworkHandler } from "./routes/unifiNetwork.js";
 import { createDownloadHandler } from "./routes/downloads.js";
 import { createGroupsHandler } from "./routes/groups.js";
 import { createHealthHandler } from "./routes/health.js";
@@ -20,6 +21,7 @@ import { createStorage } from "./storage/index.js";
 import { createAlertService } from "./services/alert.js";
 import { emptyCloudBackupState, fetchCloudBackupSummary } from "./services/cloudBackup.js";
 import { emptyProxmoxBackupState, fetchProxmoxBackupSummary, proxmoxItemStatus, normalizeMatchKey } from "./services/proxmoxBackup.js";
+import { emptyUnifiNetworkState, fetchUnifiNetworkSummary } from "./services/unifiNetwork.js";
 import {
   clearSessionCookie,
   hashPassword,
@@ -134,6 +136,7 @@ const DEFAULT_ADMIN_PASSWORD = process.env.SERVERWATCH_ADMIN_PASSWORD || "admin1
 const PROBE_COLLECTOR_VERSION = "0.6.8";
 const CLOUDBACKUP_POLL_MS = 5 * 60 * 1000;
 const PROXMOX_POLL_MS = 5 * 60 * 1000;
+const UNIFI_POLL_MS = 5 * 60 * 1000;
 const PROBE_UPDATE_SUPPORTED_PLATFORMS = new Set(["linux", "windows"]);
 
 function routerosQuote(value) {
@@ -340,6 +343,7 @@ let state = {
   probeUpdateRequests: [],
   cloudBackup: emptyCloudBackupState(),
   proxmoxBackup: emptyProxmoxBackupState(),
+  unifiNetwork: emptyUnifiNetworkState(),
   settings: {
     defaultInterval: 10,
     defaultFailureThreshold: 2,
@@ -360,6 +364,7 @@ let state = {
 };
 let saveTimer = null;
 let probeStalenessCheckRunning = false;
+let unifiRefreshPromise = null;
 let addEvent;
 let addAdministrativeEvent;
 let addProbeEvent;
@@ -825,6 +830,10 @@ function normalizeGroup(payload, existing = {}) {
       payload.cloudBackupClientId !== undefined
         ? String(payload.cloudBackupClientId || "").trim() || null
         : existing.cloudBackupClientId ?? null,
+    unifiSiteId:
+      payload.unifiSiteId !== undefined
+        ? String(payload.unifiSiteId || "").trim() || null
+        : existing.unifiSiteId ?? null,
     updatedAt: nowIso()
   };
 }
@@ -1083,6 +1092,70 @@ function scopedProxmoxBackup(user = null) {
   }
   const allowedGroupIds = userGroupIds(user);
   return { ...backups, items: decorated.filter((item) => item.groupId && allowedGroupIds.has(item.groupId)) };
+}
+
+function resolveUnifiSiteGroup(site) {
+  const manual = listedGroups().find((group) => String(group.unifiSiteId || "") === String(site.id));
+  if (manual) return manual;
+  const keys = [site.name, site.internalReference].map(normalizeMatchKey).filter(Boolean);
+  for (const key of keys) {
+    const exact = listedGroups().find((group) => normalizeMatchKey(group.name) === key);
+    if (exact) return exact;
+  }
+  return (
+    listedGroups().find((group) => {
+      const groupKey = normalizeMatchKey(group.name);
+      return groupKey && keys.some((key) => groupKey.includes(key) || key.includes(groupKey));
+    }) || null
+  );
+}
+
+function decorateUnifiSites(sites) {
+  return (sites || []).map((site) => {
+    const group = resolveUnifiSiteGroup(site);
+    return {
+      ...site,
+      groupId: group?.id || null,
+      groupName: group?.name || null,
+      devices: (site.devices || []).map((device) => ({
+        ...device,
+        groupId: group?.id || null,
+        groupName: group?.name || null
+      }))
+    };
+  });
+}
+
+function scopedUnifiNetwork(user = null) {
+  if (user && !canAccessSection(user, "networks")) return emptyUnifiNetworkState();
+  const unifi = state.unifiNetwork || emptyUnifiNetworkState();
+  const sites = decorateUnifiSites(unifi.sites);
+  if (!user || isAdminUser(user)) return { ...unifi, sites };
+  const allowedGroupIds = userGroupIds(user);
+  return { ...unifi, sites: sites.filter((site) => site.groupId && allowedGroupIds.has(site.groupId)) };
+}
+
+function linkUnifiSite(siteId, groupId) {
+  const id = String(siteId || "").trim();
+  if (!id) {
+    const error = new Error("Site UniFi invalido.");
+    error.statusCode = 400;
+    throw error;
+  }
+  for (const group of state.groups) {
+    if (String(group.unifiSiteId || "") === id) group.unifiSiteId = null;
+  }
+  if (groupId) {
+    const group = state.groups.find((item) => item.id === groupId && !item.deletedAt);
+    if (!group) {
+      const error = new Error("Empresa nao encontrada.");
+      error.statusCode = 404;
+      throw error;
+    }
+    group.unifiSiteId = id;
+  }
+  scheduleSave();
+  broadcastSnapshot();
 }
 
 function linkProxmoxNamespace(namespace, groupId) {
@@ -1620,6 +1693,7 @@ function publicGroup(group) {
     offlineCount: activeServers.filter((server) => server.currentStatus === "offline").length,
     networkDeviceCount: networkDevices.length,
     networkLinkCount: networkLinks.length,
+    unifiSiteId: group.unifiSiteId || null,
     logoDataUrl: group.logoDataUrl || "",
     createdAt: group.createdAt,
     updatedAt: group.updatedAt,
@@ -2451,7 +2525,8 @@ function snapshot(currentUser = null) {
     alerts: scopedAlerts(currentUser).slice(0, 50),
     events: scopedEvents(currentUser).slice(0, 100),
     cloudBackup: scopedCloudBackup(currentUser),
-    proxmoxBackup: scopedProxmoxBackup(currentUser)
+    proxmoxBackup: scopedProxmoxBackup(currentUser),
+    unifiNetwork: scopedUnifiNetwork(currentUser)
   };
 }
 
@@ -2806,6 +2881,64 @@ function normalizeProxmoxSettings(payload, existing = {}) {
   };
 }
 
+function getUnifiConfig() {
+  const baseUrl = String(process.env.UNIFI_BASE_URL || state.settings.unifiBaseUrl || "").trim().replace(/\/+$/, "");
+  const apiKey = String(process.env.UNIFI_API_KEY || state.settings.unifiApiKey || "").trim();
+  const tlsFingerprint = String(process.env.UNIFI_TLS_FINGERPRINT || state.settings.unifiTlsFingerprint || "").trim();
+  const apiBasePath = String(
+    process.env.UNIFI_API_BASE_PATH || state.settings.unifiApiBasePath || "/proxy/network/integration"
+  ).trim().replace(/\/+$/, "");
+  if (!baseUrl || !apiKey) return null;
+  return { baseUrl, apiKey, tlsFingerprint, apiBasePath };
+}
+
+function normalizeUnifiSettings(payload, existing = {}) {
+  const baseUrl =
+    payload.baseUrl !== undefined ? String(payload.baseUrl || "").trim().replace(/\/+$/, "") || null : existing.unifiBaseUrl ?? null;
+  const apiKey = payload.apiKey !== undefined ? String(payload.apiKey || "").trim() || null : existing.unifiApiKey ?? null;
+  const tlsFingerprint =
+    payload.tlsFingerprint !== undefined
+      ? String(payload.tlsFingerprint || "").trim() || null
+      : existing.unifiTlsFingerprint ?? null;
+  const apiBasePath =
+    payload.apiBasePath !== undefined
+      ? String(payload.apiBasePath || "").trim().replace(/\/+$/, "") || "/proxy/network/integration"
+      : existing.unifiApiBasePath || "/proxy/network/integration";
+  return {
+    ...existing,
+    unifiBaseUrl: baseUrl,
+    unifiApiKey: apiKey,
+    unifiTlsFingerprint: tlsFingerprint,
+    unifiApiBasePath: apiBasePath
+  };
+}
+
+async function refreshUnifiNetwork() {
+  if (unifiRefreshPromise) return unifiRefreshPromise;
+  const config = getUnifiConfig();
+  if (!config) {
+    state.unifiNetwork = emptyUnifiNetworkState();
+    return;
+  }
+  unifiRefreshPromise = (async () => {
+    try {
+      state.unifiNetwork = await fetchUnifiNetworkSummary(config);
+    } catch (error) {
+      state.unifiNetwork = {
+        ...(state.unifiNetwork || emptyUnifiNetworkState()),
+        configured: true,
+        error: error.message || "Falha ao consultar o UniFi Network."
+      };
+      throw error;
+    } finally {
+      scheduleSave();
+      scheduleBroadcastSnapshot();
+      unifiRefreshPromise = null;
+    }
+  })();
+  return unifiRefreshPromise;
+}
+
 async function refreshProxmoxBackup() {
   const config = getProxmoxConfig();
   if (!config) {
@@ -2954,6 +3087,16 @@ function publicSettings(currentUser = null) {
       : "",
     proxmoxTlsFingerprint: isAdminUser(currentUser)
       ? state.settings.proxmoxPbsTlsFingerprint || process.env.PROXMOX_PBS_TLS_FINGERPRINT || ""
+      : "",
+    unifiConfigured: Boolean(getUnifiConfig()),
+    unifiSource: process.env.UNIFI_BASE_URL ? "environment" : state.settings.unifiBaseUrl ? "configured" : "none",
+    unifiBaseUrl: isAdminUser(currentUser) ? state.settings.unifiBaseUrl || process.env.UNIFI_BASE_URL || "" : "",
+    unifiApiKey: isAdminUser(currentUser) ? state.settings.unifiApiKey || process.env.UNIFI_API_KEY || "" : "",
+    unifiTlsFingerprint: isAdminUser(currentUser)
+      ? state.settings.unifiTlsFingerprint || process.env.UNIFI_TLS_FINGERPRINT || ""
+      : "",
+    unifiApiBasePath: isAdminUser(currentUser)
+      ? state.settings.unifiApiBasePath || process.env.UNIFI_API_BASE_PATH || "/proxy/network/integration"
       : ""
   };
 }
@@ -3770,6 +3913,10 @@ async function handleApi(req, res) {
       if (await handleProxmoxBackups(req, res, { parts, session })) return;
     }
 
+    if (parts[1] === "unifi-network") {
+      if (await handleUnifiNetwork(req, res, { parts, session })) return;
+    }
+
     if (parts[1] === "servers") {
       if (handleServerRead(req, res, { parts, url, session })) return;
 
@@ -3836,8 +3983,10 @@ const handleSettings = createSettingsHandler({
   normalizeAlertSettings,
   normalizeCloudBackupSettings,
   normalizeProxmoxSettings,
+  normalizeUnifiSettings,
   refreshCloudBackup,
   refreshProxmoxBackup,
+  refreshUnifiNetwork,
   publicSettings,
   scheduleSave,
   broadcastSnapshot
@@ -3909,6 +4058,14 @@ const handleProxmoxBackups = createProxmoxBackupsHandler({
   refreshProxmoxBackup,
   linkProxmoxNamespace,
   linkProxmoxServer
+});
+const handleUnifiNetwork = createUnifiNetworkHandler({
+  sendJson,
+  readBody,
+  requireAdmin,
+  getUnifiNetworkState: (user = null) => scopedUnifiNetwork(user),
+  refreshUnifiNetwork,
+  linkUnifiSite
 });
 const handleAlerts = createAlertsHandler({
   nowIso,
@@ -4045,10 +4202,14 @@ await loadState();
 startMonitor();
 refreshCloudBackup().catch((error) => console.error("Falha ao buscar backups na inicializacao", error));
 refreshProxmoxBackup().catch((error) => console.error("Falha ao buscar Proxmox Backup Server na inicializacao", error));
+refreshUnifiNetwork().catch((error) => console.error("Falha ao buscar UniFi Network na inicializacao", error));
 setInterval(() => {
   refreshCloudBackup().catch((error) => console.error("Falha ao atualizar backups", error));
 }, CLOUDBACKUP_POLL_MS);
 setInterval(() => {
   refreshProxmoxBackup().catch((error) => console.error("Falha ao atualizar Proxmox Backup Server", error));
 }, PROXMOX_POLL_MS);
+setInterval(() => {
+  refreshUnifiNetwork().catch((error) => console.error("Falha ao atualizar UniFi Network", error));
+}, UNIFI_POLL_MS);
 server.listen(PORT, HOST, printStartup);
