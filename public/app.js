@@ -3332,7 +3332,7 @@ function updateBackupNavigationVisibility() {
 
 function applyBackupProvider(provider) {
   state.backupProvider = provider;
-  document.querySelectorAll(".provider-segment").forEach((item) => {
+  document.querySelectorAll("#backupsProviderToggle [data-backup-provider]").forEach((item) => {
     item.classList.toggle("active", item.dataset.backupProvider === provider);
   });
   const mspView = document.getElementById("backupsMspView");
@@ -3349,7 +3349,7 @@ function updateBackupProviderVisibility() {
   if (!toggle || !emptyState || !mspView || !proxmoxView) return;
 
   const configuredProviders = configuredBackupProviders();
-  document.querySelectorAll(".provider-segment").forEach((button) => {
+  toggle.querySelectorAll("[data-backup-provider]").forEach((button) => {
     button.hidden = !configuredProviders.includes(button.dataset.backupProvider);
   });
 
@@ -5883,8 +5883,8 @@ function renderUnifiNetwork() {
   const attention = allDevices.filter((device) => device.status === "attention" || device.status === "unknown").length;
   const offline = allDevices.filter((device) => device.status === "offline").length;
   const clients = sites.reduce((sum, site) => sum + Number(site.clientCount || 0), 0);
-  const groupOptions = sortedByAlpha(state.groups, groupSortLabel)
-    .map((group) => `<option value="${escapeHtml(group.id)}">${escapeHtml(group.name)}</option>`)
+  const groupOptionsFor = (selectedGroupId) => sortedByAlpha(state.groups, groupSortLabel)
+    .map((group) => `<option value="${escapeHtml(group.id)}" ${String(selectedGroupId || "") === String(group.id) ? "selected" : ""}>${escapeHtml(group.name)}</option>`)
     .join("");
 
   const siteCards = sortedByAlpha(sites, (site) => site.groupName || site.name)
