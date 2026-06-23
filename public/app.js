@@ -3380,6 +3380,11 @@ function updateBackupProviderVisibility() {
 function renderBackups() {
   if (!els.backupsHero) return;
   const backupsScrollPositions = captureBackupsScroll();
+  const finishBackupRender = () => {
+    restoreBackupsScroll(backupsScrollPositions);
+    renderProxmoxBackups();
+    updateBackupProviderVisibility();
+  };
   const backups = state.cloudBackup || null;
   const configured = Boolean(backups?.configured);
   const status = backups?.status || { info: 0, success: 0, warning: 0, error: 0, nomon: 0, total: 0 };
@@ -3644,7 +3649,10 @@ function renderBackups() {
   if (els.backupsDirectoryCount) {
     els.backupsDirectoryCount.textContent = `${clients.length} ${clients.length === 1 ? "cliente" : "clientes"}`;
   }
-  if (!configured) return;
+  if (!configured) {
+    finishBackupRender();
+    return;
+  }
 
   if (state.selectedBackupClientId && !clients.some((client) => String(client.id) === state.selectedBackupClientId)) {
     state.selectedBackupClientId = null;
@@ -3685,9 +3693,7 @@ function renderBackups() {
     }
   }
 
-  restoreBackupsScroll(backupsScrollPositions);
-  renderProxmoxBackups();
-  updateBackupProviderVisibility();
+  finishBackupRender();
 }
 
 function renderProxmoxBackups() {
@@ -5892,8 +5898,13 @@ function renderUnifiNetwork() {
       const devices = sortedByAlpha(site.devices || [], (device) => device.name);
       const rows = devices.length
         ? devices
-            .map(
-              (device) => `
+            .map((device) => {
+              const metrics = [
+                device.cpuUtilizationPct != null ? `CPU ${device.cpuUtilizationPct}%` : "",
+                device.memoryUtilizationPct != null ? `RAM ${device.memoryUtilizationPct}%` : "",
+                device.uptimeSeconds ? formatUptimeSeconds(device.uptimeSeconds) : ""
+              ].filter(Boolean);
+              return `
                 <div class="unifi-device-row ${device.status}">
                   <span class="status-dot ${unifiStatusClass(device.status)}"></span>
                   <span class="unifi-device-identity">
@@ -5902,13 +5913,11 @@ function renderUnifiNetwork() {
                   </span>
                   <span class="status-badge ${unifiStatusClass(device.status)}">${unifiStatusLabel(device.status)}</span>
                   <span class="unifi-device-metrics">
-                    <small>${device.cpuUtilizationPct != null ? `CPU ${device.cpuUtilizationPct}%` : ""}</small>
-                    <small>${device.memoryUtilizationPct != null ? `RAM ${device.memoryUtilizationPct}%` : ""}</small>
-                    <small>${formatUptimeSeconds(device.uptimeSeconds)}</small>
+                    ${metrics.length ? metrics.map((metric) => `<small>${escapeHtml(metric)}</small>`).join("") : "<small>Sem metricas</small>"}
                   </span>
                 </div>
-              `
-            )
+              `;
+            })
             .join("")
         : `<div class="simple-empty">Nenhum dispositivo adotado neste site.</div>`;
       return `
