@@ -5962,7 +5962,7 @@ function renderUnifiNetwork() {
         : `<div class="simple-empty">Nenhum dispositivo adotado neste site.</div>`;
       return `
         <section class="unifi-site-card ${expanded ? "is-expanded" : ""}">
-          <button type="button" class="unifi-site-header" data-unifi-toggle-site="${escapeHtml(siteId)}" aria-expanded="${expanded ? "true" : "false"}">
+          <div class="unifi-site-header" data-unifi-toggle-site="${escapeHtml(siteId)}" role="button" tabindex="0" aria-expanded="${expanded ? "true" : "false"}">
             <div>
               <strong>${escapeHtml(site.groupName || site.name)}</strong>
               <span>${escapeHtml(site.name)} · ${site.deviceCount} dispositivos · ${site.clientCount} clientes</span>
@@ -5973,7 +5973,7 @@ function renderUnifiNetwork() {
               ${site.counts?.offline ? `<span class="status-badge offline">${site.counts.offline} offline</span>` : ""}
               <span class="unifi-expand-indicator">${expanded ? "Recolher" : "Expandir"}</span>
             </div>
-          </button>
+          </div>
           ${
             isAdmin()
               ? `<div class="unifi-site-link">
@@ -7425,6 +7425,17 @@ function bindEvents() {
   els.unifiContent?.addEventListener("click", (event) => {
     const toggle = event.target.closest("[data-unifi-toggle-site]");
     if (!toggle) return;
+    const siteId = toggle.dataset.unifiToggleSite;
+    if (state.unifiExpandedSites.has(siteId)) state.unifiExpandedSites.delete(siteId);
+    else state.unifiExpandedSites.add(siteId);
+    state.unifiRenderSignature = "";
+    renderUnifiNetwork();
+  });
+  els.unifiContent?.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter" && event.key !== " ") return;
+    const toggle = event.target.closest("[data-unifi-toggle-site]");
+    if (!toggle) return;
+    event.preventDefault();
     const siteId = toggle.dataset.unifiToggleSite;
     if (state.unifiExpandedSites.has(siteId)) state.unifiExpandedSites.delete(siteId);
     else state.unifiExpandedSites.add(siteId);
