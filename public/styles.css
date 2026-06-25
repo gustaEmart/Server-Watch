@@ -8111,9 +8111,9 @@ body {
 
 .unifi-sites-list {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(390px, 1fr));
+  grid-template-columns: 1fr;
   align-items: stretch;
-  gap: 12px;
+  gap: 10px;
   max-height: 660px;
   overflow-y: auto;
   overscroll-behavior: contain;
@@ -8123,11 +8123,10 @@ body {
 
 .unifi-site-card {
   display: grid;
-  grid-template-rows: auto auto minmax(0, 1fr);
+  grid-template-rows: auto auto auto;
   align-self: stretch;
   width: 100%;
   min-width: 0;
-  height: 360px;
   border: 1px solid var(--border-default);
   border-radius: 8px;
   background: var(--bg-surface);
@@ -8140,10 +8139,25 @@ body {
   justify-content: space-between;
   gap: 12px;
   width: 100%;
-  min-height: 76px;
+  min-height: 70px;
   padding: 12px 14px;
+  border: 0;
   border-bottom: 1px solid var(--border-default);
   background: var(--surface-subtle);
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  text-align: left;
+  appearance: none;
+}
+
+.unifi-site-header:hover {
+  background: color-mix(in srgb, var(--surface-subtle) 76%, var(--accent-soft));
+}
+
+.unifi-site-header:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
 }
 
 .unifi-site-header > div:first-child {
@@ -8177,9 +8191,26 @@ body {
   display: flex;
   flex: 0 0 auto;
   justify-content: flex-end;
+  align-items: center;
   gap: 6px;
   flex-wrap: wrap;
   max-width: 48%;
+}
+
+.unifi-expand-indicator {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 24px;
+  border: 1px solid var(--border-muted);
+  border-radius: 999px;
+  padding: 3px 8px;
+  background: var(--chip-bg);
+  color: var(--text-secondary);
+  font-size: 0.72rem;
+  font-weight: 800;
+  line-height: 1;
+  white-space: nowrap;
 }
 
 .unifi-device-list {
@@ -8187,7 +8218,7 @@ body {
   align-content: start;
   gap: 7px;
   min-height: 0;
-  max-height: none;
+  max-height: 360px;
   overflow-y: auto;
   overscroll-behavior: contain;
   scrollbar-gutter: stable;
@@ -8312,6 +8343,10 @@ body {
   background: color-mix(in srgb, var(--warning) 7%, var(--bg-elevated));
 }
 
+.unifi-site-card:not(.is-expanded) .unifi-site-link {
+  border-bottom: 0;
+}
+
 .unifi-site-link span {
   min-width: 0;
   color: var(--text-primary);
@@ -8338,19 +8373,11 @@ body {
   .unifi-kpi-row {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
-
-  .unifi-sites-list {
-    grid-template-columns: 1fr;
-  }
 }
 
 @media (max-width: 760px) {
   .unifi-kpi-row {
     grid-template-columns: 1fr;
-  }
-
-  .unifi-site-card {
-    height: 380px;
   }
 
   .unifi-device-row {

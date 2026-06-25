@@ -25,6 +25,8 @@ const state = {
   selectedBackupClientId: null,
   backupProvider: "msp",
   networkProvider: "connectivity",
+  unifiExpandedSites: new Set(),
+  unifiRenderSignature: "",
   backupLinkEditorOpen: null,
   probeInstallTarget: "linux",
   commandGeneratorMode: "server",
@@ -5862,6 +5864,7 @@ function formatUptimeSeconds(value) {
 
 function renderUnifiNetwork() {
   if (!els.unifiContent) return;
+  const activeUnifiSelect = els.unifiContent.contains(document.activeElement) && document.activeElement.closest("[data-unifi-link-site]");
   const siteListScrollTop = els.unifiContent.querySelector(".unifi-sites-list")?.scrollTop || 0;
   const scrollPositions = {};
   els.unifiContent.querySelectorAll("[data-unifi-scroll-id]").forEach((element) => {
@@ -5884,20 +5887,56 @@ function renderUnifiNetwork() {
     els.unifiContent.innerHTML = `<div class="simple-empty">Configure a API oficial do UniFi Network em Integracoes.</div>`;
     return;
   }
+  if (activeUnifiSelect) return;
 
   const allDevices = sites.flatMap((site) => site.devices || []);
   const online = allDevices.filter((device) => device.status === "online").length;
   const attention = allDevices.filter((device) => device.status === "attention" || device.status === "unknown").length;
   const offline = allDevices.filter((device) => device.status === "offline").length;
   const clients = sites.reduce((sum, site) => sum + Number(site.clientCount || 0), 0);
+  const expandedIds = [...state.unifiExpandedSites].sort();
+  const renderSignature = JSON.stringify({
+    expandedIds,
+    admin: isAdmin(),
+    groups: isAdmin() ? sortedByAlpha(state.groups, groupSortLabel).map((group) => [group.id, group.name]) : [],
+    sites: sortedByAlpha(sites, (site) => site.groupName || site.name).map((site) => {
+      const siteId = String(site.id);
+      return {
+        id: siteId,
+        name: site.name,
+        groupId: site.groupId,
+        groupName: site.groupName,
+        deviceCount: site.deviceCount,
+        clientCount: site.clientCount,
+        counts: site.counts,
+        devices: state.unifiExpandedSites.has(siteId)
+          ? sortedByAlpha(site.devices || [], (device) => device.name).map((device) => ({
+            id: device.id,
+            name: device.name,
+            status: device.status,
+            type: device.type,
+            model: device.model,
+            ipAddress: device.ipAddress,
+            cpuUtilizationPct: device.cpuUtilizationPct,
+            memoryUtilizationPct: device.memoryUtilizationPct,
+            uptimeSeconds: device.uptimeSeconds
+            }))
+          : []
+      };
+    })
+  });
+  if (renderSignature === state.unifiRenderSignature && els.unifiContent.querySelector(".unifi-sites-list")) return;
+  state.unifiRenderSignature = renderSignature;
   const groupOptionsFor = (selectedGroupId) => sortedByAlpha(state.groups, groupSortLabel)
     .map((group) => `<option value="${escapeHtml(group.id)}" ${String(selectedGroupId || "") === String(group.id) ? "selected" : ""}>${escapeHtml(group.name)}</option>`)
     .join("");
 
   const siteCards = sortedByAlpha(sites, (site) => site.groupName || site.name)
     .map((site) => {
+      const siteId = String(site.id);
+      const expanded = state.unifiExpandedSites.has(siteId);
       const devices = sortedByAlpha(site.devices || [], (device) => device.name);
-      const rows = devices.length
+      const rows = expanded && devices.length
         ? devices
             .map((device) => {
               const metrics = [
@@ -5922,8 +5961,8 @@ function renderUnifiNetwork() {
             .join("")
         : `<div class="simple-empty">Nenhum dispositivo adotado neste site.</div>`;
       return `
-        <section class="unifi-site-card">
-          <div class="unifi-site-header">
+        <section class="unifi-site-card ${expanded ? "is-expanded" : ""}">
+          <button type="button" class="unifi-site-header" data-unifi-toggle-site="${escapeHtml(siteId)}" aria-expanded="${expanded ? "true" : "false"}">
             <div>
               <strong>${escapeHtml(site.groupName || site.name)}</strong>
               <span>${escapeHtml(site.name)} · ${site.deviceCount} dispositivos · ${site.clientCount} clientes</span>
@@ -5932,20 +5971,21 @@ function renderUnifiNetwork() {
               <span class="status-badge online">${site.counts?.online || 0} online</span>
               ${site.counts?.attention || site.counts?.unknown ? `<span class="status-badge probe_stale">${(site.counts?.attention || 0) + (site.counts?.unknown || 0)} atencao</span>` : ""}
               ${site.counts?.offline ? `<span class="status-badge offline">${site.counts.offline} offline</span>` : ""}
+              <span class="unifi-expand-indicator">${expanded ? "Recolher" : "Expandir"}</span>
             </div>
-          </div>
+          </button>
           ${
             isAdmin()
               ? `<div class="unifi-site-link">
                   <span>${site.groupId ? "Empresa vinculada" : "Site sem empresa vinculada"}</span>
-                  <select class="compact-select" data-unifi-link-site="${escapeHtml(site.id)}">
+                  <select class="compact-select" data-unifi-link-site="${escapeHtml(siteId)}">
                     <option value="">Vincular empresa...</option>
                     ${groupOptionsFor(site.groupId)}
                   </select>
                 </div>`
               : ""
           }
-          <div class="unifi-device-list" data-unifi-scroll-id="${escapeHtml(site.id)}">${rows}</div>
+          ${expanded ? `<div class="unifi-device-list" data-unifi-scroll-id="${escapeHtml(siteId)}">${rows}</div>` : ""}
         </section>
       `;
     })
@@ -5990,6 +6030,7 @@ async function linkUnifiSiteToGroup(siteId, groupId) {
       body: JSON.stringify({ siteId, groupId: groupId || null })
     });
     state.unifiNetwork = response.unifiNetwork || state.unifiNetwork;
+    state.unifiRenderSignature = "";
     renderNetworks();
     showToast("Site vinculado", "O site UniFi foi associado a empresa.");
   } catch (error) {
@@ -7380,6 +7421,15 @@ function bindEvents() {
   els.unifiContent?.addEventListener("change", (event) => {
     const select = event.target.closest("[data-unifi-link-site]");
     if (select) linkUnifiSiteToGroup(select.dataset.unifiLinkSite, select.value);
+  });
+  els.unifiContent?.addEventListener("click", (event) => {
+    const toggle = event.target.closest("[data-unifi-toggle-site]");
+    if (!toggle) return;
+    const siteId = toggle.dataset.unifiToggleSite;
+    if (state.unifiExpandedSites.has(siteId)) state.unifiExpandedSites.delete(siteId);
+    else state.unifiExpandedSites.add(siteId);
+    state.unifiRenderSignature = "";
+    renderUnifiNetwork();
   });
 
   document.querySelectorAll("[data-admin-view]").forEach((button) => {
