@@ -5921,13 +5921,13 @@ function renderUnifiNetwork() {
             .join("")
         : `<div class="simple-empty">Nenhum dispositivo adotado neste site.</div>`;
       return `
-        <section class="proxmox-company-section unifi-site-section">
-          <div class="proxmox-company-header">
+        <section class="unifi-site-card">
+          <div class="unifi-site-header">
             <div>
               <strong>${escapeHtml(site.groupName || site.name)}</strong>
               <span>${escapeHtml(site.name)} · ${site.deviceCount} dispositivos · ${site.clientCount} clientes</span>
             </div>
-            <div class="proxmox-company-counts">
+            <div class="unifi-site-counts">
               <span class="status-badge online">${site.counts?.online || 0} online</span>
               ${site.counts?.attention || site.counts?.unknown ? `<span class="status-badge probe_stale">${(site.counts?.attention || 0) + (site.counts?.unknown || 0)} atencao</span>` : ""}
               ${site.counts?.offline ? `<span class="status-badge offline">${site.counts.offline} offline</span>` : ""}
@@ -5944,7 +5944,7 @@ function renderUnifiNetwork() {
                 </div>`
               : ""
           }
-          <div class="proxmox-company-items unifi-device-list" data-unifi-scroll-id="${escapeHtml(site.id)}">${rows}</div>
+          <div class="unifi-device-list" data-unifi-scroll-id="${escapeHtml(site.id)}">${rows}</div>
         </section>
       `;
     })
@@ -5958,7 +5958,7 @@ function renderUnifiNetwork() {
       <article><span>Clientes</span><strong>${clients}</strong><small>conectados agora</small></article>
     </div>
     ${data.error ? `<div class="integration-warning">A coleta atual falhou; exibindo o ultimo estado valido. ${escapeHtml(data.error)}</div>` : ""}
-    <div class="proxmox-groups-list unifi-sites-list">${siteCards || `<div class="simple-empty">Nenhum site retornado pela API.</div>`}</div>
+    <div class="unifi-sites-list">${siteCards || `<div class="simple-empty">Nenhum site retornado pela API.</div>`}</div>
   `;
   els.unifiContent.querySelectorAll("[data-unifi-scroll-id]").forEach((element) => {
     const saved = scrollPositions[element.dataset.unifiScrollId];
