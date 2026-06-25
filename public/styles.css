@@ -7146,20 +7146,44 @@ body {
 }
 
 /* Network monitoring */
+.provider-toggle {
+  margin-bottom: 14px;
+}
+
 .network-summary-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 12px;
-  margin-bottom: 16px;
+  margin-bottom: 14px;
 }
 
 .network-summary-card {
+  position: relative;
+  min-height: 106px;
   border: 1px solid var(--border-default);
   border-radius: 8px;
-  background: var(--bg-surface);
+  background: var(--bg-elevated);
   padding: 14px 16px;
   display: grid;
   gap: 5px;
+  overflow: hidden;
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--text-primary) 4%, transparent);
+}
+
+.network-summary-card::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto;
+  height: 3px;
+  background: var(--color-success);
+}
+
+.network-summary-card.warning::before {
+  background: var(--color-warning);
+}
+
+.network-summary-card.danger::before {
+  background: var(--color-danger);
 }
 
 .network-summary-card span,
@@ -7168,7 +7192,9 @@ body {
 }
 
 .network-summary-card strong {
+  margin-top: 3px;
   font-size: 2rem;
+  font-variant-numeric: tabular-nums;
   line-height: 1;
   color: var(--color-success);
 }
@@ -7228,8 +7254,10 @@ body {
 
 .network-layout {
   display: grid;
-  grid-template-columns: minmax(0, 1.15fr) minmax(340px, 0.85fr);
-  gap: 16px;
+  grid-template-columns: minmax(360px, 0.95fr) minmax(520px, 1.35fr);
+  gap: 14px;
+  align-items: stretch;
+  min-height: 0;
 }
 
 .network-list-panel,
@@ -7238,14 +7266,16 @@ body {
   border-radius: 8px;
   background: var(--bg-surface);
   padding: 14px;
+  min-width: 0;
 }
 
 .network-list-panel,
 .network-detail-panel {
-  max-height: calc(100vh - 170px);
+  max-height: calc(100vh - 222px);
   overflow-y: auto;
-  overscroll-behavior: auto;
+  overscroll-behavior: contain;
   scrollbar-width: thin;
+  scrollbar-gutter: stable;
 }
 
 .network-link-list,
@@ -7260,15 +7290,16 @@ body {
 .network-company-detail-list,
 .network-target-list,
 .network-event-list {
-  max-height: 360px;
+  max-height: 420px;
   overflow-y: auto;
   padding-right: 4px;
-  overscroll-behavior: auto;
+  overscroll-behavior: contain;
   scrollbar-width: thin;
+  scrollbar-gutter: stable;
 }
 
 .network-target-list {
-  max-height: 280px;
+  max-height: 320px;
 }
 
 .network-company-section {
@@ -7280,13 +7311,15 @@ body {
 
 .network-company-section.selected {
   border-color: var(--color-accent);
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--color-accent) 24%, transparent);
+  background: color-mix(in srgb, var(--selected-bg) 42%, var(--bg-surface));
+  box-shadow: inset 3px 0 0 var(--color-accent), 0 0 0 1px color-mix(in srgb, var(--color-accent) 22%, transparent);
 }
 
 .network-company-header {
   width: 100%;
   border: 0;
-  padding: 11px 12px;
+  min-height: 70px;
+  padding: 12px 14px;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -7314,12 +7347,13 @@ body {
 .network-company-header span {
   color: var(--text-secondary);
   font-size: 0.84rem;
+  margin-top: 3px;
 }
 
 .network-company-items {
   display: grid;
-  gap: 8px;
-  padding: 10px;
+  gap: 7px;
+  padding: 10px 12px 12px;
 }
 
 .network-company-detail-list {
@@ -7338,12 +7372,12 @@ body {
   width: 100%;
   border: 1px solid var(--border-muted);
   border-radius: 8px;
-  background: var(--bg-surface);
+  background: var(--bg-elevated);
   color: var(--text-primary);
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
+  grid-template-columns: minmax(0, 1fr) auto minmax(54px, auto);
   align-items: center;
-  gap: 12px;
+  gap: 10px;
   padding: 11px 12px;
   text-align: left;
 }
@@ -7368,17 +7402,18 @@ body {
 
 .network-link-row {
   width: 100%;
-  min-height: 64px;
+  min-height: 62px;
   border: 1px solid var(--border-muted);
   border-radius: 8px;
-  background: var(--bg-surface);
+  background: var(--bg-elevated);
   color: var(--text-primary);
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  grid-template-columns: 10px minmax(0, 1fr) auto minmax(54px, auto);
   align-items: center;
-  gap: 12px;
+  gap: 10px;
   padding: 10px 12px;
   text-align: left;
+  cursor: pointer;
 }
 
 .network-link-row > * {
@@ -7388,16 +7423,33 @@ body {
 .network-link-row strong,
 .network-link-row small {
   display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .network-link-row small {
   color: var(--text-secondary);
+  margin-top: 3px;
+  font-size: 0.78rem;
 }
 
 .network-link-row:hover,
 .network-link-row.selected {
   border-color: var(--color-accent);
   background: var(--selected-bg);
+  box-shadow: inset 3px 0 0 var(--color-accent);
+}
+
+.network-link-row > small,
+.network-company-detail-row > small {
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  white-space: nowrap;
 }
 
 .network-target-card {
@@ -7500,15 +7552,20 @@ body {
   align-items: flex-start;
   gap: 12px;
   margin-bottom: 14px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--border-default);
 }
 
 .network-detail-header h3 {
   margin: 0;
-  font-size: 1.4rem;
+  font-size: 1.45rem;
+  line-height: 1.1;
+  text-wrap: balance;
 }
 
 .network-detail-header span {
   color: var(--text-secondary);
+  line-height: 1.35;
 }
 
 .network-actions {
@@ -7530,6 +7587,7 @@ body {
 
 .network-link-list > .network-link-row:nth-child(odd),
 .network-company-items > .network-link-row:nth-child(odd),
+.network-company-detail-list > .network-company-detail-row:nth-child(odd),
 .network-event-list > .profile-data-row:nth-child(odd),
 .network-target-list > .profile-data-row:nth-child(odd) {
   background: color-mix(in srgb, var(--bg-elevated) 72%, var(--bg-surface));
@@ -7537,6 +7595,7 @@ body {
 
 .network-link-list > .network-link-row:nth-child(even),
 .network-company-items > .network-link-row:nth-child(even),
+.network-company-detail-list > .network-company-detail-row:nth-child(even),
 .network-event-list > .profile-data-row:nth-child(even),
 .network-target-list > .profile-data-row:nth-child(even) {
   background: color-mix(in srgb, var(--bg-surface) 82%, var(--bg-elevated));
@@ -7560,6 +7619,11 @@ body {
     grid-template-columns: 1fr;
   }
 
+  .network-list-panel,
+  .network-detail-panel {
+    max-height: none;
+  }
+
   .network-target-input-row {
     grid-template-columns: 1fr;
   }
@@ -7578,6 +7642,27 @@ body {
 
   .network-target-state,
   .network-target-latency {
+    justify-self: start;
+    text-align: left;
+  }
+
+  .network-link-row {
+    grid-template-columns: 10px minmax(0, 1fr);
+  }
+
+  .network-link-row > .status-badge,
+  .network-link-row > small {
+    grid-column: 2;
+    justify-self: start;
+    text-align: left;
+  }
+
+  .network-company-detail-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .network-company-detail-row > .status-badge,
+  .network-company-detail-row > small {
     justify-self: start;
     text-align: left;
   }
@@ -8016,7 +8101,7 @@ body {
 
 #unifiContent {
   display: grid;
-  gap: 16px;
+  gap: 14px;
   min-width: 0;
 }
 
@@ -8026,16 +8111,35 @@ body {
 }
 
 .unifi-kpi-row article {
-  min-height: 96px;
+  position: relative;
+  min-height: 106px;
   padding: 14px;
   border-color: var(--border-default);
   background: var(--bg-elevated);
+  overflow: hidden;
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--text-primary) 4%, transparent);
+}
+
+.unifi-kpi-row article::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto;
+  height: 3px;
+  background: var(--color-success);
+}
+
+.unifi-kpi-row article.warning::before {
+  background: var(--color-warning);
+}
+
+.unifi-kpi-row article.danger::before {
+  background: var(--color-danger);
 }
 
 .unifi-sites-list {
   grid-template-columns: repeat(2, minmax(0, 1fr));
   align-items: start;
-  gap: 14px;
+  gap: 12px;
   max-height: 660px;
   overflow-y: auto;
   overscroll-behavior: contain;
@@ -8044,15 +8148,33 @@ body {
 }
 
 .unifi-site-section {
+  display: grid;
   grid-template-rows: auto auto minmax(0, 1fr);
   min-width: 0;
-  height: 330px;
+  height: 350px;
+  border: 1px solid var(--border-default);
+  border-radius: 8px;
   background: var(--bg-surface);
+  overflow: hidden;
 }
 
 .unifi-site-section .proxmox-company-header {
-  min-height: 70px;
+  min-height: 76px;
   padding: 12px 14px;
+  border-bottom: 1px solid var(--border-default);
+  background: var(--surface-subtle);
+}
+
+.unifi-site-section .proxmox-company-header > div:first-child {
+  min-width: 0;
+}
+
+.unifi-site-section .proxmox-company-header strong,
+.unifi-site-section .proxmox-company-header span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .unifi-site-section .proxmox-company-counts {
@@ -8062,13 +8184,13 @@ body {
 .unifi-device-list {
   display: grid;
   align-content: start;
-  gap: 8px;
+  gap: 7px;
   min-height: 0;
   max-height: none;
   overflow-y: auto;
   overscroll-behavior: contain;
   scrollbar-gutter: stable;
-  padding: 10px;
+  padding: 10px 12px 12px;
 }
 
 .unifi-device-row {
@@ -8080,25 +8202,37 @@ body {
   align-items: center;
   gap: 7px 10px;
   min-width: 0;
-  min-height: 68px;
+  min-height: 64px;
   padding: 10px 12px;
   border: 1px solid var(--border-muted);
   border-radius: 8px;
   background: var(--bg-elevated);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--text-primary) 3%, transparent);
 }
 
-.unifi-device-row + .unifi-device-row {
-  border-top: 1px solid var(--border-muted);
+.unifi-device-list > .unifi-device-row:nth-child(odd) {
+  background: color-mix(in srgb, var(--bg-elevated) 72%, var(--bg-surface));
+}
+
+.unifi-device-list > .unifi-device-row:nth-child(even) {
+  background: color-mix(in srgb, var(--bg-surface) 82%, var(--bg-elevated));
 }
 
 .unifi-device-row.offline {
-  border-left: 4px solid var(--offline);
-  background: color-mix(in srgb, var(--offline) 8%, var(--bg-elevated));
+  border-color: color-mix(in srgb, var(--color-danger) 64%, var(--border-muted));
+  background:
+    linear-gradient(90deg, color-mix(in srgb, var(--color-danger) 14%, transparent), transparent 60%),
+    color-mix(in srgb, var(--color-danger-subtle) 22%, var(--bg-surface));
+  box-shadow: inset 4px 0 0 var(--color-danger);
 }
 
 .unifi-device-row.attention,
 .unifi-device-row.unknown {
-  border-left: 4px solid var(--warning);
+  border-color: color-mix(in srgb, var(--color-warning) 58%, var(--border-muted));
+  background:
+    linear-gradient(90deg, color-mix(in srgb, var(--color-warning) 12%, transparent), transparent 60%),
+    color-mix(in srgb, var(--color-warning-subtle) 18%, var(--bg-surface));
+  box-shadow: inset 4px 0 0 var(--color-warning);
 }
 
 .unifi-device-row .status-dot {
@@ -8129,6 +8263,7 @@ body {
 
 .unifi-device-identity strong {
   font-size: 0.94rem;
+  font-weight: 850;
   line-height: 1.15;
 }
 
@@ -8151,6 +8286,11 @@ body {
 }
 
 .unifi-device-metrics small {
+  min-height: 22px;
+  border: 1px solid var(--border-muted);
+  border-radius: 999px;
+  padding: 4px 8px;
+  background: var(--chip-bg);
   max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -8159,13 +8299,13 @@ body {
 
 .unifi-site-link {
   display: grid;
-  grid-template-columns: minmax(120px, 180px) minmax(0, 1fr);
+  grid-template-columns: minmax(130px, 180px) minmax(0, 1fr);
   align-items: center;
   gap: 12px;
-  min-height: 58px;
-  padding: 9px 14px;
+  min-height: 56px;
+  padding: 9px 12px;
   border-bottom: 1px solid var(--border-default);
-  background: color-mix(in srgb, var(--warning) 8%, var(--bg-elevated));
+  background: color-mix(in srgb, var(--warning) 7%, var(--bg-elevated));
 }
 
 .unifi-site-link span {
@@ -8183,6 +8323,7 @@ body {
 }
 
 .integration-warning {
+  border-radius: 8px;
   padding: 12px 14px;
   border: 1px solid color-mix(in srgb, var(--warning) 55%, var(--border-default));
   background: color-mix(in srgb, var(--warning) 10%, var(--bg-elevated));
