@@ -5862,6 +5862,7 @@ function formatUptimeSeconds(value) {
 
 function renderUnifiNetwork() {
   if (!els.unifiContent) return;
+  const siteListScrollTop = els.unifiContent.querySelector(".unifi-sites-list")?.scrollTop || 0;
   const scrollPositions = {};
   els.unifiContent.querySelectorAll("[data-unifi-scroll-id]").forEach((element) => {
     scrollPositions[element.dataset.unifiScrollId] = element.scrollTop;
@@ -5960,9 +5961,11 @@ function renderUnifiNetwork() {
     ${data.error ? `<div class="integration-warning">A coleta atual falhou; exibindo o ultimo estado valido. ${escapeHtml(data.error)}</div>` : ""}
     <div class="unifi-sites-list">${siteCards || `<div class="simple-empty">Nenhum site retornado pela API.</div>`}</div>
   `;
+  const siteList = els.unifiContent.querySelector(".unifi-sites-list");
+  if (siteList) siteList.scrollTop = siteListScrollTop;
   els.unifiContent.querySelectorAll("[data-unifi-scroll-id]").forEach((element) => {
     const saved = scrollPositions[element.dataset.unifiScrollId];
-    if (saved) element.scrollTop = saved;
+    if (saved != null) element.scrollTop = saved;
   });
 }
 
