@@ -5909,8 +5909,7 @@ function renderUnifiNetwork() {
         deviceCount: site.deviceCount,
         clientCount: site.clientCount,
         counts: site.counts,
-        devices: state.unifiExpandedSites.has(siteId)
-          ? sortedByAlpha(site.devices || [], (device) => device.name).map((device) => ({
+        devices: sortedByAlpha(site.devices || [], (device) => device.name).map((device) => ({
             id: device.id,
             name: device.name,
             status: device.status,
@@ -5920,8 +5919,7 @@ function renderUnifiNetwork() {
             cpuUtilizationPct: device.cpuUtilizationPct,
             memoryUtilizationPct: device.memoryUtilizationPct,
             uptimeSeconds: device.uptimeSeconds
-            }))
-          : []
+          }))
       };
     })
   });
@@ -5931,12 +5929,15 @@ function renderUnifiNetwork() {
     .map((group) => `<option value="${escapeHtml(group.id)}" ${String(selectedGroupId || "") === String(group.id) ? "selected" : ""}>${escapeHtml(group.name)}</option>`)
     .join("");
 
-  const siteCards = sortedByAlpha(sites, (site) => site.groupName || site.name)
+  const sortedSites = sortedByAlpha(sites, (site) => site.groupName || site.name);
+  const allSiteIds = sortedSites.map((site) => String(site.id));
+  const allSitesExpanded = allSiteIds.length > 0 && allSiteIds.every((siteId) => state.unifiExpandedSites.has(siteId));
+  const siteCards = sortedSites
     .map((site) => {
       const siteId = String(site.id);
       const expanded = state.unifiExpandedSites.has(siteId);
       const devices = sortedByAlpha(site.devices || [], (device) => device.name);
-      const rows = expanded && devices.length
+      const rows = devices.length
         ? devices
             .map((device) => {
               const metrics = [
@@ -5961,9 +5962,10 @@ function renderUnifiNetwork() {
             .join("")
         : `<div class="simple-empty">Nenhum dispositivo adotado neste site.</div>`;
       return `
-        <section class="unifi-site-card ${expanded ? "is-expanded" : ""}">
-          <div class="unifi-site-header" data-unifi-toggle-site="${escapeHtml(siteId)}" role="button" tabindex="0" aria-expanded="${expanded ? "true" : "false"}">
-            <div>
+        <details class="unifi-site-card" data-unifi-site-id="${escapeHtml(siteId)}" ${expanded ? "open" : ""}>
+          <summary class="unifi-site-header">
+            <span class="unifi-site-arrow" aria-hidden="true"></span>
+            <div class="unifi-site-title">
               <strong>${escapeHtml(site.groupName || site.name)}</strong>
               <span>${escapeHtml(site.name)} · ${site.deviceCount} dispositivos · ${site.clientCount} clientes</span>
             </div>
@@ -5971,9 +5973,8 @@ function renderUnifiNetwork() {
               <span class="status-badge online">${site.counts?.online || 0} online</span>
               ${site.counts?.attention || site.counts?.unknown ? `<span class="status-badge probe_stale">${(site.counts?.attention || 0) + (site.counts?.unknown || 0)} atencao</span>` : ""}
               ${site.counts?.offline ? `<span class="status-badge offline">${site.counts.offline} offline</span>` : ""}
-              <span class="unifi-expand-indicator">${expanded ? "Recolher" : "Expandir"}</span>
             </div>
-          </div>
+          </summary>
           ${
             isAdmin()
               ? `<div class="unifi-site-link">
@@ -5985,8 +5986,8 @@ function renderUnifiNetwork() {
                 </div>`
               : ""
           }
-          ${expanded ? `<div class="unifi-device-list" data-unifi-scroll-id="${escapeHtml(siteId)}">${rows}</div>` : ""}
-        </section>
+          <div class="unifi-device-list" data-unifi-scroll-id="${escapeHtml(siteId)}">${rows}</div>
+        </details>
       `;
     })
     .join("");
@@ -5999,6 +6000,10 @@ function renderUnifiNetwork() {
       <article><span>Clientes</span><strong>${clients}</strong><small>conectados agora</small></article>
     </div>
     ${data.error ? `<div class="integration-warning">A coleta atual falhou; exibindo o ultimo estado valido. ${escapeHtml(data.error)}</div>` : ""}
+    <div class="unifi-list-toolbar">
+      <span>Sites monitorados</span>
+      <button type="button" class="ghost-button compact-action" data-unifi-toggle-all>${allSitesExpanded ? "Recolher todos" : "Expandir todos"}</button>
+    </div>
     <div class="unifi-sites-list">${siteCards || `<div class="simple-empty">Nenhum site retornado pela API.</div>`}</div>
   `;
   const siteList = els.unifiContent.querySelector(".unifi-sites-list");
@@ -7423,25 +7428,23 @@ function bindEvents() {
     if (select) linkUnifiSiteToGroup(select.dataset.unifiLinkSite, select.value);
   });
   els.unifiContent?.addEventListener("click", (event) => {
-    const toggle = event.target.closest("[data-unifi-toggle-site]");
-    if (!toggle) return;
-    const siteId = toggle.dataset.unifiToggleSite;
-    if (state.unifiExpandedSites.has(siteId)) state.unifiExpandedSites.delete(siteId);
-    else state.unifiExpandedSites.add(siteId);
+    const toggleAll = event.target.closest("[data-unifi-toggle-all]");
+    if (!toggleAll) return;
+    const sites = Array.isArray(state.unifiNetwork?.sites) ? state.unifiNetwork.sites : [];
+    const siteIds = sites.map((site) => String(site.id));
+    const allExpanded = siteIds.length > 0 && siteIds.every((siteId) => state.unifiExpandedSites.has(siteId));
+    state.unifiExpandedSites = allExpanded ? new Set() : new Set(siteIds);
     state.unifiRenderSignature = "";
     renderUnifiNetwork();
   });
-  els.unifiContent?.addEventListener("keydown", (event) => {
-    if (event.key !== "Enter" && event.key !== " ") return;
-    const toggle = event.target.closest("[data-unifi-toggle-site]");
-    if (!toggle) return;
-    event.preventDefault();
-    const siteId = toggle.dataset.unifiToggleSite;
-    if (state.unifiExpandedSites.has(siteId)) state.unifiExpandedSites.delete(siteId);
-    else state.unifiExpandedSites.add(siteId);
+  els.unifiContent?.addEventListener("toggle", (event) => {
+    const details = event.target.closest?.("[data-unifi-site-id]");
+    if (!details) return;
+    const siteId = details.dataset.unifiSiteId;
+    if (details.open) state.unifiExpandedSites.add(siteId);
+    else state.unifiExpandedSites.delete(siteId);
     state.unifiRenderSignature = "";
-    renderUnifiNetwork();
-  });
+  }, true);
 
   document.querySelectorAll("[data-admin-view]").forEach((button) => {
     button.addEventListener("click", () => setActiveView(button.dataset.adminView));

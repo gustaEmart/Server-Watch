@@ -8148,6 +8148,12 @@ body {
   user-select: none;
 }
 
+.unifi-site-header::-webkit-details-marker,
+.unifi-site-header::marker {
+  display: none;
+  content: "";
+}
+
 .unifi-site-header:hover {
   background: color-mix(in srgb, var(--surface-subtle) 76%, var(--accent-soft));
 }
@@ -8157,8 +8163,9 @@ body {
   outline-offset: -2px;
 }
 
-.unifi-site-header > div:first-child {
+.unifi-site-title {
   min-width: 0;
+  flex: 1 1 auto;
 }
 
 .unifi-site-header strong,
@@ -8184,6 +8191,33 @@ body {
   line-height: 1.25;
 }
 
+.unifi-site-arrow {
+  display: inline-grid;
+  flex: 0 0 auto;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  margin-top: 1px;
+  border: 1px solid var(--border-muted);
+  border-radius: 6px;
+  background: var(--chip-bg);
+  color: var(--text-secondary);
+}
+
+.unifi-site-arrow::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  border-right: 2px solid currentColor;
+  border-bottom: 2px solid currentColor;
+  transform: rotate(-45deg);
+  transition: transform 140ms ease;
+}
+
+.unifi-site-card[open] .unifi-site-arrow::before {
+  transform: rotate(45deg);
+}
+
 .unifi-site-counts {
   display: flex;
   flex: 0 0 auto;
@@ -8194,20 +8228,26 @@ body {
   max-width: 48%;
 }
 
-.unifi-expand-indicator {
-  display: inline-flex;
+.unifi-list-toolbar {
+  display: flex;
   align-items: center;
-  justify-content: center;
-  min-height: 24px;
-  border: 1px solid var(--border-muted);
-  border-radius: 999px;
-  padding: 3px 8px;
-  background: var(--chip-bg);
+  justify-content: space-between;
+  gap: 12px;
+  margin: 10px 0;
+}
+
+.unifi-list-toolbar span {
   color: var(--text-secondary);
-  font-size: 0.72rem;
+  font-size: 0.76rem;
   font-weight: 800;
-  line-height: 1;
-  white-space: nowrap;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.unifi-list-toolbar .compact-action {
+  min-height: 34px;
+  padding: 7px 12px;
+  font-size: 0.82rem;
 }
 
 .unifi-device-list {
