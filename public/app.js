@@ -5862,6 +5862,15 @@ function formatUptimeSeconds(value) {
   return days ? `${days}d ${hours}h` : `${hours}h`;
 }
 
+function updateUnifiExpandAllButton() {
+  const button = els.unifiContent?.querySelector("[data-unifi-toggle-all]");
+  if (!button) return;
+  const sites = Array.isArray(state.unifiNetwork?.sites) ? state.unifiNetwork.sites : [];
+  const siteIds = sites.map((site) => String(site.id));
+  const allExpanded = siteIds.length > 0 && siteIds.every((siteId) => state.unifiExpandedSites.has(siteId));
+  button.textContent = allExpanded ? "Recolher todos" : "Expandir todos";
+}
+
 function renderUnifiNetwork() {
   if (!els.unifiContent) return;
   const activeUnifiSelect = els.unifiContent.contains(document.activeElement) && document.activeElement.closest("[data-unifi-link-site]");
@@ -7429,13 +7438,27 @@ function bindEvents() {
   });
   els.unifiContent?.addEventListener("click", (event) => {
     const toggleAll = event.target.closest("[data-unifi-toggle-all]");
-    if (!toggleAll) return;
-    const sites = Array.isArray(state.unifiNetwork?.sites) ? state.unifiNetwork.sites : [];
-    const siteIds = sites.map((site) => String(site.id));
-    const allExpanded = siteIds.length > 0 && siteIds.every((siteId) => state.unifiExpandedSites.has(siteId));
-    state.unifiExpandedSites = allExpanded ? new Set() : new Set(siteIds);
+    if (toggleAll) {
+      const sites = Array.isArray(state.unifiNetwork?.sites) ? state.unifiNetwork.sites : [];
+      const siteIds = sites.map((site) => String(site.id));
+      const allExpanded = siteIds.length > 0 && siteIds.every((siteId) => state.unifiExpandedSites.has(siteId));
+      state.unifiExpandedSites = allExpanded ? new Set() : new Set(siteIds);
+      state.unifiRenderSignature = "";
+      renderUnifiNetwork();
+      return;
+    }
+
+    const header = event.target.closest(".unifi-site-header");
+    if (!header || !els.unifiContent.contains(header)) return;
+    event.preventDefault();
+    const details = header.closest("[data-unifi-site-id]");
+    if (!details) return;
+    details.open = !details.open;
+    const siteId = details.dataset.unifiSiteId;
+    if (details.open) state.unifiExpandedSites.add(siteId);
+    else state.unifiExpandedSites.delete(siteId);
     state.unifiRenderSignature = "";
-    renderUnifiNetwork();
+    updateUnifiExpandAllButton();
   });
   els.unifiContent?.addEventListener("toggle", (event) => {
     const details = event.target.closest?.("[data-unifi-site-id]");
@@ -7444,6 +7467,7 @@ function bindEvents() {
     if (details.open) state.unifiExpandedSites.add(siteId);
     else state.unifiExpandedSites.delete(siteId);
     state.unifiRenderSignature = "";
+    updateUnifiExpandAllButton();
   }, true);
 
   document.querySelectorAll("[data-admin-view]").forEach((button) => {

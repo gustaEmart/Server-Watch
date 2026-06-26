@@ -8206,16 +8206,17 @@ body {
 
 .unifi-site-arrow::before {
   content: "";
-  width: 7px;
-  height: 7px;
-  border-right: 2px solid currentColor;
-  border-bottom: 2px solid currentColor;
-  transform: rotate(-45deg);
+  width: 0;
+  height: 0;
+  border-top: 5px solid transparent;
+  border-bottom: 5px solid transparent;
+  border-left: 6px solid currentColor;
+  transform: translateX(1px);
   transition: transform 140ms ease;
 }
 
 .unifi-site-card[open] .unifi-site-arrow::before {
-  transform: rotate(45deg);
+  transform: rotate(90deg) translateX(1px);
 }
 
 .unifi-site-counts {
