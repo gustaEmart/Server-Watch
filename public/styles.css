@@ -8140,18 +8140,18 @@ body {
   width: 100%;
   min-height: 70px;
   padding: 12px 14px;
+  border: 0;
   border-bottom: 1px solid var(--border-default);
   background: var(--surface-subtle);
   color: inherit;
   cursor: pointer;
+  font: inherit;
   text-align: left;
   user-select: none;
 }
 
-.unifi-site-header::-webkit-details-marker,
-.unifi-site-header::marker {
-  display: none;
-  content: "";
+.unifi-site-card:not(.is-expanded) .unifi-site-header {
+  border-bottom: 0;
 }
 
 .unifi-site-header:hover {
@@ -8215,7 +8215,7 @@ body {
   transition: transform 140ms ease;
 }
 
-.unifi-site-card[open] .unifi-site-arrow::before {
+.unifi-site-card.is-expanded .unifi-site-arrow::before {
   transform: rotate(90deg) translateX(1px);
 }
 

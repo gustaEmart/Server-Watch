@@ -5971,8 +5971,8 @@ function renderUnifiNetwork() {
             .join("")
         : `<div class="simple-empty">Nenhum dispositivo adotado neste site.</div>`;
       return `
-        <details class="unifi-site-card" data-unifi-site-id="${escapeHtml(siteId)}" ${expanded ? "open" : ""}>
-          <summary class="unifi-site-header">
+        <article class="unifi-site-card ${expanded ? "is-expanded" : ""}" data-unifi-site-id="${escapeHtml(siteId)}">
+          <button type="button" class="unifi-site-header" data-unifi-site-toggle aria-expanded="${expanded ? "true" : "false"}">
             <span class="unifi-site-arrow" aria-hidden="true"></span>
             <div class="unifi-site-title">
               <strong>${escapeHtml(site.groupName || site.name)}</strong>
@@ -5983,10 +5983,10 @@ function renderUnifiNetwork() {
               ${site.counts?.attention || site.counts?.unknown ? `<span class="status-badge probe_stale">${(site.counts?.attention || 0) + (site.counts?.unknown || 0)} atencao</span>` : ""}
               ${site.counts?.offline ? `<span class="status-badge offline">${site.counts.offline} offline</span>` : ""}
             </div>
-          </summary>
+          </button>
           ${
             isAdmin()
-              ? `<div class="unifi-site-link">
+              ? `<div class="unifi-site-link" data-unifi-site-panel ${expanded ? "" : "hidden"}>
                   <span>${site.groupId ? "Empresa vinculada" : "Site sem empresa vinculada"}</span>
                   <select class="compact-select" data-unifi-link-site="${escapeHtml(siteId)}">
                     <option value="">Vincular empresa...</option>
@@ -5995,8 +5995,8 @@ function renderUnifiNetwork() {
                 </div>`
               : ""
           }
-          <div class="unifi-device-list" data-unifi-scroll-id="${escapeHtml(siteId)}">${rows}</div>
-        </details>
+          <div class="unifi-device-list" data-unifi-site-panel data-unifi-scroll-id="${escapeHtml(siteId)}" ${expanded ? "" : "hidden"}>${rows}</div>
+        </article>
       `;
     })
     .join("");
@@ -7448,27 +7448,23 @@ function bindEvents() {
       return;
     }
 
-    const header = event.target.closest(".unifi-site-header");
+    const header = event.target.closest("[data-unifi-site-toggle]");
     if (!header || !els.unifiContent.contains(header)) return;
     event.preventDefault();
-    const details = header.closest("[data-unifi-site-id]");
-    if (!details) return;
-    details.open = !details.open;
-    const siteId = details.dataset.unifiSiteId;
-    if (details.open) state.unifiExpandedSites.add(siteId);
+    const card = header.closest("[data-unifi-site-id]");
+    if (!card) return;
+    const siteId = card.dataset.unifiSiteId;
+    const expanded = !state.unifiExpandedSites.has(siteId);
+    if (expanded) state.unifiExpandedSites.add(siteId);
     else state.unifiExpandedSites.delete(siteId);
     state.unifiRenderSignature = "";
+    card.classList.toggle("is-expanded", expanded);
+    header.setAttribute("aria-expanded", expanded ? "true" : "false");
+    card.querySelectorAll("[data-unifi-site-panel]").forEach((panel) => {
+      panel.hidden = !expanded;
+    });
     updateUnifiExpandAllButton();
   });
-  els.unifiContent?.addEventListener("toggle", (event) => {
-    const details = event.target.closest?.("[data-unifi-site-id]");
-    if (!details) return;
-    const siteId = details.dataset.unifiSiteId;
-    if (details.open) state.unifiExpandedSites.add(siteId);
-    else state.unifiExpandedSites.delete(siteId);
-    state.unifiRenderSignature = "";
-    updateUnifiExpandAllButton();
-  }, true);
 
   document.querySelectorAll("[data-admin-view]").forEach((button) => {
     button.addEventListener("click", () => setActiveView(button.dataset.adminView));
