@@ -2,6 +2,10 @@
 
 Resumo das versoes estaveis publicadas do ServerWatch.
 
+## v4.5.1 - 2026-07-16
+
+- Corrige o selo de status (online/offline) de links SNMP de FortiGate para usar a perda de pacote do health-check do SD-WAN, nao so o `ifOperStatus` da porta fisica: a porta continua "up" mesmo com a operadora fora do ar, entao um link com o WAN da operadora indisponivel (ex: 100% de perda no health-check) continuava marcado como "online" no ServerWatch. Perda de pacote >= 80% agora forca o link a offline; perda baixa nunca forca "online" (evita mascarar uma porta fisicamente desconectada).
+
 ## v4.5.0 - 2026-07-16
 
 - Renomeia a aba `Empresas` para `Empresas/Clientes` na navegacao, no painel administrativo e no titulo do cadastro, refletindo que o sistema tambem atende clientes Pessoa Fisica.

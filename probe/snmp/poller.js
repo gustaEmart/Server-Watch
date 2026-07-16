@@ -162,8 +162,18 @@ async function pollActiveRouteIfIndex(host, port, community, timeoutMs) {
 const FORTIGATE_SDWAN_HEALTH_BASE = "1.3.6.1.4.1.12356.101.4.9.2.1";
 const FORTIGATE_SDWAN_COL_MEMBER_NAME = "14";
 const FORTIGATE_SDWAN_COL_PACKET_LOSS = "9";
+// Perda de pacote acima disso e tratada como "membro fora do ar" pro selo de
+// status do link (nao so pra decidir qual e o ativo) — o health-check real
+// (100.000/0.000 no equipamento observado) e bem mais confiavel que o
+// ifOperStatus da porta fisica, que fica "up" mesmo com a operadora fora do
+// ar (o link fisico Fortigate<->roteador da operadora continua de pe).
+const FORTIGATE_SDWAN_DOWN_LOSS_THRESHOLD = 80;
 
-async function pollFortigateSdwanActiveIfIndex(host, port, community, timeoutMs) {
+// Retorna a perda de pacote do health-check por MEMBRO do SD-WAN, resolvida
+// pro ifIndex real (via ifName, ja que o ifDescr do FortiGate costuma vir
+// vazio/generico) — base pra decidir tanto qual link e o ativo quanto se
+// cada link individualmente esta realmente respondendo.
+async function pollFortigateSdwanMemberLoss(host, port, community, timeoutMs) {
   try {
     const rows = await snmpWalk(host, port, community, FORTIGATE_SDWAN_HEALTH_BASE, { timeoutMs, maxRows: 500 });
     const bySuffix = new Map();
@@ -177,33 +187,45 @@ async function pollFortigateSdwanActiveIfIndex(host, port, community, timeoutMs)
       if (!bySuffix.has(suffix)) bySuffix.set(suffix, {});
       bySuffix.get(suffix)[column] = row.value;
     }
-    const members = Array.from(bySuffix.values()).filter((entry) => entry[FORTIGATE_SDWAN_COL_MEMBER_NAME]);
-    if (!members.length) return null;
-    members.sort(
-      (a, b) =>
-        (numberOrNull(a[FORTIGATE_SDWAN_COL_PACKET_LOSS]) ?? 100) - (numberOrNull(b[FORTIGATE_SDWAN_COL_PACKET_LOSS]) ?? 100)
-    );
-    const best = members[0];
-    const bestLoss = numberOrNull(best[FORTIGATE_SDWAN_COL_PACKET_LOSS]);
-    if (bestLoss != null && bestLoss >= 100) return null; // todos os membros down — sem vencedor confiavel, cai pro heuristico de trafego
-    const memberName = String(best[FORTIGATE_SDWAN_COL_MEMBER_NAME] || "").trim().toLowerCase();
-    if (!memberName) return null;
+    const members = Array.from(bySuffix.values())
+      .map((entry) => ({
+        name: String(entry[FORTIGATE_SDWAN_COL_MEMBER_NAME] || "").trim().toLowerCase(),
+        packetLoss: numberOrNull(entry[FORTIGATE_SDWAN_COL_PACKET_LOSS])
+      }))
+      .filter((entry) => entry.name);
+    if (!members.length) return new Map();
 
     // ifDescr costuma vir vazio/generico no FortiGate — ifName (ifXTable) e
     // quem traz o nome amigavel ("wan1"/"wan2") que bate com o da tabela SD-WAN.
     const nameRows = await snmpWalk(host, port, community, IF_MIB.ifName, { timeoutMs, maxRows: 200 });
+    const ifIndexByName = new Map();
     for (const row of nameRows) {
       const ifIndex = Number(row.oid.slice(IF_MIB.ifName.length + 1));
-      if (Number.isFinite(ifIndex) && String(row.value || "").trim().toLowerCase() === memberName) {
-        return ifIndex;
-      }
+      if (Number.isFinite(ifIndex)) ifIndexByName.set(String(row.value || "").trim().toLowerCase(), ifIndex);
     }
-    return null;
+
+    const lossByIfIndex = new Map();
+    for (const member of members) {
+      const ifIndex = ifIndexByName.get(member.name);
+      if (ifIndex != null) lossByIfIndex.set(ifIndex, member.packetLoss);
+    }
+    return lossByIfIndex;
   } catch {
     // tabela SD-WAN indisponivel (fabricante diferente, ou FortiGate sem
     // SD-WAN configurado) — quem chama cai pro ipCidrRouteTable generico.
-    return null;
+    return new Map();
   }
+}
+
+function pickFortigateActiveIfIndex(lossByIfIndex) {
+  if (!lossByIfIndex.size) return null;
+  let best = null;
+  for (const [ifIndex, packetLoss] of lossByIfIndex) {
+    const loss = packetLoss ?? 100;
+    if (!best || loss < best.loss) best = { ifIndex, loss };
+  }
+  if (!best || best.loss >= 100) return null; // todos os membros down — sem vencedor confiavel, cai pro heuristico de trafego
+  return best.ifIndex;
 }
 
 // Varre a tabela ifDescr inteira do dispositivo — usado pra alimentar o
@@ -244,8 +266,10 @@ export async function pollDevice(target, timeoutMs) {
   // que a rota generica (reflete o resultado do health-check ativo, igual a
   // GUI), entao ela e tentada primeiro pra esse fabricante.
   let activeRouteIfIndex = null;
+  let fortigateSdwanLossByIfIndex = new Map();
   if (vendor === "fortigate") {
-    activeRouteIfIndex = await pollFortigateSdwanActiveIfIndex(host, port, community, timeoutMs);
+    fortigateSdwanLossByIfIndex = await pollFortigateSdwanMemberLoss(host, port, community, timeoutMs);
+    activeRouteIfIndex = pickFortigateActiveIfIndex(fortigateSdwanLossByIfIndex);
   }
   if (activeRouteIfIndex == null) {
     activeRouteIfIndex = await pollActiveRouteIfIndex(host, port, community, timeoutMs);
@@ -255,6 +279,15 @@ export async function pollDevice(target, timeoutMs) {
   for (const iface of interfaces || []) {
     try {
       const data = await pollInterface(host, port, community, iface.snmpIfIndex, timeoutMs);
+      // ifOperStatus reflete so o estado fisico da porta — no FortiGate ela
+      // continua "up" mesmo com a operadora fora do ar. Se o health-check do
+      // SD-WAN mediu perda alta pra essa interface, o link e tratado como
+      // offline mesmo que a porta em si reporte up (nunca o contrario: perda
+      // baixa nao forca "up", pra nao mascarar uma porta fisicamente down).
+      const sdwanLoss = fortigateSdwanLossByIfIndex.get(iface.snmpIfIndex);
+      if (sdwanLoss != null && sdwanLoss >= FORTIGATE_SDWAN_DOWN_LOSS_THRESHOLD) {
+        data.ifOperStatus = 2;
+      }
       interfaceResults.push({ linkId: iface.linkId, checkedAt, ...data });
     } catch (error) {
       interfaceResults.push({ linkId: iface.linkId, checkedAt, ifOperStatus: 0, error: error.message });
