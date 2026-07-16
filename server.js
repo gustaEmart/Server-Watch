@@ -172,7 +172,7 @@ const PROBE_COLLECTOR_VERSION = "0.6.10";
 // — namespace de versao totalmente separado do probe de host. Usar
 // PROBE_COLLECTOR_VERSION pra comparar network probes fazia todo network
 // probe aparecer "desatualizado" pra sempre (0.1.0 nunca alcanca 0.6.10).
-const NETWORK_PROBE_COLLECTOR_VERSION = "0.2.0";
+const NETWORK_PROBE_COLLECTOR_VERSION = "0.3.0";
 
 function expectedProbeVersion(probe) {
   return probe?.probeType === "network" ? NETWORK_PROBE_COLLECTOR_VERSION : PROBE_COLLECTOR_VERSION;

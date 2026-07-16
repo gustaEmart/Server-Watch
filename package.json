@@ -1,6 +1,6 @@
 {
   "name": "serverwatch-mvp",
-  "version": "4.5.1",
+  "version": "4.5.2",
   "description": "ServerWatch MVP - monitoramento de disponibilidade via ping em rede local.",
   "main": "server.js",
   "type": "module",

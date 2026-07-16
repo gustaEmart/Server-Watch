@@ -22,6 +22,7 @@ New-Item -ItemType Directory -Path $publishDir -Force | Out-Null
 Copy-Item -Path (Join-Path $repoRoot "probe\network-collector.js") -Destination (Join-Path $assetsDir "network-collector.js") -Force
 Copy-Item -Path (Join-Path $repoRoot "probe\snmp\client.js") -Destination (Join-Path $assetsDir "snmp-client.js") -Force
 Copy-Item -Path (Join-Path $repoRoot "probe\snmp\vendor-templates.js") -Destination (Join-Path $assetsDir "vendor-templates.js") -Force
+Copy-Item -Path (Join-Path $repoRoot "probe\snmp\poller.js") -Destination (Join-Path $assetsDir "poller.js") -Force
 
 $project = Join-Path $projectDir "ServerWatchNetworkProbeInstaller.csproj"
 $selfContained = if ($FrameworkDependent) { "false" } else { "true" }

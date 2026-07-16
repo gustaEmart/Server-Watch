@@ -546,6 +546,7 @@ internal static class Program
             WriteResource("network-collector.js", Path.Combine(InstallDir, "network-collector.js"));
             WriteResource("snmp-client.js", Path.Combine(SnmpDir, "client.js"));
             WriteResource("vendor-templates.js", Path.Combine(SnmpDir, "vendor-templates.js"));
+            WriteResource("poller.js", Path.Combine(SnmpDir, "poller.js"));
         }
 
         internal static void WriteConfig(ProbeConfig config)

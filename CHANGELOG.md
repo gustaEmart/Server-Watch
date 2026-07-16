@@ -2,6 +2,11 @@
 
 Resumo das versoes estaveis publicadas do ServerWatch.
 
+## v4.5.2 - 2026-07-16
+
+- Corrige o instalador `.exe` (.NET) do Network Probe (SNMP), que nunca gravava o `probe/snmp/poller.js` em disco (so `network-collector.js`, `client.js` e `vendor-templates.js`) — qualquer instalacao feita por ele ficava sem o modulo de coleta em si, incluindo a deteccao de SD-WAN de FortiGate da v4.5.1. Sincroniza tambem os demais assets embutidos (`network-collector.js`/`vendor-templates.js`) com a versao atual do codigo-fonte, que estavam desatualizados.
+- Ajusta a versao de referencia do Network Probe (`0.2.0` -> `0.3.0`) para refletir a correcao acima e a de status SNMP do Fortigate, permitindo que probes desatualizados apareçam corretamente como tal na aba Probes (a atualizacao remota automatica continua disponivel so para Linux).
+
 ## v4.5.1 - 2026-07-16
 
 - Corrige o selo de status (online/offline) de links SNMP de FortiGate para usar a perda de pacote do health-check do SD-WAN, nao so o `ifOperStatus` da porta fisica: a porta continua "up" mesmo com a operadora fora do ar, entao um link com o WAN da operadora indisponivel (ex: 100% de perda no health-check) continuava marcado como "online" no ServerWatch. Perda de pacote >= 80% agora forca o link a offline; perda baixa nunca forca "online" (evita mascarar uma porta fisicamente desconectada).

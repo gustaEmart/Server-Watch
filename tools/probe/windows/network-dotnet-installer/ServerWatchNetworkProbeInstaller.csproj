@@ -17,5 +17,6 @@
     <EmbeddedResource Include="assets\network-collector.js" LogicalName="network-collector.js" />
     <EmbeddedResource Include="assets\snmp-client.js" LogicalName="snmp-client.js" />
     <EmbeddedResource Include="assets\vendor-templates.js" LogicalName="vendor-templates.js" />
+    <EmbeddedResource Include="assets\poller.js" LogicalName="poller.js" />
   </ItemGroup>
 </Project>

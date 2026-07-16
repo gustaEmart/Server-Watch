@@ -13,6 +13,10 @@ export const IF_MIB = {
   ifOutOctets32: "1.3.6.1.2.1.2.2.1.16",
   ifHCInOctets: "1.3.6.1.2.1.31.1.1.1.6", // preferido, 64-bit (IF-MIB high-capacity)
   ifHCOutOctets: "1.3.6.1.2.1.31.1.1.1.10",
+  // ifName (ifXTable) — em alguns fabricantes (ex: FortiGate) o ifDescr
+  // legado vem vazio/generico, mas ifName traz o nome amigavel real
+  // (ex: "wan1"/"wan2"), usado pra casar com nomes de outras tabelas.
+  ifName: "1.3.6.1.2.1.31.1.1.1.1",
   sysObjectID: "1.3.6.1.2.1.1.2.0",
   sysDescr: "1.3.6.1.2.1.1.1.0"
 };

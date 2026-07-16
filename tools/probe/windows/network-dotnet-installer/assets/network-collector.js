@@ -1,15 +1,32 @@
 import { spawn } from "node:child_process";
-import { readFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import os from "node:os";
-import { snmpGet, snmpWalk } from "./snmp/client.js";
-import { IF_MIB, vendorTemplate, detectVendorFromSysObjectId } from "./snmp/vendor-templates.js";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import { pollDevice } from "./snmp/poller.js";
 
 const DEFAULT_CONFIG = new URL("./config.json", import.meta.url);
-const VERSION = "0.1.0";
+// Mantido em sincronia manual com NETWORK_PROBE_COLLECTOR_VERSION no
+// server.js — sem isso o servidor nunca reconhece uma atualizacao como
+// concluida (compara probe.version contra esse numero).
+const VERSION = "0.2.0";
+const handledUpdateRequests = new Set();
 const REQUEST_TIMEOUT_MS = 15000;
 const LOOP_WATCHDOG_MS = 90 * 1000;
 const SNMP_TIMEOUT_MS = 3000;
 const GATEWAY_DETECT_EVERY_N_LOOPS = 10;
+// Teste ativo de banda (download/upload real contra servidor externo, nao o
+// trafego SNMP passivo) — satura o link de proposito por um instante, entao
+// nao roda a cada ciclo normal. Cadencia configuravel via
+// speedTestIntervalMinutes no config.json (padrao 60min, pra saturar o
+// minimo possivel); tambem roda sob demanda via botao "Testar agora"
+// (forceSpeedTestAt em /api/network-probe/targets).
+// Payload reduzido (14MB no total) pra encurtar a janela de saturacao —
+// menos incomodo pra trafego real (VOIP/videochamada) durante o teste.
+const DEFAULT_SPEEDTEST_INTERVAL_MINUTES = 60;
+const SPEEDTEST_DOWNLOAD_BYTES = 10_000_000;
+const SPEEDTEST_UPLOAD_BYTES = 4_000_000;
+const SPEEDTEST_TIMEOUT_MS = 20_000;
 
 // ---------------------------------------------------------------------------
 // Config / util — mesmos padroes de probe/collector.js
@@ -34,6 +51,7 @@ async function loadConfig() {
   return {
     intervalSeconds: 60,
     timeoutMs: SNMP_TIMEOUT_MS,
+    speedTestIntervalMinutes: DEFAULT_SPEEDTEST_INTERVAL_MINUTES,
     name: config.probeId,
     ...config,
     serverUrl: String(config.serverUrl).replace(/\/+$/, "")
@@ -163,150 +181,9 @@ async function detectDefaultGateway() {
 }
 
 // ---------------------------------------------------------------------------
-// Coleta SNMP por dispositivo
+// Coleta SNMP por dispositivo — implementacao compartilhada com o coletor
+// central do servidor, ver ./snmp/poller.js
 // ---------------------------------------------------------------------------
-
-function numberOrNull(value) {
-  const number = Number(value);
-  return Number.isFinite(number) ? number : null;
-}
-
-async function pollMemoryViaHrStorage(host, port, community, memOids, timeoutMs) {
-  const descrRows = await snmpWalk(host, port, community, memOids.hrStorageDescr, { timeoutMs });
-  const ramRow = descrRows.find((row) => /physical memory|real memory|main memory|^ram$/i.test(row.value || ""));
-  if (!ramRow) return null;
-  const index = ramRow.oid.slice(memOids.hrStorageDescr.length + 1);
-  if (!index) return null;
-  const sizeOid = `${memOids.hrStorageSize}.${index}`;
-  const usedOid = `${memOids.hrStorageUsed}.${index}`;
-  const result = await snmpGet(host, port, community, [sizeOid, usedOid], { timeoutMs });
-  const size = numberOrNull(result[sizeOid]?.value);
-  const used = numberOrNull(result[usedOid]?.value);
-  if (!size) return null;
-  return Math.max(0, Math.min(100, Math.round((used / size) * 100)));
-}
-
-async function pollCpuViaHrProcessorLoad(host, port, community, tableOid, timeoutMs) {
-  const rows = await snmpWalk(host, port, community, tableOid, { timeoutMs });
-  const values = rows.map((row) => numberOrNull(row.value)).filter((value) => value !== null);
-  if (!values.length) return null;
-  return Math.round(values.reduce((sum, value) => sum + value, 0) / values.length);
-}
-
-async function pollCpuAndMem(host, port, community, vendor, timeoutMs) {
-  const template = vendorTemplate(vendor);
-  if (vendor === "mikrotik") {
-    return {
-      cpuPercent: await pollCpuViaHrProcessorLoad(host, port, community, template.cpuOids.hrProcessorLoadTable, timeoutMs),
-      memPercent: await pollMemoryViaHrStorage(host, port, community, template.memOids, timeoutMs)
-    };
-  }
-  if (vendor === "fortigate") {
-    const oids = [template.cpuOids.cpuUsage, template.memOids.memUsage];
-    const result = await snmpGet(host, port, community, oids, { timeoutMs });
-    return {
-      cpuPercent: numberOrNull(result[template.cpuOids.cpuUsage]?.value),
-      memPercent: numberOrNull(result[template.memOids.memUsage]?.value)
-    };
-  }
-  if (vendor === "pfsense") {
-    const oids = [template.cpuOids.cpuIdle, template.memOids.memTotalReal, template.memOids.memAvailReal];
-    const result = await snmpGet(host, port, community, oids, { timeoutMs });
-    const idle = numberOrNull(result[template.cpuOids.cpuIdle]?.value);
-    const total = numberOrNull(result[template.memOids.memTotalReal]?.value);
-    const avail = numberOrNull(result[template.memOids.memAvailReal]?.value);
-    return {
-      cpuPercent: idle !== null ? Math.max(0, Math.min(100, 100 - idle)) : null,
-      memPercent: total ? Math.max(0, Math.min(100, Math.round(100 * (1 - avail / total)))) : null
-    };
-  }
-  // generico — HOST-RESOURCES-MIB, funciona pra qualquer agente que a exponha
-  return {
-    cpuPercent: await pollCpuViaHrProcessorLoad(host, port, community, template.cpuOids.hrProcessorLoadTable, timeoutMs),
-    memPercent: await pollMemoryViaHrStorage(host, port, community, template.memOids, timeoutMs)
-  };
-}
-
-async function pollInterface(host, port, community, snmpIfIndex, timeoutMs) {
-  const oids = {
-    ifDescr: `${IF_MIB.ifDescr}.${snmpIfIndex}`,
-    ifOperStatus: `${IF_MIB.ifOperStatus}.${snmpIfIndex}`,
-    ifHCInOctets: `${IF_MIB.ifHCInOctets}.${snmpIfIndex}`,
-    ifHCOutOctets: `${IF_MIB.ifHCOutOctets}.${snmpIfIndex}`,
-    ifInOctets32: `${IF_MIB.ifInOctets32}.${snmpIfIndex}`,
-    ifOutOctets32: `${IF_MIB.ifOutOctets32}.${snmpIfIndex}`
-  };
-  const result = await snmpGet(host, port, community, Object.values(oids), { timeoutMs });
-  const hcIn = numberOrNull(result[oids.ifHCInOctets]?.value);
-  const hcOut = numberOrNull(result[oids.ifHCOutOctets]?.value);
-  const in32 = numberOrNull(result[oids.ifInOctets32]?.value);
-  const out32 = numberOrNull(result[oids.ifOutOctets32]?.value);
-  return {
-    ifDescr: result[oids.ifDescr]?.value || "",
-    ifOperStatus: numberOrNull(result[oids.ifOperStatus]?.value) ?? 0,
-    inOctets: hcIn && hcIn > 0 ? hcIn : in32,
-    outOctets: hcOut && hcOut > 0 ? hcOut : out32
-  };
-}
-
-// Varre a tabela ifDescr inteira do dispositivo — usado pra alimentar o
-// seletor de interfaces na UI (o admin escolhe pelo nome real da interface
-// em vez de precisar descobrir o ifIndex na mao via SNMP walk manual).
-async function discoverInterfaces(host, port, community, timeoutMs) {
-  const rows = await snmpWalk(host, port, community, IF_MIB.ifDescr, { timeoutMs, maxRows: 200 });
-  return rows
-    .map((row) => {
-      const ifIndex = Number(row.oid.slice(IF_MIB.ifDescr.length + 1));
-      return Number.isFinite(ifIndex) ? { ifIndex, ifDescr: String(row.value || "").slice(0, 200) } : null;
-    })
-    .filter(Boolean);
-}
-
-async function pollDevice(target, timeoutMs) {
-  const { deviceId, managementIp: host, snmpPort: port, snmpCommunity: community, vendor, interfaces } = target;
-  const checkedAt = new Date().toISOString();
-  let detectedVendor = null;
-  try {
-    const sys = await snmpGet(host, port, community, [IF_MIB.sysObjectID], { timeoutMs });
-    const sysObjectId = sys[IF_MIB.sysObjectID]?.value;
-    if (sysObjectId) detectedVendor = detectVendorFromSysObjectId(sysObjectId);
-  } catch {
-    // fingerprint eh best-effort — se falhar aqui, o resto da coleta ainda tenta rodar
-  }
-
-  let discoveredInterfaces = [];
-  try {
-    discoveredInterfaces = await discoverInterfaces(host, port, community, timeoutMs);
-  } catch {
-    // descoberta de interfaces eh best-effort — nao bloqueia o resto da coleta
-  }
-
-  const interfaceResults = [];
-  for (const iface of interfaces || []) {
-    try {
-      const data = await pollInterface(host, port, community, iface.snmpIfIndex, timeoutMs);
-      interfaceResults.push({ linkId: iface.linkId, checkedAt, ...data });
-    } catch (error) {
-      interfaceResults.push({ linkId: iface.linkId, checkedAt, ifOperStatus: 0, error: error.message });
-    }
-  }
-
-  try {
-    const { cpuPercent, memPercent } = await pollCpuAndMem(host, port, community, vendor, timeoutMs);
-    return { deviceId, snmpStatus: "ok", cpuPercent, memPercent, detectedVendor, discoveredInterfaces, interfaceResults };
-  } catch (error) {
-    return {
-      deviceId,
-      snmpStatus: "unreachable",
-      cpuPercent: null,
-      memPercent: null,
-      detectedVendor,
-      discoveredInterfaces,
-      error: error.message,
-      interfaceResults
-    };
-  }
-}
 
 // ---------------------------------------------------------------------------
 // Comunicacao com o servidor central
@@ -379,13 +256,200 @@ async function getTargets(config, discoveredGatewayIp) {
   return requestJson(config, `/api/network-probe/targets?${params.toString()}`);
 }
 
-async function sendResults(config, deviceResults, discoveredGatewayIp) {
-  if (!deviceResults.length) return;
+async function sendResults(config, deviceResults, discoveredGatewayIp, speedTest) {
+  if (!deviceResults.length && !speedTest) return;
   const metadata = probeMetadata(config, discoveredGatewayIp);
   await requestJson(config, "/api/network-probe/results", {
     method: "POST",
-    body: JSON.stringify({ ...metadata, deviceResults })
+    body: JSON.stringify({ ...metadata, deviceResults, speedTest: speedTest || undefined })
   });
+}
+
+// ---------------------------------------------------------------------------
+// Teste ativo de velocidade — mede o link de internet de verdade (satura por
+// alguns segundos), diferente do trafego SNMP passivo que so mostra o que ja
+// esta sendo usado organicamente. Usa os endpoints publicos do Cloudflare
+// (mesmos usados pelo speed.cloudflare.com), sem dependencia externa.
+async function speedTestDownload(bytes, timeoutMs) {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  const start = process.hrtime.bigint();
+  try {
+    const response = await fetch(`https://speed.cloudflare.com/__down?bytes=${bytes}`, { signal: controller.signal });
+    if (!response.ok || !response.body) throw new Error(`Download speed test HTTP ${response.status}`);
+    let received = 0;
+    const reader = response.body.getReader();
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      received += value.length;
+    }
+    const elapsedSeconds = Number(process.hrtime.bigint() - start) / 1e9;
+    if (elapsedSeconds <= 0 || received === 0) throw new Error("Download speed test sem dados.");
+    return Math.round((received * 8) / elapsedSeconds);
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+async function speedTestUpload(bytes, timeoutMs) {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  const payload = Buffer.alloc(bytes);
+  const start = process.hrtime.bigint();
+  try {
+    const response = await fetch("https://speed.cloudflare.com/__up", {
+      method: "POST",
+      body: payload,
+      signal: controller.signal,
+      headers: { "Content-Type": "application/octet-stream" }
+    });
+    if (!response.ok) throw new Error(`Upload speed test HTTP ${response.status}`);
+    await response.arrayBuffer().catch(() => null);
+    const elapsedSeconds = Number(process.hrtime.bigint() - start) / 1e9;
+    if (elapsedSeconds <= 0) throw new Error("Upload speed test sem dados.");
+    return Math.round((payload.length * 8) / elapsedSeconds);
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+async function runSpeedTest() {
+  const downloadBps = await speedTestDownload(SPEEDTEST_DOWNLOAD_BYTES, SPEEDTEST_TIMEOUT_MS);
+  const uploadBps = await speedTestUpload(SPEEDTEST_UPLOAD_BYTES, SPEEDTEST_TIMEOUT_MS);
+  return {
+    downloadMbps: Math.round((downloadBps / 1_000_000) * 10) / 10,
+    uploadMbps: Math.round((uploadBps / 1_000_000) * 10) / 10,
+    testedAt: new Date().toISOString()
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Atualizacao remota — mesmo mecanismo do probe de host (probe/collector.js):
+// o servidor sinaliza um updateRequest pendente em /api/network-probe/targets,
+// o coletor dispara o proprio instalador em modo reparo/atualizacao e reporta
+// o resultado em /api/probe/update-status (rota compartilhada com o probe de
+// host — generica por probeId, nao filtra por probeType).
+// ---------------------------------------------------------------------------
+
+function shellQuote(value) {
+  return `'${String(value || "").replaceAll("'", "'\"'\"'")}'`;
+}
+
+async function reportUpdateStatus(config, request, status, error = null) {
+  await requestJson(config, "/api/probe/update-status", {
+    method: "POST",
+    body: JSON.stringify({
+      probeId: config.probeId,
+      requestId: request.id,
+      status,
+      error
+    })
+  });
+}
+
+function spawnDetached(command, args) {
+  const child = spawn(command, args, { detached: true, stdio: "ignore" });
+  child.unref();
+}
+
+async function downloadToFile(config, urlPath, destination) {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 5 * 60 * 1000);
+  try {
+    const response = await fetch(`${config.serverUrl}${urlPath}`, {
+      signal: controller.signal,
+      headers: {
+        Authorization: `Bearer ${config.token}`,
+        "X-ServerWatch-Probe-Token": config.token
+      }
+    });
+    if (!response.ok) throw new Error(`Download retornou HTTP ${response.status}`);
+    const buffer = Buffer.from(await response.arrayBuffer());
+    await writeFile(destination, buffer);
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+async function handleLinuxUpdateRequest(config, request) {
+  const installCommand = [
+    `curl -fsSL ${shellQuote(`${config.serverUrl}/downloads/network-probe/linux-installer`)}`,
+    "|",
+    "bash -s -- --repair",
+    "--server-url",
+    shellQuote(config.serverUrl),
+    "--probe-id",
+    shellQuote(config.probeId),
+    "--token",
+    shellQuote(config.token),
+    "--name",
+    shellQuote(config.name || config.probeId)
+  ].join(" ");
+  const unitName = `serverwatch-network-probe-update-${String(request.id).replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 24)}`;
+  await reportUpdateStatus(config, request, "running");
+
+  try {
+    spawnDetached("systemd-run", [
+      "--unit",
+      unitName,
+      "--description",
+      "ServerWatch Network Probe update",
+      "/usr/bin/env",
+      "bash",
+      "-lc",
+      installCommand
+    ]);
+    console.log(`Scheduled network probe update ${request.id} to ${request.targetVersion || "latest"}`);
+  } catch (error) {
+    await reportUpdateStatus(config, request, "failed", error.message);
+  }
+}
+
+async function handleWindowsUpdateRequest(config, request) {
+  await reportUpdateStatus(config, request, "running");
+  try {
+    const installDir = dirname(fileURLToPath(import.meta.url));
+    const installerPath = resolve(installDir, "Install-NetworkProbeCollector-Headless.ps1");
+    await downloadToFile(config, "/downloads/network-probe/windows-ps1-installer", installerPath);
+    const updateTaskName = "ServerWatch Network Probe Update";
+    const escapedInstaller = installerPath.replace(/'/g, "''");
+    const escapedTaskName = updateTaskName.replace(/'/g, "''");
+    const psCmd = [
+      `$taskName = '${escapedTaskName}'`,
+      `$script = '${escapedInstaller}'`,
+      `$execute = Join-Path $env:SystemRoot 'System32\\WindowsPowerShell\\v1.0\\powershell.exe'`,
+      `$argument = '-NoProfile -ExecutionPolicy Bypass -File "' + $script + '" -Update'`,
+      `$action = New-ScheduledTaskAction -Execute $execute -Argument $argument`,
+      `$trigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddSeconds(20)`,
+      `$principal = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -RunLevel Highest`,
+      `$settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -ExecutionTimeLimit (New-TimeSpan -Minutes 20)`,
+      `Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Force | Out-Null`,
+      `Start-ScheduledTask -TaskName $taskName`
+    ].join("; ");
+    spawnDetached("powershell.exe", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-WindowStyle", "Hidden", "-Command", psCmd]);
+    console.log(`Scheduled network probe update ${request.id} to ${request.targetVersion || "latest"}`);
+  } catch (error) {
+    await reportUpdateStatus(config, request, "failed", error.message);
+  }
+}
+
+async function handleUpdateRequest(config, request) {
+  if (!request?.id || handledUpdateRequests.has(request.id)) return;
+  handledUpdateRequests.add(request.id);
+
+  const platform = os.platform();
+  if (platform === "linux") {
+    await handleLinuxUpdateRequest(config, request);
+    return;
+  }
+
+  if (platform === "win32") {
+    await handleWindowsUpdateRequest(config, request);
+    return;
+  }
+
+  await reportUpdateStatus(config, request, "unsupported", "Atualizacao remota automatica disponivel apenas para Linux e Windows.");
 }
 
 // ---------------------------------------------------------------------------
@@ -398,6 +462,12 @@ async function runLoop(config) {
   let cachedTargets = [];
   let discoveredGatewayIp = null;
   let loopCount = 0;
+  let lastSeenForceSpeedTestAt = null;
+  const loopIntervalSeconds = Math.min(60, Math.max(10, config.intervalSeconds));
+  const speedTestEveryNLoops = Math.max(
+    1,
+    Math.round((Math.max(1, Number(config.speedTestIntervalMinutes) || DEFAULT_SPEEDTEST_INTERVAL_MINUTES) * 60) / loopIntervalSeconds)
+  );
   console.log(`ServerWatch Network Probe ${VERSION} started as ${config.probeId}`);
 
   for (;;) {
@@ -407,11 +477,18 @@ async function runLoop(config) {
         discoveredGatewayIp = (await detectDefaultGateway()) || discoveredGatewayIp;
         touchWatchdog("gateway-detect");
       }
-      loopCount += 1;
 
       const payload = await getTargets(config, discoveredGatewayIp);
       touchWatchdog("targets");
       cachedTargets = Array.isArray(payload.targets) ? payload.targets : [];
+
+      if (payload.updateRequest) {
+        try {
+          await handleUpdateRequest(config, payload.updateRequest);
+        } catch (error) {
+          console.error(`[${new Date().toISOString()}] Update request failed: ${error.message}`);
+        }
+      }
 
       const now = Date.now();
       const dueTargets = cachedTargets.filter((target) => (nextChecks.get(target.deviceId) || 0) <= now);
@@ -422,8 +499,22 @@ async function runLoop(config) {
         touchWatchdog("device-poll");
       }
 
+      const forcedSpeedTest = Boolean(payload.forceSpeedTestAt) && payload.forceSpeedTestAt !== lastSeenForceSpeedTestAt;
+      let speedTest = null;
+      if (forcedSpeedTest || loopCount % speedTestEveryNLoops === 0) {
+        if (payload.forceSpeedTestAt) lastSeenForceSpeedTestAt = payload.forceSpeedTestAt;
+        try {
+          speedTest = await runSpeedTest();
+          touchWatchdog("speed-test");
+          console.log(`Speed test: ${speedTest.downloadMbps} Mbps down / ${speedTest.uploadMbps} Mbps up`);
+        } catch (error) {
+          console.error(`[${new Date().toISOString()}] Speed test failed: ${error.message}`);
+        }
+      }
+      loopCount += 1;
+
       try {
-        await sendResults(config, deviceResults, discoveredGatewayIp);
+        await sendResults(config, deviceResults, discoveredGatewayIp, speedTest);
         touchWatchdog("send");
         if (deviceResults.length) console.log(`Sent ${deviceResults.length} device result(s)`);
       } catch (error) {
@@ -433,7 +524,7 @@ async function runLoop(config) {
       console.error(`[${new Date().toISOString()}] ${error.message}`);
     }
     touchWatchdog("loop-end");
-    await new Promise((resolvePromise) => setTimeout(resolvePromise, Math.min(60, Math.max(10, config.intervalSeconds)) * 1000));
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, loopIntervalSeconds * 1000));
   }
 }
 
