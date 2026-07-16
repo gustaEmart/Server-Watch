@@ -9,7 +9,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="/styles.css?v=20260626-network-ui-9" />
+    <link rel="stylesheet" href="/styles.css?v=20260710-remove-legacy-probes-1" />
   </head>
   <body>
     <section class="bootstrap-screen" id="bootScreen" aria-label="Carregando ServerWatch">
@@ -62,7 +62,7 @@
           <a class="nav-tab" href="/alertas" data-view="alerts"><svg class="nav-tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 8a6 6 0 1 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg><span>Alertas</span></a>
           <a class="nav-tab" href="/historico" data-view="history"><svg class="nav-tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15.5 14"/></svg><span>Historico</span></a>
           <span class="sidebar-section-title admin-only">Administracao</span>
-          <a class="nav-tab admin-only" href="/empresas" data-view="groups"><svg class="nav-tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="3" width="14" height="18" rx="1"/><rect x="8" y="7" width="2" height="2"/><rect x="14" y="7" width="2" height="2"/><rect x="8" y="13" width="2" height="2"/><rect x="14" y="13" width="2" height="2"/></svg><span>Empresas</span></a>
+          <a class="nav-tab admin-only" href="/empresas" data-view="groups"><svg class="nav-tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="3" width="14" height="18" rx="1"/><rect x="8" y="7" width="2" height="2"/><rect x="14" y="7" width="2" height="2"/><rect x="8" y="13" width="2" height="2"/><rect x="14" y="13" width="2" height="2"/></svg><span>Empresas/Clientes</span></a>
           <a class="nav-tab admin-only" href="/probes" data-view="probes"><svg class="nav-tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="2"/><path d="M16.24 7.76a6 6 0 0 1 0 8.49"/><path d="M7.76 16.24a6 6 0 0 1 0-8.49"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/><path d="M4.93 19.07a10 10 0 0 1 0-14.14"/></svg><span>Probes</span></a>
           <a class="nav-tab admin-only" href="/usuarios" data-view="users"><svg class="nav-tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="9" cy="8" r="3"/><path d="M3 20c0-3.3 2.7-6 6-6s6 2.7 6 6"/><circle cx="17.5" cy="9" r="2.3"/><path d="M15.7 14.4c2.3.5 4 2.5 4 5.6"/></svg><span>Usuarios</span></a>
           <a class="nav-tab admin-only" href="/integracoes" data-view="integrations"><svg class="nav-tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 12h8"/><path d="M12 8v8"/><path d="M7 3v4"/><path d="M17 3v4"/><path d="M7 17v4"/><path d="M17 17v4"/><rect x="4" y="7" width="16" height="10" rx="3"/></svg><span>Integracoes</span></a>
@@ -147,30 +147,15 @@
         </section>
 
         <section class="view active" id="dashboardView">
-          <section class="dashboard-scope-bar" id="dashboardScopeBar" aria-label="Contexto do dashboard">
+          <section class="dashboard-mode-bar" id="dashboardScopeBar" aria-label="Modo do dashboard">
             <div class="dashboard-scope-copy">
-              <span class="simple-kicker">Contexto atual</span>
-              <h2 id="dashboardScopeTitle">Visao geral</h2>
-              <p id="dashboardScopeMeta">Todos os clientes monitorados.</p>
+              <span class="simple-kicker">Visao operacional</span>
+              <h2 id="dashboardScopeTitle">Visao Geral - Todos os Clientes</h2>
+              <p id="dashboardScopeMeta">Tabela executiva para leitura rapida da operacao.</p>
             </div>
-            <div class="dashboard-scope-actions">
-              <button class="scope-chip active" type="button" data-company-scope-id="all">Todos</button>
-              <button class="scope-chip" type="button" data-dashboard-focus="attention">Com atencao</button>
-              <button class="scope-chip" type="button" data-dashboard-focus="offline">Offline</button>
-              <button class="scope-chip" type="button" data-dashboard-focus="probe_stale">Probe sem contato</button>
-              <button class="scope-chip" type="button" data-dashboard-focus="links">Links degradados</button>
-              <details class="company-scope-menu" id="companyScopeMenu">
-                <summary>
-                  <span id="companyScopeSummary">Escolher empresa</span>
-                </summary>
-                <div class="company-scope-panel">
-                  <label class="search-field compact-search">
-                    <span>Buscar empresa</span>
-                    <input id="companyScopeSearch" type="search" placeholder="Nome da empresa" autocomplete="off" />
-                  </label>
-                  <div class="company-scope-list" id="companyScopeList"></div>
-                </div>
-              </details>
+            <div class="dashboard-mode-toggle" id="dashboardModeToggle" role="group" aria-label="Alternar visualizacao do dashboard">
+              <button class="scope-chip active" type="button" data-dashboard-mode="simple">Visualizacao simples</button>
+              <button class="scope-chip" type="button" data-dashboard-mode="complete">Dashboard completa</button>
             </div>
           </section>
           <section class="simple-dashboard" id="simpleDashboard" aria-label="Resumo simplificado">
@@ -232,6 +217,7 @@
                     </div>
                     <div class="filter-actions">
                       <button class="ghost-button compact" id="clearFilters" type="button">Limpar filtros</button>
+                      <button class="primary-button compact" id="applyFilters" type="button">Aplicar filtro</button>
                     </div>
                   </div>
                 </details>
@@ -254,7 +240,7 @@
             <button class="provider-segment" type="button" data-network-provider="unifi">UniFi Network</button>
           </div>
           <div id="networkConnectivityView">
-          <div class="wide-panel">
+          <section class="simple-dashboard network-dashboard" aria-label="Links e conectividade">
             <div class="panel-title">
               <div>
                 <h2>Redes e links</h2>
@@ -295,6 +281,7 @@
                   <h3>Links por cliente</h3>
                   <span id="networkDeviceCount">0 dispositivos</span>
                 </div>
+                <div id="networkDiscoveryBanner"></div>
                 <div class="network-link-list" id="networkLinksList"></div>
               </section>
 
@@ -305,7 +292,7 @@
                 </div>
               </aside>
             </div>
-          </div>
+          </section>
           </div>
 
           <div id="networkUnifiView" hidden>
@@ -318,7 +305,7 @@
                 <button class="primary-button compact admin-only" id="refreshUnifiButton" type="button">Atualizar dados</button>
               </div>
             </section>
-            <section class="wide-panel" aria-label="Sites UniFi">
+            <section class="simple-dashboard network-dashboard" aria-label="Sites UniFi">
               <div class="panel-title">
                 <div>
                   <h2>UniFi Network</h2>
@@ -452,8 +439,18 @@
           </div>
 
           <div id="backupsProxmoxView" hidden>
-          <section class="wide-panel" id="proxmoxBackupsPanel" aria-label="Proxmox Backup Server">
-            <div class="panel-title compact-title">
+          <section class="backup-sync-bar" aria-label="Sincronizacao do Proxmox Backup Server">
+            <div>
+              <strong>Dados do Proxmox Backup Server</strong>
+              <span id="proxmoxBackupsSyncMeta">Aguardando sincronizacao</span>
+            </div>
+            <div class="backup-sync-bar-actions">
+              <button class="primary-button compact admin-only" id="refreshProxmoxBackupsButton" type="button">Atualizar dados</button>
+            </div>
+          </section>
+
+          <section class="simple-dashboard proxmox-dashboard" id="proxmoxBackupsPanel" aria-label="Proxmox Backup Server">
+            <div class="panel-title compact-title proxmox-dashboard-title">
               <h2>Proxmox Backup Server</h2>
               <span id="proxmoxBackupsSummary">Carregando...</span>
             </div>
@@ -472,7 +469,7 @@
             </div>
             <div class="admin-grid">
               <button class="admin-card" type="button" data-admin-view="groups">
-                <span>Empresas</span>
+                <span>Empresas/Clientes</span>
                 <strong>Clientes e grupos</strong>
                 <small>Cadastre empresas, organize servidores e mantenha a estrutura operacional.</small>
               </button>
@@ -596,7 +593,7 @@
           <div class="wide-panel">
             <div class="panel-title">
               <div>
-                <h2>Cadastro de empresas</h2>
+                <h2>Cadastro de empresas/clientes</h2>
                 <span id="groupCount">0 empresas</span>
               </div>
               <button class="primary-button compact admin-only" id="openGroupForm" type="button">Adicionar empresa</button>
@@ -656,57 +653,32 @@
                 </div>
               </section>
 
-              <section class="probe-token-panel" aria-label="Downloads do LinkProbe">
+
+              <section class="probe-token-panel" aria-label="Downloads do Network Probe">
                 <div class="probe-panel-heading">
                   <div>
-                    <p class="eyebrow">Downloads</p>
-                    <h3>LinkProbe de redes</h3>
+                    <p class="eyebrow">SNMP</p>
+                    <h3>Network Probe (SNMP)</h3>
                   </div>
                 </div>
                 <div class="install-command">
                   <div class="install-command-header">
                     <div>
-                      <strong>Comando Linux LinkProbe</strong>
-                      <span>Instale uma instancia por link/WAN e ajuste agent-id, nome e alvos conforme a policy route.</span>
+                      <strong>Comando Linux Network Probe</strong>
+                      <span>Instale numa maquina qualquer da LAN. Detecta o gateway sozinho; habilite o SNMP no equipamento antes (community padrao <strong>serverwatch</strong>) e cadastre o dispositivo em Redes. Veja o guia de instalacao para o passo a passo no MikroTik.</span>
                     </div>
-                    <button class="ghost-button compact" id="copyLinkProbeInstallCommand" type="button">Copiar comando</button>
+                    <button class="ghost-button compact" id="copyNetworkProbeInstallCommand" type="button">Copiar comando</button>
                   </div>
-                  <code id="linkProbeInstallCommand"></code>
+                  <code id="networkProbeInstallCommand"></code>
                 </div>
                 <div class="download-actions">
-                  <a class="primary-button compact download-link" href="/downloads/linkprobe/linux-installer" download>
+                  <a class="primary-button compact download-link" href="/downloads/network-probe/linux-installer" download>
                     Baixar instalador Linux
                   </a>
-                  <a class="ghost-button compact download-link" href="/downloads/linkprobe/linux-amd64" download>
-                    Baixar binario Linux
+                  <a class="ghost-button compact download-link" href="/downloads/network-probe/windows-installer" download>
+                    Baixar instalador Windows (.exe)
                   </a>
-                  <a class="ghost-button compact download-link" href="/downloads/linkprobe/windows-installer" download>
-                    Baixar instalador Windows
-                  </a>
-                  <button class="ghost-button compact" type="button" data-open-probe-guide="link">Guia de instalacao</button>
-                </div>
-              </section>
-
-              <section class="probe-token-panel" aria-label="Downloads do MikroTik Probe">
-                <div class="probe-panel-heading">
-                  <div>
-                    <p class="eyebrow">RouterOS</p>
-                    <h3>MikroTik Uplink Probe</h3>
-                  </div>
-                </div>
-                <div class="install-command">
-                  <div class="install-command-header">
-                    <div>
-                      <strong>Comando RouterOS</strong>
-                    <span>Roda direto na RB, testa navegacao por gateway e cria os links automaticamente.</span>
-                    </div>
-                    <button class="ghost-button compact" id="copyMikrotikProbeInstallCommand" type="button">Copiar comando</button>
-                  </div>
-                  <code id="mikrotikProbeInstallCommand"></code>
-                </div>
-                <div class="download-actions">
-                  <button class="primary-button compact" type="button" disabled>Instalador gerado no comando</button>
-                  <button class="ghost-button compact" type="button" data-open-probe-guide="mikrotik">Guia de instalacao</button>
+                  <button class="ghost-button compact" type="button" data-open-probe-guide="networkProbe">Guia de instalacao</button>
                 </div>
               </section>
 
@@ -937,6 +909,7 @@
                   <option value="all">Todos tipos</option>
                   <option value="down">Offline</option>
                   <option value="up">Recuperado</option>
+                  <option value="contract_expiring">Contrato vencendo</option>
                 </select>
               </label>
             </div>
@@ -1113,6 +1086,37 @@
           </label>
         </div>
 
+        <div class="form-grid">
+          <label class="toggle-row">
+            <input type="checkbox" id="networkDeviceSnmpEnabled" />
+            <span>Habilitar coleta SNMP</span>
+          </label>
+          <label>
+            Comunidade SNMP (v2c)
+            <input id="networkDeviceSnmpCommunity" type="password" autocomplete="off" placeholder="Deixe em branco para manter a atual" />
+          </label>
+          <label>
+            Porta SNMP
+            <input id="networkDeviceSnmpPort" type="number" min="1" max="65535" placeholder="161" />
+          </label>
+          <label>
+            Network Probe (coleta SNMP)
+            <select id="networkDeviceNetworkProbe">
+              <option value="">Nenhum</option>
+            </select>
+          </label>
+        </div>
+
+        <section class="form-section" id="networkDeviceInterfacesSection" hidden>
+          <div class="form-section-title">
+            <div>
+              <strong>Interfaces detectadas via SNMP</strong>
+              <span>Marque quais sao links de internet reais (WAN) para aparecerem na lista principal. As demais ficam colapsadas sob o dispositivo.</span>
+            </div>
+          </div>
+          <div id="networkDeviceInterfaceChecklist" class="network-interface-checklist"></div>
+        </section>
+
         <label>
           Observacoes
           <textarea id="networkDeviceNotes" rows="3" placeholder="Contexto operacional ou acesso local"></textarea>
@@ -1137,8 +1141,7 @@
 
         <div class="install-guide-tabs" role="tablist" aria-label="Tipo de probe">
           <button class="install-guide-tab active" type="button" data-install-guide-tab="server" role="tab" aria-selected="true">Server Probe</button>
-          <button class="install-guide-tab" type="button" data-install-guide-tab="link" role="tab" aria-selected="false">LinkProbe</button>
-          <button class="install-guide-tab" type="button" data-install-guide-tab="mikrotik" role="tab" aria-selected="false">MikroTik</button>
+          <button class="install-guide-tab" type="button" data-install-guide-tab="networkProbe" role="tab" aria-selected="false">Network Probe (SNMP)</button>
         </div>
 
         <section class="install-guide-panel active" data-install-guide-panel="server">
@@ -1162,47 +1165,40 @@
           </div>
         </section>
 
-        <section class="install-guide-panel" data-install-guide-panel="link">
+        <section class="install-guide-panel" data-install-guide-panel="networkProbe">
           <div class="guide-card">
-            <span>Windows</span>
+            <span>MikroTik: habilitar e cadastrar a community SNMP</span>
             <ol>
-              <li>Baixe o instalador Windows do LinkProbe.</li>
-              <li>Cadastre 2 a 10 links, preenchendo nome, IP a pingar, gateway e mascara.</li>
-              <li>O instalador cria uma tarefa por link e registra os links no ServerWatch.</li>
+              <li>Faca isso primeiro, antes de instalar o probe — sem SNMP habilitado no equipamento, o probe nunca vai conseguir coletar nada.</li>
+              <li>No Winbox, abra <strong>IP → SNMP</strong> e marque <strong>Enabled</strong>.</li>
+              <li>Clique em <strong>Communities</strong>, adicione uma nova (botao +) e preencha:
+                <ul>
+                  <li>Name: <strong>serverwatch</strong> (padrao — sempre use esse nome, nunca "public")</li>
+                  <li>Addresses: <code>0.0.0.0/0</code> (ou restrinja a sub-rede onde o probe vai rodar)</li>
+                  <li>Security: <code>none</code></li>
+                  <li>Marque <strong>Read Access</strong> (Write Access fica desmarcado)</li>
+                </ul>
+              </li>
+              <li>Clique OK. Nao mexa na aba principal do SNMP Settings (Trap Community/Trap Target) — isso e so pra alertas do proprio equipamento, nao afeta a coleta do ServerWatch.</li>
             </ol>
-            <code>http://sw.grupoinsideti.com.br:3000</code>
           </div>
           <div class="guide-card">
             <span>Linux</span>
             <ol>
-              <li>Copie o comando abaixo e ajuste agent-id, nome e alvos.</li>
-              <li>Instale uma instancia por link/WAN.</li>
-              <li>Garanta no firewall que cada alvo saia pelo gateway correto.</li>
+              <li>Copie o comando abaixo e execute numa maquina qualquer da LAN do cliente (pode ser a mesma do Probe Collector, ou outra).</li>
+              <li>O instalador detecta o gateway padrao da rede sozinho — nao precisa informar o IP do Mikrotik/FortiGate/pfSense na hora da instalacao.</li>
+              <li>Depois de instalado, va em Redes: um aviso vai aparecer sugerindo cadastrar o dispositivo detectado. Confirme o fabricante — o campo de community ja vem preenchido com <strong>serverwatch</strong>, so mude se o equipamento usar outro nome.</li>
             </ol>
-            <code id="guideLinkProbeCommand"></code>
-          </div>
-        </section>
-
-        <section class="install-guide-panel" data-install-guide-panel="mikrotik">
-          <div class="guide-card">
-            <span>RouterOS direto na RB</span>
-            <ol>
-              <li>Copie o comando RouterOS da area de downloads.</li>
-              <li>Troque agentId, deviceName e a lista de uplinks no formato Nome|interface|gateway|prefixo|alvoTeste.</li>
-              <li>Preencha groupName no comando se quiser que a empresa seja criada/vinculada automaticamente.</li>
-              <li>Cole no terminal da RB. O script cria um scheduler e envia os links para o ServerWatch.</li>
-            </ol>
-            <code>Nome|interface|gateway|prefixo|alvoTeste;Nome 2|interface2|gateway2|prefixo|alvoTeste2</code>
+            <code id="guideNetworkProbeCommand"></code>
           </div>
           <div class="guide-card">
-            <span>Comando base</span>
+            <span>Windows</span>
             <ol>
-              <li>Use quando nao houver computador ou servidor para rodar agente local.</li>
-              <li>O status online exige interface ativa e ping no alvo de teste via gateway desse link.</li>
-              <li>A rota ativa vem da tabela de rotas do MikroTik.</li>
-              <li>Se um uplink cair, a RB reporta pelo link que continuar online.</li>
+              <li>Baixe o instalador Windows (.exe) do Network Probe.</li>
+              <li>Execute o arquivo como administrador e informe a URL abaixo, ID, nome e token.</li>
+              <li>Ao concluir, o probe aparece automaticamente em Probes; cadastre o dispositivo SNMP em Redes com a community <strong>serverwatch</strong>.</li>
             </ol>
-            <code id="guideMikrotikProbeCommand"></code>
+            <code>http://sw.grupoinsideti.com.br:3000</code>
           </div>
         </section>
       </div>
@@ -1220,8 +1216,6 @@
 
         <div class="install-guide-tabs" role="tablist" aria-label="Tipo de comando">
           <button class="install-guide-tab active" type="button" data-command-generator-mode="server" role="tab" aria-selected="true">Server Probe</button>
-          <button class="install-guide-tab" type="button" data-command-generator-mode="link" role="tab" aria-selected="false">LinkProbe</button>
-          <button class="install-guide-tab" type="button" data-command-generator-mode="mikrotik" role="tab" aria-selected="false">MikroTik</button>
         </div>
 
         <p class="dialog-note">Preencha os dados reais do ambiente. O comando final ja inclui URL publica e token atual do ServerWatch.</p>
@@ -1250,78 +1244,6 @@
                 <option value="repair">Reparar instalacao existente</option>
               </select>
             </label>
-          </div>
-        </section>
-
-        <section class="command-generator-panel" data-command-generator-panel="link">
-          <div class="form-grid">
-            <label>
-              ID do agente
-              <input id="commandLinkAgentId" placeholder="cliente-link1-operadora" />
-            </label>
-            <label>
-              Nome do link
-              <input id="commandLinkName" placeholder="Link 1 - Operadora" />
-            </label>
-            <label>
-              IPs para ping
-              <input id="commandLinkTargets" placeholder="4.2.2.2,149.112.112.112" />
-            </label>
-            <label>
-              Interface
-              <input id="commandLinkInterface" placeholder="wan1, pppoe-out1" />
-            </label>
-            <label>
-              Source IP
-              <input id="commandLinkSourceIp" placeholder="Opcional" />
-            </label>
-            <label>
-              Intervalo em segundos
-              <input id="commandLinkInterval" type="number" min="5" value="10" />
-            </label>
-            <label>
-              Pings por alvo
-              <input id="commandLinkPingCount" type="number" min="1" value="4" />
-            </label>
-            <label>
-              Limite online
-              <input id="commandLinkThreshold" type="number" min="0" max="1" step="0.1" value="0.5" />
-            </label>
-            <label>
-              Timeout por ping
-              <input id="commandLinkPingTimeout" type="number" min="1" value="2" />
-            </label>
-          </div>
-        </section>
-
-        <section class="command-generator-panel" data-command-generator-panel="mikrotik">
-          <div class="form-grid">
-            <label>
-              ID do agente
-              <input id="commandMikrotikAgentId" placeholder="rb-cliente-borda" />
-            </label>
-            <label>
-              Nome da RB
-              <input id="commandMikrotikDeviceName" placeholder="RB Cliente Borda" />
-            </label>
-            <label>
-              Empresa
-              <input id="commandMikrotikGroupName" placeholder="Cliente ACME" />
-            </label>
-            <label>
-              Intervalo em segundos
-              <input id="commandMikrotikInterval" type="number" min="5" value="10" />
-            </label>
-          </div>
-          <div class="form-section command-uplink-section">
-            <div class="form-section-title">
-              <div>
-                <strong>Uplinks RouterOS</strong>
-                <span>Informe nome, interface, gateway, mascara e alvo de teste de cada link.</span>
-              </div>
-              <button class="ghost-button compact" id="addCommandMikrotikUplink" type="button">+</button>
-            </div>
-            <div class="command-uplink-list" id="commandMikrotikUplinkList"></div>
           </div>
         </section>
 
@@ -1368,6 +1290,16 @@
             <select id="networkLinkDevice">
               <option value="">Sem dispositivo</option>
             </select>
+          </label>
+          <label id="networkLinkSnmpIfPickerLabel" class="full-span" hidden>
+            Interface SNMP (detectada via SNMP)
+            <select id="networkLinkSnmpIfPicker">
+              <option value="">Selecione a interface...</option>
+            </select>
+          </label>
+          <label>
+            Interface SNMP (ifIndex)
+            <input id="networkLinkSnmpIfIndex" type="number" min="0" placeholder="Ex: 9 (deixe em branco se nao for via SNMP)" />
           </label>
           <label>
             Tipo
@@ -1481,6 +1413,13 @@
               <span>Backup Proxmox</span>
             </label>
           </div>
+        </fieldset>
+
+        <fieldset class="group-contracts-fieldset">
+          <legend>Contratos / prestacao de servico</legend>
+          <p>Cadastre a data final de cada contrato ou prestacao de servico para ser avisado ~10 dias antes do vencimento. O inicio e opcional.</p>
+          <div id="groupContractsList"></div>
+          <button class="ghost-button compact" type="button" id="addGroupContract">Adicionar contrato</button>
         </fieldset>
 
         <section class="group-logo-editor">
@@ -1622,6 +1561,19 @@
       </div>
     </dialog>
 
+    <dialog class="server-dialog" id="proxmoxIssuesDialog">
+      <div class="dialog-shell">
+        <div class="dialog-header">
+          <div>
+            <p class="eyebrow">Proxmox Backup Server</p>
+            <h2 id="proxmoxIssuesTitle">Backups com erro</h2>
+          </div>
+          <button class="icon-button" value="cancel" type="button" id="closeProxmoxIssuesDialog" title="Fechar">x</button>
+        </div>
+        <div class="dialog-list" id="proxmoxIssuesList"></div>
+      </div>
+    </dialog>
+
     <dialog class="server-dialog" id="offlineServersDialog">
       <div class="dialog-shell">
         <div class="dialog-header">
@@ -1636,6 +1588,6 @@
     </dialog>
 
     <div class="toast-stack" id="toastStack" aria-live="polite"></div>
-    <script src="/app.js?v=20260626-network-ui-9" type="module"></script>
+    <script src="/app.js?v=20260710-remove-legacy-probes-1" type="module"></script>
   </body>
 </html>

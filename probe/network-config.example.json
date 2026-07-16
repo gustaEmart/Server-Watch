@@ -1,0 +1,8 @@
+{
+  "serverUrl": "https://serverwatch.example.com",
+  "probeId": "cliente-acme-sp-rede",
+  "name": "Cliente ACME - Sao Paulo (Network Probe)",
+  "token": "cole-aqui-o-token-do-serverwatch",
+  "intervalSeconds": 60,
+  "timeoutMs": 3000
+}

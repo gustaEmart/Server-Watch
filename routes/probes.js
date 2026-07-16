@@ -42,6 +42,16 @@ export function createProbesHandler({
     const probe = getProbes().find((item) => item.id === id && !item.deletedAt);
     if (!probe) return notFound(res);
 
+    if (req.method === "POST" && parts[3] === "speed-test") {
+      if ((probe.probeType || "host") !== "network") {
+        return sendJson(res, 400, { error: "Teste de velocidade so esta disponivel para Network Probes." });
+      }
+      probe.forceSpeedTestAt = nowIso();
+      scheduleSave();
+      broadcastSnapshot();
+      return sendJson(res, 202, { probe: publicProbe(probe) });
+    }
+
     if (req.method === "POST" && parts[3] === "update") {
       const result = createProbeUpdateRequest(probe, session.user.name || session.user.email || "Administrador");
       if (result.error) return sendJson(res, result.status || 400, { error: result.error });

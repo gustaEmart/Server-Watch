@@ -22,6 +22,9 @@ COPY ws ./ws
 COPY scripts ./scripts
 COPY probe ./probe
 COPY tools/probe/install-linux.sh ./tools/probe/install-linux.sh
+COPY tools/probe/Install-Probe-Headless.ps1 ./tools/probe/Install-Probe-Headless.ps1
+COPY tools/probe/install-network-probe-linux.sh ./tools/probe/install-network-probe-linux.sh
+COPY tools/probe/Install-NetworkProbeCollector-Headless.ps1 ./tools/probe/Install-NetworkProbeCollector-Headless.ps1
 COPY tools/linkprobe/install-linux.sh ./tools/linkprobe/install-linux.sh
 
 RUN mkdir -p /app/data /app/downloads && chown -R node:node /app

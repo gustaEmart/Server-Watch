@@ -1112,7 +1112,8 @@ button {
   position: absolute;
   top: calc(100% + 8px);
   left: 0;
-  width: min(720px, calc(100vw - 48px));
+  z-index: 50;
+  width: min(360px, calc(100vw - 48px));
   display: grid;
   gap: 14px;
   padding: 14px;
@@ -1271,6 +1272,7 @@ button {
 .filter-actions {
   display: flex;
   justify-content: flex-end;
+  gap: 8px;
 }
 
 .segmented {
@@ -3121,6 +3123,17 @@ textarea:focus {
   text-align: right;
 }
 
+.proxmox-dialog-row > div:first-child {
+  min-width: 0;
+}
+
+.proxmox-dialog-row strong,
+.proxmox-dialog-row small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 [data-backup-errors-trigger],
 [data-offline-trigger] {
   cursor: pointer;
@@ -3639,6 +3652,7 @@ textarea:focus {
 
 .install-guide-tabs {
   display: inline-flex;
+  flex-wrap: wrap;
   width: fit-content;
   max-width: 100%;
   gap: 4px;
@@ -3757,6 +3771,17 @@ textarea:focus {
 
 .guide-card li + li {
   margin-top: 6px;
+}
+
+.guide-card ul {
+  margin: 6px 0 0;
+  padding-left: 18px;
+  color: var(--muted);
+  line-height: 1.4;
+}
+
+.guide-card ul li + li {
+  margin-top: 3px;
 }
 
 .guide-card code {
@@ -5235,6 +5260,31 @@ textarea::placeholder {
   border-color: var(--border-muted);
 }
 
+.network-interface-checklist {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 8px;
+  max-height: 260px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.network-interface-checklist .toggle-row {
+  padding: 8px 10px;
+  align-items: flex-start;
+}
+
+/* input,select,textarea global reset forca width:100%/min-height:40px,
+   pensado pra campos de texto — sem isso a checkbox nativa vira um quadrado
+   gigante quando o rotulo da interface quebra em varias linhas. */
+.network-interface-checklist .toggle-row input[type="checkbox"] {
+  width: 16px;
+  min-height: 0;
+  height: 16px;
+  flex: 0 0 auto;
+  margin-top: 2px;
+}
+
 .brand-preview,
 .theme-option,
 .toggle-row {
@@ -5995,9 +6045,273 @@ body {
   gap: var(--simple-gap);
 }
 
+.noc-dashboard {
+  display: grid;
+  gap: 14px;
+}
+
+.noc-alert-ticker {
+  min-height: 38px;
+  display: flex;
+  gap: 18px;
+  align-items: center;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--color-danger) 24%, var(--border-muted));
+  border-radius: 8px;
+  padding: 0 14px;
+  background: color-mix(in srgb, var(--color-danger-subtle) 34%, var(--bg-surface));
+  color: color-mix(in srgb, var(--color-danger) 82%, var(--text-primary));
+  font-size: 0.82rem;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.noc-alert-ticker span {
+  position: relative;
+  flex: 0 0 auto;
+}
+
+.noc-alert-ticker span + span::before {
+  content: "";
+  position: absolute;
+  left: -11px;
+  top: 50%;
+  width: 4px;
+  height: 4px;
+  border-radius: 999px;
+  background: currentColor;
+  opacity: 0.55;
+  transform: translateY(-50%);
+}
+
+.noc-kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.noc-kpi-grid article {
+  min-width: 0;
+  border: 1px solid var(--border-default);
+  border-radius: 8px;
+  padding: 14px;
+  background: var(--bg-surface);
+}
+
+.noc-kpi-grid span,
+.noc-kpi-grid small {
+  display: block;
+  color: var(--text-secondary);
+}
+
+.noc-kpi-grid span {
+  font-size: 0.72rem;
+  font-weight: 900;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.noc-kpi-grid strong {
+  display: block;
+  margin-top: 8px;
+  color: var(--text-primary);
+  font-size: clamp(1.35rem, 1.9vw, 1.95rem);
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+.noc-kpi-grid strong b {
+  color: var(--color-success);
+}
+
+.noc-kpi-grid article.danger strong,
+.noc-kpi-grid article.danger strong b {
+  color: var(--color-danger);
+}
+
+.noc-kpi-grid article.success strong,
+.noc-kpi-grid article.success strong b {
+  color: var(--color-success);
+}
+
+.noc-kpi-grid small {
+  margin-top: 5px;
+  font-size: 0.78rem;
+}
+
+.noc-table-panel {
+  overflow: hidden;
+  border: 1px solid var(--border-default);
+  border-radius: 8px;
+  background: var(--bg-surface);
+}
+
+.noc-table-header,
+.noc-company-row {
+  display: grid;
+  grid-template-columns: minmax(240px, 1.45fr) minmax(110px, 0.7fr) minmax(100px, 0.65fr) minmax(100px, 0.65fr) minmax(110px, 0.75fr) minmax(120px, 0.75fr);
+  gap: 14px;
+  align-items: center;
+}
+
+.noc-table-header {
+  min-height: 42px;
+  border-bottom: 1px solid var(--border-muted);
+  padding: 0 14px;
+  color: var(--text-tertiary);
+  font-size: 0.68rem;
+  font-weight: 900;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.noc-sortable {
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+  border-radius: 4px;
+  transition: color 0.12s ease;
+}
+
+.noc-sortable:hover {
+  color: var(--text-primary);
+}
+
+.noc-sortable.active {
+  color: var(--text-primary);
+}
+
+.noc-table-body {
+  display: grid;
+  max-height: none;
+  overflow-y: visible;
+  padding: 6px;
+}
+
+.noc-company-row {
+  width: 100%;
+  min-height: 52px;
+  border: 0;
+  border-radius: 7px;
+  padding: 8px;
+  background: transparent;
+  color: var(--text-primary);
+  text-align: left;
+  cursor: pointer;
+}
+
+.noc-company-row:nth-child(even) {
+  background: color-mix(in srgb, var(--bg-elevated) 54%, transparent);
+}
+
+.noc-company-row:hover,
+.noc-company-row:focus-visible {
+  background: var(--selected-bg);
+  outline: none;
+}
+
+.noc-company-name {
+  display: grid;
+  grid-template-columns: 10px minmax(0, auto) minmax(0, 1fr);
+  gap: 8px;
+  align-items: center;
+  min-width: 0;
+}
+
+.noc-company-name strong,
+.noc-company-name small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.noc-company-name small {
+  color: var(--text-secondary);
+}
+
+.noc-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: var(--color-success);
+  box-shadow: 0 0 0 5px color-mix(in srgb, var(--color-success) 12%, transparent);
+}
+
+.noc-dot.warning {
+  background: var(--color-warning);
+  box-shadow: 0 0 0 5px color-mix(in srgb, var(--color-warning) 12%, transparent);
+}
+
+.noc-dot.danger {
+  background: var(--color-danger);
+  box-shadow: 0 0 0 5px color-mix(in srgb, var(--color-danger) 14%, transparent);
+}
+
+.noc-number,
+.noc-activity,
+.noc-muted {
+  color: var(--text-secondary);
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+
+.noc-number.danger {
+  color: var(--color-danger);
+}
+
+.noc-number.warning {
+  color: var(--color-warning);
+}
+
+.noc-status {
+  display: inline-flex;
+  width: fit-content;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  padding: 4px 8px;
+  font-size: 0.7rem;
+  font-weight: 900;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.noc-status.success {
+  background: var(--color-success-subtle);
+  color: var(--color-success);
+}
+
+.noc-status.warning {
+  background: var(--color-warning-subtle);
+  color: var(--color-warning);
+}
+
+.noc-status.danger {
+  background: var(--color-danger-subtle);
+  color: var(--color-danger);
+}
+
+.noc-status.muted {
+  background: var(--bg-elevated);
+  color: var(--text-secondary);
+}
+
 .dashboard-scope-bar {
   display: grid;
   grid-template-columns: minmax(240px, 1fr) auto;
+  gap: 14px;
+  align-items: center;
+  margin-bottom: 14px;
+  border: 1px solid var(--border-default);
+  border-radius: 8px;
+  padding: 14px;
+  background: var(--bg-surface);
+}
+
+.dashboard-mode-bar {
+  display: grid;
+  grid-template-columns: minmax(260px, 1fr) auto;
   gap: 14px;
   align-items: center;
   margin-bottom: 14px;
@@ -6032,6 +6346,17 @@ body {
   min-width: 0;
 }
 
+.dashboard-mode-toggle {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  justify-content: flex-end;
+  border: 1px solid var(--border-muted);
+  border-radius: 999px;
+  padding: 4px;
+  background: var(--bg-base);
+}
+
 .scope-chip,
 .company-scope-menu > summary {
   min-height: 36px;
@@ -6042,6 +6367,20 @@ body {
   color: var(--text-primary);
   font-weight: 800;
   cursor: pointer;
+}
+
+.dashboard-mode-toggle .scope-chip {
+  min-height: 32px;
+  border-color: transparent;
+  padding: 7px 12px;
+  background: transparent;
+  color: var(--text-secondary);
+}
+
+.dashboard-mode-toggle .scope-chip.active {
+  background: var(--selected-bg);
+  color: var(--text-primary);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-accent) 34%, transparent);
 }
 
 .scope-chip:hover,
@@ -6845,6 +7184,12 @@ body {
   scrollbar-width: thin;
 }
 
+.noc-table-body.simple-scroll-list {
+  max-height: none;
+  overflow-y: visible;
+  padding-right: 6px;
+}
+
 .simple-chart-card .simple-scroll-list {
   max-height: 120px;
 }
@@ -7088,6 +7433,32 @@ body {
     grid-template-columns: 1fr;
   }
 
+  .dashboard-mode-bar {
+    grid-template-columns: 1fr;
+  }
+
+  .dashboard-mode-toggle {
+    justify-content: flex-start;
+    width: fit-content;
+  }
+
+  .noc-kpi-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .noc-kpi-grid > :nth-last-child(1):nth-child(odd) {
+    grid-column: 1 / -1;
+  }
+
+  .noc-table-panel {
+    overflow-x: auto;
+  }
+
+  .noc-table-header,
+  .noc-company-row {
+    min-width: 860px;
+  }
+
   .dashboard-scope-bar {
     grid-template-columns: 1fr;
   }
@@ -7136,6 +7507,25 @@ body {
     grid-template-columns: 1fr 1fr;
   }
 
+  /* Quando o total de cartoes e impar (ex.: 5), o ultimo fica sozinho na
+     ultima linha de uma grade de 2 colunas — em vez de deixa-lo esticado ou
+     desalinhado, ele ocupa a linha inteira, como um destaque proposital. */
+  .simple-kpi-row > :nth-last-child(1):nth-child(odd) {
+    grid-column: 1 / -1;
+  }
+
+  .noc-kpi-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .dashboard-mode-toggle {
+    width: 100%;
+  }
+
+  .dashboard-mode-toggle .scope-chip {
+    flex: 1;
+  }
+
   .simple-failure-chart {
     gap: 4px;
   }
@@ -7146,20 +7536,23 @@ body {
 }
 
 /* Network monitoring */
-#networksView #networkConnectivityView > .wide-panel,
-#networksView #networkUnifiView > .wide-panel {
-  background: var(--surface-muted);
-}
-
 .provider-toggle {
   margin-bottom: 14px;
+}
+
+.network-dashboard {
+  --simple-gap: 14px;
+  --simple-panel-pad: 14px;
+  background: transparent;
+  border: 0;
+  padding: 0;
 }
 
 .network-summary-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 12px;
-  margin-bottom: 14px;
+  margin: 0;
 }
 
 .network-summary-card {
@@ -7167,12 +7560,12 @@ body {
   min-height: 106px;
   border: 1px solid var(--border-default);
   border-radius: 8px;
-  background: var(--bg-elevated);
+  background: var(--bg-surface);
   padding: 14px 16px;
   display: grid;
   gap: 5px;
   overflow: hidden;
-  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--text-primary) 4%, transparent);
+  box-shadow: none;
 }
 
 .network-summary-card span,
@@ -7241,9 +7634,41 @@ body {
   height: 38px;
 }
 
+#groupContractsList {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.group-contract-input-row {
+  display: grid;
+  grid-template-columns: minmax(160px, 1.1fr) minmax(140px, 0.8fr) minmax(140px, 0.8fr) auto;
+  gap: 10px;
+  align-items: end;
+  padding: 10px;
+  border: 1px solid var(--border-muted);
+  border-radius: 8px;
+  background: var(--bg-elevated);
+}
+
+.group-contract-remove {
+  width: 38px;
+  height: 38px;
+}
+
+.group-card .company-contract-tag.expiring {
+  border-color: color-mix(in srgb, var(--color-warning) 48%, var(--border-muted));
+  color: var(--color-warning);
+}
+
+.group-card .company-contract-tag.expired {
+  border-color: color-mix(in srgb, var(--color-danger) 48%, var(--border-muted));
+  color: var(--color-danger);
+}
+
 .network-layout {
   display: grid;
-  grid-template-columns: minmax(360px, 0.95fr) minmax(520px, 1.35fr);
+  grid-template-columns: minmax(400px, 1.1fr) minmax(460px, 1fr);
   gap: 14px;
   align-items: stretch;
   min-height: 0;
@@ -7274,7 +7699,6 @@ body {
   gap: 8px;
 }
 
-.network-link-list,
 .network-company-items,
 .network-company-detail-list,
 .network-target-list,
@@ -7285,6 +7709,14 @@ body {
   overscroll-behavior: contain;
   scrollbar-width: thin;
   scrollbar-gutter: stable;
+}
+
+/* .network-link-list fica dentro de .network-list-panel, que ja rola
+   sozinho (max-height: calc(100vh - 222px) acima) — um max-height fixo de
+   420px aqui limitava a lista bem antes de usar o espaco vertical
+   disponivel na tela, mesmo com poucos clientes/dispositivos cadastrados. */
+.network-link-list {
+  padding-right: 4px;
 }
 
 .network-target-list {
@@ -7416,6 +7848,21 @@ body {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.network-link-active-badge {
+  display: inline-block;
+  margin-left: 6px;
+  border-radius: 999px;
+  background: var(--color-success);
+  color: #ffffff;
+  font-size: 0.65rem;
+  font-style: normal;
+  font-weight: 900;
+  letter-spacing: 0.04em;
+  line-height: 1;
+  padding: 3px 7px;
+  vertical-align: middle;
 }
 
 .network-link-row small {
@@ -7621,6 +8068,14 @@ body {
     width: 100%;
   }
 
+  .group-contract-input-row {
+    grid-template-columns: 1fr;
+  }
+
+  .group-contract-remove {
+    width: 100%;
+  }
+
   .network-target-card {
     grid-template-columns: 1fr;
   }
@@ -7822,21 +8277,99 @@ body {
   min-width: 0;
 }
 
+.proxmox-dashboard {
+  background: transparent;
+  border: 0;
+  padding: 0;
+}
+
+.proxmox-dashboard-title {
+  margin-bottom: -2px;
+}
+
 .proxmox-kpi-row {
   gap: 12px;
 }
 
-.proxmox-kpi-row article {
-  min-height: 106px;
-  padding: 14px;
+.proxmox-kpi-row article,
+.proxmox-kpi-card {
+  display: grid;
+  align-content: center;
+  min-height: 96px;
+  padding: var(--simple-panel-pad);
   border-color: var(--border-default);
-  background: var(--bg-elevated);
-  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--text-primary) 4%, transparent);
+  background: var(--bg-surface);
+  box-shadow: none;
 }
 
-.proxmox-kpi-row small {
+.proxmox-kpi-card {
+  width: 100%;
+  border: 1px solid var(--border-default);
+  border-radius: 8px;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+
+.proxmox-kpi-card:disabled {
+  cursor: default;
+}
+
+.proxmox-kpi-card:not(:disabled):hover,
+.proxmox-kpi-card.active {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent-soft) 24%, var(--bg-surface));
+}
+
+.proxmox-kpi-card span {
+  display: block;
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+  font-weight: 800;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+
+.proxmox-kpi-card strong {
+  display: block;
+  margin-top: 4px;
+  color: var(--text-primary);
+  font-size: 1.8rem;
+  line-height: 1;
+}
+
+.proxmox-kpi-card.success strong { color: var(--color-success); }
+.proxmox-kpi-card.warning strong { color: var(--color-warning); }
+.proxmox-kpi-card.danger strong { color: var(--color-danger); }
+
+.proxmox-kpi-row small,
+.proxmox-kpi-card small {
   display: block;
   margin-top: 7px;
+}
+
+.pbs-rate-card {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.pbs-rate-card .availability-gauge {
+  min-width: 124px;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+}
+
+.pbs-rate-card .availability-gauge svg {
+  width: 114px;
+  height: 74px;
+}
+
+.pbs-rate-card .availability-gauge strong {
+  font-size: 1.6rem;
 }
 
 .proxmox-groups-list {
@@ -7904,8 +8437,8 @@ body {
 }
 
 .proxmox-company-items {
-  display: grid;
-  align-content: start;
+  display: flex;
+  flex-direction: column;
   gap: 8px;
   min-height: 0;
   overflow-y: auto;
@@ -7917,6 +8450,7 @@ body {
 .proxmox-backup-row,
 .proxmox-namespace-row {
   min-width: 0;
+  flex-shrink: 0;
   border: 1px solid var(--border-muted);
   border-radius: 8px;
   background: var(--bg-surface);
@@ -7924,10 +8458,21 @@ body {
 }
 
 .proxmox-backup-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.proxmox-backup-row-top,
+.proxmox-backup-row-bottom {
+  display: flex;
   align-items: center;
-  gap: 8px 10px;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.proxmox-backup-row-top {
+  min-width: 0;
 }
 
 .proxmox-company-items > :nth-child(odd) {
@@ -7950,6 +8495,7 @@ body {
 
 .proxmox-backup-identity {
   min-width: 0;
+  flex: 1;
 }
 
 .proxmox-backup-identity strong,
@@ -7984,7 +8530,6 @@ body {
 }
 
 .proxmox-backup-row select.compact-select {
-  justify-self: end;
   width: 100%;
   max-width: 190px;
 }
@@ -8038,11 +8583,59 @@ body {
 
 .proxmox-capacity-grid {
   margin: 0;
+  grid-template-columns: 1fr;
 }
 
 .proxmox-capacity-grid .detail-stat {
   border-color: var(--border-default);
   background: var(--bg-elevated);
+  min-height: 96px;
+  gap: 7px;
+}
+
+.detail-stat .pbs-storage-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 0;
+}
+
+.detail-stat .pbs-storage-trend {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 20px;
+  width: auto;
+  max-width: max-content;
+  padding: 2px 6px;
+  border-radius: 6px;
+  border: 1px solid transparent;
+  color: var(--text-secondary);
+  background: var(--chip-bg);
+  font-size: 0.7rem;
+  font-weight: 900;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.detail-stat .pbs-storage-trend.increase {
+  color: var(--color-warning);
+  background: var(--color-warning-subtle);
+  border-color: color-mix(in srgb, var(--color-warning) 30%, transparent);
+}
+
+.detail-stat .pbs-storage-trend.decrease {
+  color: var(--color-success);
+  background: var(--color-success-subtle);
+  border-color: color-mix(in srgb, var(--color-success) 28%, transparent);
+}
+
+.detail-stat .pbs-storage-trend.neutral {
+  color: var(--text-secondary);
+  background: color-mix(in srgb, var(--bg-muted) 82%, transparent);
+  border-color: var(--border-muted);
 }
 
 @media (max-width: 1180px) {
@@ -8104,15 +8697,14 @@ body {
   min-height: 106px;
   padding: 14px;
   border-color: var(--border-default);
-  background: var(--bg-elevated);
+  background: var(--bg-surface);
   overflow: hidden;
-  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--text-primary) 4%, transparent);
+  box-shadow: none;
 }
 
 .unifi-sites-list {
-  display: grid;
-  grid-template-columns: 1fr;
-  align-items: stretch;
+  display: flex;
+  flex-direction: column;
   gap: 10px;
   max-height: 660px;
   overflow-y: auto;
@@ -8126,10 +8718,16 @@ body {
   width: 100%;
   min-width: 0;
   min-height: 70px;
+  flex: 0 0 auto;
   border: 1px solid var(--border-default);
   border-radius: 8px;
   background: var(--bg-surface);
   overflow: hidden;
+}
+
+.unifi-site-card:not(.is-expanded) .unifi-site-link,
+.unifi-site-card:not(.is-expanded) .unifi-device-list {
+  display: none;
 }
 
 .unifi-site-header {
@@ -8195,13 +8793,19 @@ body {
   display: inline-grid;
   flex: 0 0 auto;
   place-items: center;
-  width: 24px;
-  height: 24px;
+  width: 26px;
+  height: 26px;
   margin-top: 1px;
-  border: 1px solid var(--border-muted);
-  border-radius: 6px;
-  background: var(--chip-bg);
-  color: var(--text-secondary);
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--surface-muted);
+  color: var(--text);
+  transition: background 0.16s ease, border-color 0.16s ease, color 0.16s ease;
+}
+
+.unifi-site-header:hover .unifi-site-arrow {
+  border-color: var(--accent);
+  background: var(--accent-soft);
 }
 
 .unifi-site-arrow::before {
@@ -8212,7 +8816,11 @@ body {
   border-bottom: 5px solid transparent;
   border-left: 6px solid currentColor;
   transform: translateX(1px);
-  transition: transform 140ms ease;
+  transition: transform 0.16s ease;
+}
+
+.unifi-site-card.is-expanded .unifi-site-arrow {
+  color: var(--accent);
 }
 
 .unifi-site-card.is-expanded .unifi-site-arrow::before {
@@ -8279,6 +8887,25 @@ body {
   background: var(--bg-elevated);
   overflow: hidden;
   box-shadow: inset 0 1px 0 color-mix(in srgb, var(--text-primary) 3%, transparent);
+}
+
+/* .unifi-device-row eh um grid de 3 colunas fixas (dot/identity/status +
+   metrics) sem coluna reservada pra toggle — o toggle de expandir/colapsar
+   interfaces (so existe na lista de Redes) fica posicionado absoluto pra nao
+   entrar no fluxo do grid e nao colidir com o status-dot. Escopado a
+   #networkLinksList pra nao afetar a lista de dispositivos UniFi, que
+   reaproveita a mesma classe sem toggle. */
+#networkLinksList .unifi-device-row {
+  position: relative;
+  padding-left: 30px;
+}
+
+#networkLinksList .unifi-device-row .topology-toggle,
+#networkLinksList .unifi-device-row .topology-spacer {
+  position: absolute;
+  left: 8px;
+  top: 50%;
+  transform: translateY(-50%);
 }
 
 .unifi-device-list > .unifi-device-row:nth-child(odd) {
@@ -8407,6 +9034,32 @@ body {
   color: var(--text-primary);
 }
 
+.network-discovery-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+  padding: 10px 14px;
+  border-radius: 8px;
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--border-default));
+  background: color-mix(in srgb, var(--accent) 8%, var(--bg-elevated));
+}
+
+.network-discovery-banner strong {
+  display: block;
+  font-size: 0.88rem;
+}
+
+.network-discovery-banner small {
+  color: var(--text-secondary);
+  font-size: 0.78rem;
+}
+
+.network-discovery-banner + .network-discovery-banner {
+  margin-top: -4px;
+}
+
 @media (max-width: 1180px) {
   .unifi-kpi-row {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -8435,6 +9088,1248 @@ body {
   }
 
   .unifi-site-link {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ── Metrics History ─────────────────────────────────────── */
+.metrics-history-section {
+  margin-top: 10px;
+}
+
+.server-warnings-section {
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border-muted);
+}
+
+.server-warnings-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.server-warning-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  font-size: 0.82rem;
+  line-height: 1.35;
+  background: var(--bg-overlay);
+  border: 1px solid var(--border-muted);
+  color: var(--text-secondary);
+}
+
+.server-warning-row.danger {
+  background: var(--color-danger-subtle);
+  border-color: var(--color-danger);
+  color: var(--color-danger);
+}
+
+.server-warning-row.warning {
+  background: var(--color-warning-subtle);
+  border-color: var(--color-warning);
+  color: var(--color-warning);
+}
+
+.server-warning-row.info {
+  background: var(--bg-overlay);
+  border-color: var(--border-default);
+  color: var(--text-secondary);
+}
+
+.server-warning-row.muted {
+  background: transparent;
+  border-style: dashed;
+  color: var(--text-muted);
+}
+
+.server-warning-icon {
+  flex-shrink: 0;
+  font-size: 0.9rem;
+  line-height: 1.35;
+}
+
+.metrics-history-toggle {
+  width: 100%;
+  justify-content: center;
+  gap: 6px;
+  font-size: 0.82rem;
+  color: var(--text-muted);
+  border: 1px dashed var(--border-muted);
+  background: transparent;
+  transition: color 0.15s ease, border-color 0.15s ease, background 0.15s ease;
+}
+
+.metrics-history-toggle::before {
+  content: "▶";
+  font-size: 0.65rem;
+  transition: transform 0.15s ease;
+  display: inline-block;
+}
+
+.metrics-history-toggle.active {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.metrics-history-toggle.active::before {
+  transform: rotate(90deg);
+}
+
+.metrics-history-body {
+  margin-top: 10px;
+}
+
+.metrics-history-tabs {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.mh-type-tabs,
+.mh-range-tabs {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.mh-type-tab,
+.mh-range-tab {
+  padding: 3px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--border-muted);
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  cursor: pointer;
+  transition: border-color 0.14s ease, color 0.14s ease, background 0.14s ease;
+}
+
+.mh-type-tab:hover,
+.mh-range-tab:hover {
+  border-color: var(--border-default);
+  color: var(--text);
+}
+
+.mh-type-tab.active,
+.mh-range-tab.active {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.metrics-charts-area {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.metrics-chart-row {
+  display: grid;
+  grid-template-rows: auto 1fr;
+  gap: 4px;
+}
+
+.metrics-chart-meta {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 0.78rem;
+}
+
+.metrics-chart-label {
+  color: var(--text-muted);
+  flex: 1;
+}
+
+.metrics-chart-current {
+  font-weight: 600;
+  color: var(--text);
+}
+
+.metrics-chart-trend {
+  font-size: 0.72rem;
+  padding: 1px 6px;
+  border-radius: 4px;
+}
+
+.metrics-chart-trend.trend-up {
+  color: #e05252;
+  background: rgba(224, 82, 82, 0.1);
+}
+
+.metrics-chart-trend.trend-down {
+  color: #3fba74;
+  background: rgba(63, 186, 116, 0.1);
+}
+
+.metrics-chart-trend.trend-flat {
+  color: var(--text-muted);
+  background: var(--surface-muted);
+}
+
+.metrics-chart-wrap {
+  position: relative;
+}
+
+.metrics-chart-svg {
+  width: 100%;
+  height: 56px;
+  display: block;
+  border-radius: 4px;
+  background: var(--bg-elevated);
+  overflow: visible;
+  cursor: crosshair;
+}
+
+.metrics-chart-guide-line {
+  stroke: var(--text-muted);
+  stroke-width: 1;
+  stroke-dasharray: 3 3;
+  pointer-events: none;
+}
+
+.metrics-chart-tooltip {
+  position: fixed;
+  z-index: 1200;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--border-default);
+  background: var(--bg-elevated);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+  pointer-events: none;
+  white-space: nowrap;
+}
+
+.metrics-chart-tooltip strong {
+  font-size: 0.88rem;
+  color: var(--text-primary);
+}
+
+.metrics-chart-tooltip span {
+  font-size: 0.72rem;
+  color: var(--text-secondary);
+}
+
+.metrics-chart-empty {
+  font-size: 0.82rem;
+  color: var(--text-muted);
+  padding: 12px 0;
+  text-align: center;
+}
+
+/* UI polish pass - shared interaction, rhythm and surface system */
+:root {
+  --focus-ring: rgba(31, 111, 235, 0.42);
+  --surface-interactive: color-mix(in srgb, var(--bg-surface) 88%, var(--bg-elevated));
+  --surface-interactive-hover: color-mix(in srgb, var(--bg-elevated) 72%, var(--accent-soft));
+  --surface-pressed: color-mix(in srgb, var(--bg-elevated) 64%, var(--accent-soft));
+  --shadow-soft: 0 14px 34px rgba(15, 23, 42, 0.12);
+  --shadow-popover: 0 24px 64px rgba(15, 23, 42, 0.24);
+  --motion-fast: 140ms;
+  --motion-base: 180ms;
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+:root[data-theme="dark"] {
+  --focus-ring: rgba(88, 166, 255, 0.42);
+  --surface-interactive: color-mix(in srgb, var(--bg-surface) 88%, #253041);
+  --surface-interactive-hover: color-mix(in srgb, var(--bg-elevated) 76%, var(--accent-soft));
+  --surface-pressed: color-mix(in srgb, var(--bg-elevated) 60%, var(--accent-soft));
+  --shadow-soft: 0 16px 36px rgba(0, 0, 0, 0.22);
+  --shadow-popover: 0 26px 70px rgba(0, 0, 0, 0.36);
+}
+
+html {
+  scrollbar-gutter: stable;
+}
+
+body {
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+.view.active {
+  animation: sw-view-enter var(--motion-base) var(--ease-out);
+}
+
+@keyframes sw-view-enter {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.primary-button,
+.ghost-button,
+.danger-button,
+.icon-button,
+.nav-tab,
+.provider-segment,
+.scope-chip,
+.metric-card,
+.simple-kpi,
+.simple-panel,
+.network-summary-card,
+.network-company-section,
+.network-company-detail-row,
+.network-link-row,
+.network-target-card,
+.unifi-site-card,
+.unifi-device-row,
+.proxmox-kpi-card,
+.proxmox-company-section,
+.proxmox-backup-row,
+.server-directory-item,
+.company-summary-card,
+.company-detail-machine,
+.probe-card,
+.backup-job-row,
+.backup-client-item {
+  transition:
+    background-color var(--motion-fast) var(--ease-out),
+    border-color var(--motion-fast) var(--ease-out),
+    color var(--motion-fast) var(--ease-out),
+    box-shadow var(--motion-fast) var(--ease-out),
+    transform var(--motion-fast) var(--ease-out);
+}
+
+.primary-button:hover,
+.ghost-button:hover,
+.danger-button:hover,
+.icon-button:hover,
+.provider-segment:hover,
+.scope-chip:hover,
+.server-directory-item:hover,
+.network-link-row:hover,
+.network-company-header:hover,
+.network-company-detail-row:hover,
+.unifi-site-header:hover,
+.unifi-device-row:hover,
+.proxmox-kpi-card:not(:disabled):hover,
+.proxmox-backup-row:hover,
+.company-summary-card:hover,
+.backup-client-item:hover,
+.backup-job-row:hover {
+  transform: translateY(-1px);
+}
+
+.primary-button:active,
+.ghost-button:active,
+.danger-button:active,
+.icon-button:active,
+.provider-segment:active,
+.scope-chip:active,
+.server-directory-item:active,
+.network-link-row:active,
+.network-company-header:active,
+.network-company-detail-row:active,
+.unifi-site-header:active,
+.unifi-device-row:active,
+.proxmox-kpi-card:not(:disabled):active,
+.proxmox-backup-row:active,
+.backup-client-item:active,
+.backup-job-row:active {
+  transform: translateY(0) scale(0.992);
+}
+
+button:focus-visible,
+a:focus-visible,
+summary:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+.nav-tab:focus-visible,
+.provider-segment:focus-visible,
+.scope-chip:focus-visible,
+.server-directory-item:focus-visible,
+.network-company-header:focus-visible,
+.network-link-row:focus-visible,
+.unifi-site-header:focus-visible,
+.proxmox-kpi-card:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+input,
+select,
+textarea {
+  transition:
+    border-color var(--motion-fast) var(--ease-out),
+    box-shadow var(--motion-fast) var(--ease-out),
+    background-color var(--motion-fast) var(--ease-out);
+}
+
+.ghost-button,
+.icon-button,
+.provider-segment,
+.scope-chip {
+  background: var(--surface-interactive);
+}
+
+.ghost-button:hover,
+.icon-button:hover,
+.provider-segment:hover,
+.scope-chip:hover {
+  background: var(--surface-interactive-hover);
+}
+
+.primary-button {
+  box-shadow: 0 10px 22px color-mix(in srgb, var(--accent) 18%, transparent);
+}
+
+.status-badge,
+.pill,
+.chip,
+.scope-chip,
+.latency-pill {
+  min-height: 24px;
+  max-width: 100%;
+  align-items: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-variant-numeric: tabular-nums;
+}
+
+.simple-dashboard,
+.network-dashboard,
+.proxmox-dashboard {
+  gap: var(--simple-gap, 14px);
+}
+
+.network-dashboard,
+.proxmox-dashboard {
+  background: transparent !important;
+  border: 0 !important;
+  box-shadow: none !important;
+  padding: 0 !important;
+}
+
+.metric-card,
+.simple-kpi,
+.simple-panel,
+.network-summary-card,
+.network-list-panel,
+.network-detail-panel,
+.server-directory-panel,
+.server-profile-panel,
+.wide-panel,
+.probe-token-panel,
+.probe-list-panel,
+.integration-card,
+.admin-card,
+.backup-sync-bar,
+.unifi-site-card,
+.proxmox-company-section {
+  box-shadow: none;
+}
+
+.network-summary-card,
+.network-list-panel,
+.network-detail-panel,
+.unifi-site-card,
+.unifi-device-row,
+.proxmox-kpi-card,
+.proxmox-company-section,
+.proxmox-backup-row,
+.server-directory-panel,
+.server-profile-panel {
+  background: var(--bg-surface);
+  border-color: var(--border-default);
+}
+
+.metric-card:hover,
+.simple-kpi:hover,
+.simple-panel:hover,
+.network-summary-card:hover,
+.network-company-section:hover,
+.unifi-site-card:hover,
+.proxmox-company-section:hover {
+  border-color: color-mix(in srgb, var(--border-strong) 72%, var(--accent));
+}
+
+.notification-panel,
+.filter-panel,
+.company-scope-panel,
+.dialog-shell,
+.server-dialog-card,
+.context-menu,
+.popover-panel {
+  background: var(--bg-surface);
+  border-color: var(--border-default);
+  box-shadow: var(--shadow-popover);
+  animation: sw-popover-in var(--motion-base) var(--ease-out);
+}
+
+.server-dialog::backdrop,
+dialog::backdrop {
+  background: rgba(5, 10, 18, 0.58);
+  backdrop-filter: blur(4px);
+}
+
+@keyframes sw-popover-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.server-directory-list,
+.network-link-list,
+.network-company-items,
+.network-company-detail-list,
+.network-event-list,
+.unifi-sites-list,
+.unifi-device-list,
+.proxmox-company-items,
+.backup-jobs-list,
+.notification-list,
+.dialog-list,
+.simple-scroll-list {
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--text-muted) 48%, transparent) transparent;
+}
+
+.server-directory-list::-webkit-scrollbar,
+.network-link-list::-webkit-scrollbar,
+.network-company-items::-webkit-scrollbar,
+.network-company-detail-list::-webkit-scrollbar,
+.network-event-list::-webkit-scrollbar,
+.unifi-sites-list::-webkit-scrollbar,
+.unifi-device-list::-webkit-scrollbar,
+.proxmox-company-items::-webkit-scrollbar,
+.backup-jobs-list::-webkit-scrollbar,
+.notification-list::-webkit-scrollbar,
+.dialog-list::-webkit-scrollbar,
+.simple-scroll-list::-webkit-scrollbar {
+  width: 8px;
+}
+
+.server-directory-list::-webkit-scrollbar-thumb,
+.network-link-list::-webkit-scrollbar-thumb,
+.network-company-items::-webkit-scrollbar-thumb,
+.network-company-detail-list::-webkit-scrollbar-thumb,
+.network-event-list::-webkit-scrollbar-thumb,
+.unifi-sites-list::-webkit-scrollbar-thumb,
+.unifi-device-list::-webkit-scrollbar-thumb,
+.proxmox-company-items::-webkit-scrollbar-thumb,
+.backup-jobs-list::-webkit-scrollbar-thumb,
+.notification-list::-webkit-scrollbar-thumb,
+.dialog-list::-webkit-scrollbar-thumb,
+.simple-scroll-list::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--text-muted) 42%, transparent);
+  border-radius: 999px;
+}
+
+.network-company-header,
+.unifi-site-header {
+  cursor: pointer;
+  user-select: none;
+}
+
+.unifi-site-header {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr) minmax(120px, auto);
+  align-items: center;
+  gap: 12px;
+}
+
+.unifi-site-header > * {
+  pointer-events: none;
+}
+
+.unifi-site-counts {
+  min-width: 0;
+  max-width: 100%;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.unifi-site-arrow {
+  position: relative;
+  display: inline-grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  color: var(--text-secondary);
+  background: var(--surface-muted);
+}
+
+.unifi-site-arrow::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  border-right: 2px solid currentColor;
+  border-bottom: 2px solid currentColor;
+  transform: rotate(-45deg);
+  transition: transform var(--motion-fast) var(--ease-out);
+}
+
+.unifi-site-card.is-expanded .unifi-site-arrow::before {
+  transform: rotate(45deg);
+}
+
+.unifi-site-title,
+.unifi-device-main,
+.network-link-main,
+.network-company-title,
+.proxmox-backup-main,
+.backup-job-main {
+  min-width: 0;
+}
+
+.unifi-device-row,
+.network-link-row,
+.proxmox-backup-row,
+.backup-job-row {
+  min-height: 58px;
+}
+
+.unifi-device-row {
+  grid-template-columns: 10px minmax(0, 1fr) auto;
+}
+
+.unifi-device-metrics {
+  min-width: 0;
+  max-width: min(100%, 280px);
+  justify-content: flex-end;
+}
+
+.unifi-device-metrics span {
+  max-width: 96px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.network-link-row,
+.network-target-card,
+.unifi-device-row,
+.proxmox-backup-row {
+  background: color-mix(in srgb, var(--bg-surface) 88%, var(--bg-elevated));
+}
+
+.network-link-row.is-offline,
+.unifi-device-row.is-offline,
+.proxmox-backup-row.is-error,
+.backup-job-row.error {
+  background: color-mix(in srgb, var(--color-danger) 14%, var(--bg-surface));
+  border-color: color-mix(in srgb, var(--color-danger) 64%, var(--border-default));
+}
+
+.network-link-row.is-active,
+.network-target-card.active,
+.proxmox-backup-row.is-success,
+.backup-job-row.success {
+  background: color-mix(in srgb, var(--color-success) 12%, var(--bg-surface));
+  border-color: color-mix(in srgb, var(--color-success) 54%, var(--border-default));
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+    transition-duration: 0.001ms !important;
+  }
+}
+
+/* Final interface polish: keep surfaces quiet, readable, and consistent. */
+.sidebar {
+  gap: 20px;
+  padding-block: 20px;
+  scrollbar-width: none;
+}
+
+.sidebar::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+}
+
+.nav-tabs {
+  gap: 6px;
+}
+
+.nav-tabs .sidebar-section-title {
+  margin-top: 10px;
+  margin-bottom: 6px;
+}
+
+.nav-tab {
+  min-height: 40px;
+  padding-block: 10px;
+}
+
+.simple-hero::before,
+.server-profile-hero::before {
+  display: none !important;
+}
+
+.simple-hero,
+.simple-panel,
+.server-profile-hero,
+.server-profile-card,
+.profile-section,
+.network-summary-card,
+.network-list-panel,
+.network-detail-panel,
+.backup-profile-layout .server-profile-panel,
+.probe-token-panel,
+.probe-list-panel,
+.unifi-site-card,
+.proxmox-company-section,
+.proxmox-kpi-card {
+  border-top-width: 1px !important;
+  border-top-color: var(--border-default) !important;
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, var(--text-primary) 4%, transparent),
+    0 1px 0 rgba(0, 0, 0, 0.08);
+}
+
+.metric-card,
+.simple-kpi,
+.network-summary-card,
+.proxmox-kpi-card {
+  align-content: center;
+}
+
+.simple-network-row {
+  min-height: 56px;
+  height: auto;
+}
+
+.simple-network-row > *,
+.simple-network-row strong,
+.simple-network-row small {
+  min-width: 0;
+}
+
+.simple-network-row small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.simple-network-row em {
+  justify-self: end;
+}
+
+.probe-token-panel {
+  min-width: 0;
+}
+
+.token-control {
+  min-width: 0;
+}
+
+.token-control input,
+.install-command code {
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+.probe-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.install-command {
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+}
+
+.install-command-header {
+  min-width: 0;
+  max-width: 100%;
+  flex-wrap: wrap;
+  align-items: flex-start;
+}
+
+.install-command-header > div:first-child {
+  max-width: 100%;
+}
+
+.install-target-toggle {
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.install-command code {
+  width: 100%;
+  overflow-x: auto;
+  overflow-y: auto;
+  white-space: pre-wrap;
+}
+
+.token-control input {
+  width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.unifi-site-header {
+  min-height: 54px;
+}
+
+.unifi-site-header > * {
+  pointer-events: none;
+}
+
+.unifi-site-arrow {
+  position: relative;
+  display: inline-grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border: 1px solid var(--border-muted);
+  border-radius: 7px;
+  color: var(--text-secondary);
+  background: color-mix(in srgb, var(--bg-elevated) 86%, transparent);
+}
+
+.unifi-site-arrow::before {
+  content: "" !important;
+  width: 7px !important;
+  height: 7px !important;
+  border: 0 !important;
+  border-right: 2px solid currentColor !important;
+  border-bottom: 2px solid currentColor !important;
+  transform: rotate(-45deg) !important;
+  transition: transform var(--motion-fast) var(--ease-out), color var(--motion-fast) var(--ease-out);
+}
+
+.unifi-site-card.is-expanded .unifi-site-arrow::before {
+  transform: rotate(45deg) !important;
+}
+
+.unifi-site-card:hover .unifi-site-arrow,
+.unifi-site-card.is-expanded .unifi-site-arrow {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 58%, var(--border-muted));
+}
+
+.unifi-site-title strong,
+.network-company-title strong,
+.server-card-title,
+.backup-job-main strong,
+.proxmox-backup-main strong {
+  text-wrap: balance;
+}
+
+.network-detail-panel,
+.server-profile-panel,
+.backup-profile-layout .server-profile-panel {
+  scrollbar-gutter: stable;
+}
+
+.server-profile-panel,
+.network-detail-panel,
+.network-list-panel,
+.unifi-sites-list,
+.probes-list {
+  overscroll-behavior: contain;
+}
+
+.backup-profile-layout .backup-insight-grid {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr)) !important;
+}
+
+.backup-profile-layout .company-insight-card,
+.backup-profile-layout .panel-title.compact-title,
+.backup-profile-layout .simple-status-chart,
+.backup-profile-layout .company-mini-list,
+.backup-profile-layout .backup-detail-grid,
+.backup-profile-layout .profile-extra-list {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.backup-profile-layout .simple-status-chart {
+  grid-template-columns: 1fr;
+  justify-items: start;
+}
+
+.backup-profile-layout .simple-status-legend,
+.backup-profile-layout .company-mini-list button,
+.backup-profile-layout .profile-extra-list > * {
+  min-width: 0;
+}
+
+.alert-duration,
+.timeline-duration,
+.timeline-group-summary {
+  display: block;
+  margin-top: 2px;
+}
+
+.timeline-group-toggle {
+  display: inline-flex;
+  margin-top: 8px;
+}
+
+.timeline-group-body {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--border-muted);
+}
+
+.timeline-group-body .timeline-item {
+  background: var(--bg-elevated);
+}
+
+.alert-duration strong,
+.timeline-duration strong {
+  color: var(--color-warning, #e8a838);
+}
+
+.alert-card.alert-recovered .alert-duration strong {
+  color: var(--color-success, #3fba74);
+}
+
+/* Mobile readability pass: keep desktop intact while turning dense dashboard areas into scannable cards. */
+@media (max-width: 760px) {
+  html {
+    scroll-padding-top: 128px;
+  }
+
+  .app-shell {
+    display: block;
+  }
+
+  .sidebar {
+    position: sticky;
+    top: 0;
+    z-index: 50;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 12px;
+    height: auto;
+    max-height: none;
+    padding: 14px 14px 12px;
+    overflow: hidden;
+    border-bottom: 1px solid var(--border-default);
+    background:
+      linear-gradient(180deg, color-mix(in srgb, var(--bg-base) 96%, transparent), var(--bg-base)),
+      var(--sidebar-bg);
+  }
+
+  .brand {
+    gap: 10px;
+    min-width: 0;
+  }
+
+  .brand-mark {
+    width: 34px;
+    height: 34px;
+  }
+
+  .brand-name {
+    font-size: 0.98rem;
+  }
+
+  .brand span {
+    font-size: 0.8rem;
+  }
+
+  .nav-tabs {
+    display: flex;
+    gap: 8px;
+    margin: 0 -14px;
+    padding: 0 14px 4px;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: none;
+    scroll-snap-type: x proximity;
+  }
+
+  .nav-tabs::-webkit-scrollbar {
+    width: 0;
+    height: 0;
+  }
+
+  .nav-tabs .sidebar-section-title {
+    display: none;
+  }
+
+  .nav-tab {
+    flex: 0 0 auto;
+    min-height: 40px;
+    padding: 0 13px;
+    border: 1px solid var(--border-muted);
+    border-radius: 10px;
+    background: color-mix(in srgb, var(--bg-surface) 72%, transparent);
+    scroll-snap-align: start;
+    white-space: nowrap;
+  }
+
+  .nav-tab.active {
+    box-shadow:
+      inset 3px 0 0 var(--color-danger),
+      0 0 0 1px color-mix(in srgb, var(--color-accent) 22%, transparent);
+  }
+
+  .nav-tab:hover {
+    transform: none;
+  }
+
+  .connection-card {
+    width: 100%;
+    min-height: 42px;
+    margin: 0;
+    padding: 10px 12px;
+    border-radius: 10px;
+  }
+
+  .connection-card span {
+    font-size: 0.78rem;
+  }
+
+  .main-content {
+    padding: 14px;
+  }
+
+  .topbar {
+    gap: 14px;
+    margin-bottom: 14px;
+    padding: 14px;
+  }
+
+  .topbar h1 {
+    font-size: 1.35rem;
+    line-height: 1.14;
+    text-wrap: balance;
+  }
+
+  .topbar-actions {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+    gap: 8px;
+    align-items: stretch;
+  }
+
+  .notification-menu,
+  .notification-toggle,
+  .user-chip {
+    min-width: 0;
+    width: 100%;
+  }
+
+  .notification-toggle,
+  .user-chip,
+  #logoutButton {
+    min-height: 40px;
+    justify-content: center;
+  }
+
+  .notification-toggle span,
+  .user-chip {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .notification-panel {
+    position: fixed;
+    left: 14px;
+    right: 14px;
+    top: 126px;
+    width: auto;
+    max-height: min(72vh, 520px);
+    overflow-y: auto;
+  }
+
+  .dashboard-mode-bar {
+    gap: 12px;
+    margin-bottom: 14px;
+    padding: 14px;
+  }
+
+  .dashboard-scope-copy h2 {
+    font-size: 1.35rem;
+    line-height: 1.15;
+    text-wrap: balance;
+  }
+
+  .dashboard-scope-copy p {
+    font-size: 0.92rem;
+    line-height: 1.45;
+  }
+
+  .dashboard-mode-toggle {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    width: 100%;
+    border-radius: 12px;
+  }
+
+  .dashboard-mode-toggle .scope-chip {
+    min-width: 0;
+    min-height: 38px;
+    padding: 7px 8px;
+    border-radius: 9px;
+    font-size: 0.86rem;
+    line-height: 1.15;
+    text-align: center;
+    white-space: normal;
+  }
+
+  .noc-kpi-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+  }
+
+  .noc-kpi-grid > :nth-last-child(1):nth-child(odd) {
+    grid-column: 1 / -1;
+  }
+
+  .noc-kpi-grid article {
+    min-height: 106px;
+    padding: 13px;
+  }
+
+  .noc-kpi-grid span {
+    font-size: 0.66rem;
+  }
+
+  .noc-kpi-grid strong {
+    margin-top: 10px;
+    font-size: clamp(1.55rem, 10vw, 2rem);
+  }
+
+  .noc-table-panel {
+    overflow: visible;
+  }
+
+  .noc-table-header {
+    display: none;
+  }
+
+  .noc-table-body {
+    gap: 8px;
+    padding: 8px;
+  }
+
+  .noc-company-row {
+    min-width: 0;
+    min-height: 0;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+    align-items: stretch;
+    border: 1px solid var(--border-muted);
+    border-radius: 10px;
+    padding: 10px;
+    background: color-mix(in srgb, var(--bg-elevated) 56%, transparent);
+  }
+
+  .noc-company-row:hover,
+  .noc-company-row:focus-visible {
+    border-color: color-mix(in srgb, var(--color-accent) 52%, var(--border-muted));
+  }
+
+  .noc-company-name {
+    grid-column: 1 / -1;
+    grid-template-columns: 12px minmax(0, 1fr);
+    row-gap: 2px;
+    padding-bottom: 4px;
+  }
+
+  .noc-company-name strong {
+    font-size: 0.98rem;
+  }
+
+  .noc-company-name small {
+    grid-column: 2;
+    font-size: 0.78rem;
+  }
+
+  .noc-company-row > span:not(.noc-company-name) {
+    min-width: 0;
+    display: grid;
+    gap: 4px;
+    align-content: center;
+    justify-items: start;
+    min-height: 52px;
+    border: 1px solid var(--border-muted);
+    border-radius: 8px;
+    padding: 8px;
+    background: color-mix(in srgb, var(--bg-surface) 82%, transparent);
+    color: var(--text-primary);
+    font-size: 0.92rem;
+    font-weight: 900;
+  }
+
+  .noc-company-row > span:not(.noc-company-name)::before {
+    color: var(--text-tertiary);
+    font-size: 0.64rem;
+    font-weight: 900;
+    letter-spacing: 0.04em;
+    line-height: 1;
+    text-transform: uppercase;
+  }
+
+  .noc-company-row > span:nth-child(2)::before {
+    content: "Servidores";
+  }
+
+  .noc-company-row > span:nth-child(3)::before {
+    content: "Links";
+  }
+
+  .noc-company-row > span:nth-child(4)::before {
+    content: "UniFi";
+  }
+
+  .noc-company-row > span:nth-child(5)::before {
+    content: "Backups";
+  }
+
+  .noc-company-row > span:nth-child(6)::before {
+    content: "Alertas 24h";
+  }
+
+  .noc-status {
+    padding: 3px 7px;
+    font-size: 0.66rem;
+  }
+}
+
+@media (max-width: 420px) {
+  .topbar-actions {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  #logoutButton {
+    grid-column: 1 / -1;
+  }
+
+  .noc-kpi-grid {
     grid-template-columns: 1fr;
   }
 }

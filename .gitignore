@@ -10,3 +10,5 @@ downloads/node-v*-linux-*.tar.xz
 tools/probe/windows/dotnet-installer/assets/node.exe
 .codex_ssh/
 .serverwatch.pid
+tools/probe/windows/*/bin/
+tools/probe/windows/*/obj/

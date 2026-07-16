@@ -51,6 +51,27 @@ export function createNetworkHandler({
       if (req.method === "PUT" && parts.length === 4) {
         const payload = await readBody(req);
         Object.assign(device, normalizeDevice(payload, device), { updatedAt: nowIso() });
+        // Checklist de interfaces "reais" (WAN) no editor do dispositivo —
+        // controla quais links auto-criados pela descoberta SNMP aparecem na
+        // lista principal (featured) em vez de ficarem colapsados.
+        if (Array.isArray(payload.featuredSnmpIfIndexes)) {
+          const featuredSet = new Set(payload.featuredSnmpIfIndexes.map((value) => Number(value)));
+          for (const link of getLinks().filter((item) => item.networkDeviceId === device.id && item.snmpIfIndex != null)) {
+            link.featured = featuredSet.has(link.snmpIfIndex);
+            link.updatedAt = nowIso();
+          }
+        }
+        // Empresa do dispositivo eh a fonte da verdade pros links dele — so
+        // atualiza quem ainda nao tem empresa propria definida (nao sobrescreve
+        // uma escolha deliberada do admin de um link com empresa diferente).
+        // Sem isso, um link cujo dispositivo ainda nao tinha empresa no momento
+        // da descoberta SNMP ficava com groupId nulo pra sempre.
+        if (device.groupId) {
+          for (const link of getLinks().filter((item) => item.networkDeviceId === device.id && !item.groupId)) {
+            link.groupId = device.groupId;
+            link.updatedAt = nowIso();
+          }
+        }
         scheduleSave();
         broadcastSnapshot();
         return sendJson(res, 200, publicDevice(device));

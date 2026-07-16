@@ -157,7 +157,8 @@ export function emptyProxmoxBackupState() {
     fetchedAt: null,
     error: null,
     items: [],
-    datastores: []
+    datastores: [],
+    datastoreHistory: []
   };
 }
 

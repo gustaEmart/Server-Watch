@@ -1,6 +1,7 @@
 import { createServer } from "node:http";
 import { randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
+import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import os from "node:os";
 import { createAlertsHandler } from "./routes/alerts.js";
@@ -22,6 +23,7 @@ import { createAlertService } from "./services/alert.js";
 import { emptyCloudBackupState, fetchCloudBackupSummary } from "./services/cloudBackup.js";
 import { emptyProxmoxBackupState, fetchProxmoxBackupSummary, proxmoxItemStatus, normalizeMatchKey } from "./services/proxmoxBackup.js";
 import { emptyUnifiNetworkState, fetchUnifiNetworkSummary } from "./services/unifiNetwork.js";
+import { pollDevice } from "./probe/snmp/poller.js";
 import {
   clearSessionCookie,
   hashPassword,
@@ -39,6 +41,22 @@ const PORT = Number(process.env.PORT || 3000);
 const HOST = process.env.HOST || "0.0.0.0";
 const DATA_DIR = resolve(process.env.DATA_DIR || "data");
 const DATA_FILE = join(DATA_DIR, "serverwatch.json");
+const METRICS_HISTORY_FILE = join(DATA_DIR, "metrics-history.json");
+const METRICS_SHORT_INTERVAL_MS = 60_000;
+const METRICS_LONG_INTERVAL_MS = 60 * 60_000;
+const METRICS_SHORT_TTL_MS = 72 * 60 * 60_000;
+const METRICS_LONG_TTL_MS = 60 * 24 * 60 * 60_000;
+// Historico de banda (bps) por link SNMP — mesma cadencia/retencao curta do
+// historico "short" de CPU/memoria, so que sempre habilitado (sem tab long,
+// nao ha pedido pra reter 60 dias de banda ainda).
+const NETWORK_LINK_BPS_HISTORY_FILE = join(DATA_DIR, "network-link-bps-history.json");
+const NETWORK_LINK_BPS_INTERVAL_MS = 60_000;
+const NETWORK_LINK_BPS_TTL_MS = 72 * 60 * 60_000;
+// Historico do teste ATIVO de velocidade (satura o link de proposito, roda
+// de hora em hora por padrao) — retencao bem mais longa que o trafego
+// passivo porque as amostras sao raras (poucas dezenas por dia).
+const PROBE_SPEEDTEST_HISTORY_FILE = join(DATA_DIR, "probe-speedtest-history.json");
+const PROBE_SPEEDTEST_TTL_MS = 30 * 24 * 60 * 60_000;
 const STORAGE_TYPE = process.env.SERVERWATCH_STORAGE || (process.env.MONGODB_URI ? "mongodb" : "json");
 const PUBLIC_DIR = resolve("public");
 const DOWNLOADS = {
@@ -53,6 +71,7 @@ const DOWNLOADS = {
     path: resolve("probe/collector.js"),
     filename: "collector.js",
     contentType: "text/javascript; charset=utf-8",
+    public: true,
     allowProbeToken: true
   },
   "/downloads/probe/setup-server.js": {
@@ -79,47 +98,62 @@ const DOWNLOADS = {
     contentType: "application/x-xz",
     allowProbeToken: true
   },
+  "/downloads/probe/windows-ps1-installer": {
+    path: resolve("tools/probe/Install-Probe-Headless.ps1"),
+    filename: "Install-Probe-Headless.ps1",
+    contentType: "text/plain; charset=utf-8",
+    public: true
+  },
   "/downloads/probe/windows-installer": {
     path: resolve(process.env.SERVERWATCH_WINDOWS_INSTALLER_PATH || "downloads/ServerWatchProbeSetup.exe"),
     filename: "ServerWatchProbeSetup.exe",
-    contentType: "application/vnd.microsoft.portable-executable"
-  },
-  "/downloads/linkprobe/windows-installer": {
-    path: resolve(process.env.SERVERWATCH_LINKPROBE_WINDOWS_INSTALLER_PATH || "downloads/ServerWatchLinkProbeSetup.exe"),
-    filename: "ServerWatchLinkProbeSetup.exe",
-    contentType: "application/vnd.microsoft.portable-executable"
-  },
-  "/downloads/linkprobe/windows-amd64": {
-    path: resolve(process.env.SERVERWATCH_LINKPROBE_WINDOWS_AMD64_PATH || "downloads/linkprobe-windows-amd64.exe"),
-    filename: "linkprobe-windows-amd64.exe",
     contentType: "application/vnd.microsoft.portable-executable",
     allowProbeToken: true
   },
-  "/downloads/linkprobe/linux-amd64": {
-    path: resolve(process.env.SERVERWATCH_LINKPROBE_LINUX_AMD64_PATH || "downloads/linkprobe-linux-amd64"),
-    filename: "linkprobe-linux-amd64",
-    contentType: "application/octet-stream",
+  "/downloads/network-probe/windows-installer": {
+    path: resolve(process.env.SERVERWATCH_WINDOWS_NETWORK_PROBE_INSTALLER_PATH || "downloads/ServerWatchNetworkProbeSetup.exe"),
+    filename: "ServerWatchNetworkProbeSetup.exe",
+    contentType: "application/vnd.microsoft.portable-executable",
     allowProbeToken: true
   },
-  "/downloads/linkprobe/linux-arm64": {
-    path: resolve(process.env.SERVERWATCH_LINKPROBE_LINUX_ARM64_PATH || "downloads/linkprobe-linux-arm64"),
-    filename: "linkprobe-linux-arm64",
-    contentType: "application/octet-stream",
-    allowProbeToken: true
-  },
-  "/downloads/linkprobe/linux-installer": {
-    path: resolve("tools/linkprobe/install-linux.sh"),
-    filename: "serverwatch-linkprobe-install-linux.sh",
+  "/downloads/network-probe/linux-installer": {
+    path: resolve("tools/probe/install-network-probe-linux.sh"),
+    filename: "serverwatch-network-probe-install-linux.sh",
     contentType: "text/x-shellscript; charset=utf-8",
     public: true,
     allowProbeToken: true
   },
-  "/downloads/mikrotik/uplink-probe.rsc": {
-    filename: "serverwatch-mikrotik-uplink-probe.rsc",
+  "/downloads/network-probe/network-collector.js": {
+    path: resolve("probe/network-collector.js"),
+    filename: "network-collector.js",
+    contentType: "text/javascript; charset=utf-8",
+    public: true,
+    allowProbeToken: true
+  },
+  "/downloads/network-probe/snmp-client.js": {
+    path: resolve("probe/snmp/client.js"),
+    filename: "client.js",
+    contentType: "text/javascript; charset=utf-8",
+    allowProbeToken: true
+  },
+  "/downloads/network-probe/vendor-templates.js": {
+    path: resolve("probe/snmp/vendor-templates.js"),
+    filename: "vendor-templates.js",
+    contentType: "text/javascript; charset=utf-8",
+    allowProbeToken: true
+  },
+  "/downloads/network-probe/poller.js": {
+    path: resolve("probe/snmp/poller.js"),
+    filename: "poller.js",
+    contentType: "text/javascript; charset=utf-8",
+    allowProbeToken: true
+  },
+  "/downloads/network-probe/windows-ps1-installer": {
+    path: resolve("tools/probe/Install-NetworkProbeCollector-Headless.ps1"),
+    filename: "Install-NetworkProbeCollector-Headless.ps1",
     contentType: "text/plain; charset=utf-8",
-    allowProbeToken: true,
-    render: renderMikrotikInstaller
-  }
+    public: true
+  },
 };
 const CHECK_LOOP_MS = 1000;
 const MAX_HISTORY_PER_SERVER = 500;
@@ -130,206 +164,42 @@ const NETWORK_DEVICE_VENDORS = new Set(["mikrotik", "pfsense", "fortigate", "gen
 const NETWORK_LINK_TYPES = new Set(["internet", "mpls", "vpn", "radio", "fiber", "cellular", "other"]);
 const NETWORK_LINK_STATUSES = new Set(["online", "degraded", "offline", "unknown"]);
 const SESSION_COOKIE = "sw_session";
-const SESSION_TTL_MS = 8 * 60 * 60 * 1000;
+const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 const DEFAULT_ADMIN_EMAIL = process.env.SERVERWATCH_ADMIN_EMAIL || "admin@serverwatch.local";
 const DEFAULT_ADMIN_PASSWORD = process.env.SERVERWATCH_ADMIN_PASSWORD || "admin123";
-const PROBE_COLLECTOR_VERSION = "0.6.8";
+const PROBE_COLLECTOR_VERSION = "0.6.10";
+// Versao esperada do collector do Network Probe (probe/network-collector.js)
+// — namespace de versao totalmente separado do probe de host. Usar
+// PROBE_COLLECTOR_VERSION pra comparar network probes fazia todo network
+// probe aparecer "desatualizado" pra sempre (0.1.0 nunca alcanca 0.6.10).
+const NETWORK_PROBE_COLLECTOR_VERSION = "0.2.0";
+
+function expectedProbeVersion(probe) {
+  return probe?.probeType === "network" ? NETWORK_PROBE_COLLECTOR_VERSION : PROBE_COLLECTOR_VERSION;
+}
 const CLOUDBACKUP_POLL_MS = 5 * 60 * 1000;
 const PROXMOX_POLL_MS = 5 * 60 * 1000;
 const UNIFI_POLL_MS = 5 * 60 * 1000;
+// Coleta SNMP central — dispositivos com snmpEnabled=true e sem
+// networkProbeId (nenhum Network Probe de LAN atribuido) sao coletados
+// direto pelo proprio servidor, via tunel WireGuard ate a rede do cliente.
+// Mesma cadencia do Network Probe (60s), timeout curto pra nao segurar o
+// ciclo inteiro por causa de uma RB fora do ar.
+const CENTRAL_SNMP_POLL_MS = 60 * 1000;
+const CENTRAL_SNMP_TIMEOUT_MS = 5000;
+// Janela de aviso de vencimento de contrato — checagem de hora em hora e
+// sobra de folga pra uma janela de 10 dias (nao precisa de granularidade fina).
+const CONTRACT_EXPIRY_NOTIFY_DAYS = 10;
+const CONTRACT_EXPIRY_CHECK_MS = 60 * 60 * 1000;
 const PROBE_UPDATE_SUPPORTED_PLATFORMS = new Set(["linux", "windows"]);
 
-function routerosQuote(value) {
-  return `"${String(value ?? "")
-    .replaceAll("\\", "\\\\")
-    .replaceAll('"', '\\"')
-    .replaceAll("\r", "\\r")
-    .replaceAll("\n", "\\n")}"`;
-}
-
-function routerosScriptSourceQuote(value) {
-  return `"${String(value ?? "")
-    .replaceAll("\\", "\\\\")
-    .replaceAll('"', '\\"')
-    .replaceAll("$", "\\$")
-    .replaceAll("\r", "\\r")
-    .replaceAll("\n", "\\n")}"`;
-}
-
-function requestProbeToken(req) {
-  const header = String(req.headers.authorization || "");
-  const bearer = header.startsWith("Bearer ") ? header.slice(7).trim() : "";
-  const probeTokenHeader = String(req.headers["x-serverwatch-probe-token"] || "").trim();
-  return bearer || probeTokenHeader || "";
-}
-
-function normalizeRemoteAddress(value) {
-  return String(value || "").replace(/^::ffff:/, "").replace(/^::1$/, "127.0.0.1").trim();
-}
-
-function renderMikrotikInstaller(req) {
-  const url = new URL(req.url, `http://${req.headers.host}`);
-  const serverUrl = String(url.searchParams.get("serverUrl") || "").trim().replace(/\/+$/, "");
-  const token = requestProbeToken(req) || String(url.searchParams.get("token") || "").trim();
-  const agentId = String(url.searchParams.get("agentId") || "").trim();
-  const deviceName = String(url.searchParams.get("deviceName") || url.searchParams.get("name") || agentId || "").trim();
-  const groupId = String(url.searchParams.get("groupId") || "").trim();
-  const groupName = String(url.searchParams.get("groupName") || "").trim();
-  const uplinks = String(url.searchParams.get("uplinks") || "").trim();
-  const interval = Math.max(10, Math.min(3600, Number(url.searchParams.get("interval") || 10) || 10));
-
-  if (!serverUrl || !agentId || !token || !uplinks) {
-    const error = new Error("Informe serverUrl, agentId, token e uplinks.");
-    error.statusCode = 400;
-    throw error;
-  }
-
-  const safeRouterosValue = (value) => String(value || "")
-    .replace(/[\r\n\t]/g, " ")
-    .replace(/[\\"]/g, "")
-    .trim();
-
-  const parsedUplinks = uplinks
-    .split(";")
-    .map((item, index) => {
-      const [name, interfaceName, gateway, prefixLength, healthTarget] = item.split("|");
-      return {
-        name: safeRouterosValue(name) || `Link ${index + 1}`,
-        interfaceName: safeRouterosValue(interfaceName),
-        gateway: safeRouterosValue(gateway),
-        prefixLength: safeRouterosValue(prefixLength),
-        healthTarget: safeRouterosValue(healthTarget)
-      };
-    })
-    .filter((item) => item.interfaceName && item.gateway && item.healthTarget);
-
-  if (!parsedUplinks.length) {
-    const error = new Error("Informe ao menos um uplink no formato Nome|Interface|Gateway|Prefixo|Alvo.");
-    error.statusCode = 400;
-    throw error;
-  }
-
-  const uplinkBlocks = parsedUplinks.map((uplink, index) => {
-    const linkKey = `${index + 1}`;
-    const interfaceValue = routerosQuote(uplink.interfaceName);
-    const gatewayValue = routerosQuote(uplink.gateway);
-    const routeCommentValue = routerosQuote(`serverwatch-health-${agentId}-${uplink.interfaceName}`);
-    const routeDstValue = routerosQuote(`${uplink.healthTarget}/32`);
-    return `
-:local linkName${linkKey} ${routerosQuote(uplink.name)}
-:local ifName${linkKey} ${routerosQuote(uplink.interfaceName)}
-:local gateway${linkKey} ${routerosQuote(uplink.gateway)}
-:local prefix${linkKey} ${routerosQuote(uplink.prefixLength)}
-:local healthTarget${linkKey} ${routerosQuote(uplink.healthTarget)}
-:local running${linkKey} false
-:local address${linkKey} ""
-:local ifIds${linkKey} [/interface find where name=${interfaceValue}]
-:if ([:len $ifIds${linkKey}] > 0) do={
-  :set running${linkKey} [/interface get [:pick $ifIds${linkKey} 0] running]
-  :local addrIds${linkKey} [/ip address find where interface=${interfaceValue} disabled=no]
-  :if ([:len $addrIds${linkKey}] > 0) do={
-    :set address${linkKey} [/ip address get [:pick $addrIds${linkKey} 0] address]
-  }
-}
-:local sent${linkKey} 0
-:local received${linkKey} 0
-:local healthy${linkKey} false
-:local routeComment${linkKey} ${routeCommentValue}
-:local routeDst${linkKey} ${routeDstValue}
-:local routeIds${linkKey} [/ip route find where comment=${routeCommentValue}]
-:local routeReady${linkKey} false
-:do {
-  :if ([:len $routeIds${linkKey}] = 0) do={
-    /ip route add dst-address=${routeDstValue} gateway=${gatewayValue} comment=${routeCommentValue} disabled=no
-  } else={
-    /ip route set [:pick $routeIds${linkKey} 0] dst-address=${routeDstValue} gateway=${gatewayValue} disabled=no
-  }
-  :set routeReady${linkKey} true
-} on-error={
-  :log warning ("ServerWatch MikroTik route failed for " . $ifName${linkKey} . " gateway " . $gateway${linkKey})
-}
-:if ($routeReady${linkKey} = true) do={
-  :set sent${linkKey} 3
-  :do {
-    :set received${linkKey} [/ping $healthTarget${linkKey} count=3 interval=300ms]
-  } on-error={
-    :set received${linkKey} 0
-  }
-}
-:if ($running${linkKey} = true) do={
-  :if ($received${linkKey} >= 2) do={ :set healthy${linkKey} true }
-}
-:local routeActive${linkKey} false
-:local routeDistance${linkKey} ""
-:foreach routeId${linkKey} in=[/ip route find where dst-address="0.0.0.0/0" active=yes] do={
-  :local routeGw${linkKey} [/ip route get $routeId${linkKey} gateway]
-  :local immediate${linkKey} ""
-  :do { :set immediate${linkKey} [/ip route get $routeId${linkKey} immediate-gw] } on-error={}
-  :local posIface${linkKey} [:find $immediate${linkKey} $ifName${linkKey}]
-  :local posGateway${linkKey} [:find $immediate${linkKey} $gateway${linkKey}]
-  :local routeMatch${linkKey} false
-  :if ($routeGw${linkKey} = $gateway${linkKey}) do={ :set routeMatch${linkKey} true }
-  :if ($routeGw${linkKey} = $ifName${linkKey}) do={ :set routeMatch${linkKey} true }
-  :if ([:typeof $posIface${linkKey}] != "nil") do={ :set routeMatch${linkKey} true }
-  :if ([:typeof $posGateway${linkKey}] != "nil") do={ :set routeMatch${linkKey} true }
-  :if ($routeMatch${linkKey} = true) do={
-    :set routeActive${linkKey} true
-    :set routeDistance${linkKey} [/ip route get $routeId${linkKey} distance]
-  }
-}
-:local runningJson${linkKey} "false"
-:local healthyJson${linkKey} "false"
-:local activeJson${linkKey} "false"
-:local status${linkKey} "down"
-:local role${linkKey} "offline"
-:if ($running${linkKey} = true) do={
-  :set runningJson${linkKey} "true"
-  :set role${linkKey} "redundancy"
-}
-:if ($healthy${linkKey} = true) do={
-  :set healthyJson${linkKey} "true"
-  :set status${linkKey} "up"
-}
-:if ($routeActive${linkKey} = true) do={
-  :set activeJson${linkKey} "true"
-  :if ($healthy${linkKey} = true) do={ :set role${linkKey} "active" }
-}
-:if ([:len $uplinksJson] > 0) do={ :set uplinksJson ($uplinksJson . ",") }
-:set uplinksJson ($uplinksJson . "{\\"name\\":\\"" . $linkName${linkKey} . "\\",\\"interface\\":\\"" . $ifName${linkKey} . "\\",\\"gateway\\":\\"" . $gateway${linkKey} . "\\",\\"prefixLength\\":\\"" . $prefix${linkKey} . "\\",\\"healthTarget\\":\\"" . $healthTarget${linkKey} . "\\",\\"address\\":\\"" . $address${linkKey} . "\\",\\"addressCidr\\":\\"" . $address${linkKey} . "\\",\\"running\\":" . $runningJson${linkKey} . ",\\"healthy\\":" . $healthyJson${linkKey} . ",\\"activeRoute\\":" . $activeJson${linkKey} . ",\\"status\\":\\"" . $status${linkKey} . "\\",\\"role\\":\\"" . $role${linkKey} . "\\",\\"pingSent\\":" . $sent${linkKey} . ",\\"pingReceived\\":" . $received${linkKey} . ",\\"routeDistance\\":\\"" . $routeDistance${linkKey} . "\\"}")
-`.trim();
-  }).join("\n\n");
-
-  const runtimeSource = `
-:local serverUrl ${routerosQuote(serverUrl)}
-:local token ${routerosQuote(token)}
-:local agentId ${routerosQuote(agentId)}
-:local deviceName ${routerosQuote(deviceName || agentId)}
-:local groupId ${routerosQuote(groupId)}
-:local groupName ${routerosQuote(groupName)}
-:local version "0.1.0"
-:local identity [/system identity get name]
-:local uplinksJson ""
-${uplinkBlocks}
-:local json ("{\\"agentId\\":\\"" . $agentId . "\\",\\"deviceName\\":\\"" . $deviceName . "\\",\\"identity\\":\\"" . $identity . "\\",\\"version\\":\\"" . $version . "\\",\\"groupId\\":\\"" . $groupId . "\\",\\"groupName\\":\\"" . $groupName . "\\",\\"uplinks\\":[" . $uplinksJson . "]}")
-:do {
-  /tool fetch url=($serverUrl . "/api/network/mikrotik-uplinks") http-method=post http-header-field=("Content-Type: application/json,Authorization: Bearer " . $token) http-data=$json output=none
-} on-error={
-  :log warning ("ServerWatch MikroTik probe failed to send data for " . $agentId)
-}
-`.trim();
-
-  return [
-    `:log info "Installing ServerWatch MikroTik Uplink Probe ${agentId}"`,
-    `/system script remove [find name="serverwatch-mikrotik-uplinks"]`,
-    `/system scheduler remove [find name="serverwatch-mikrotik-uplinks"]`,
-    `/system script add name="serverwatch-mikrotik-uplinks" policy=read,test,policy source=${routerosScriptSourceQuote(runtimeSource)}`,
-    `/system scheduler add name="serverwatch-mikrotik-uplinks" interval=${interval}s start-time=startup on-event="/system script run serverwatch-mikrotik-uplinks" comment="ServerWatch MikroTik Uplink Probe"`,
-    `/system script run serverwatch-mikrotik-uplinks`,
-    `:log info "ServerWatch MikroTik Uplink Probe installed"`
-  ].join("\r\n") + "\r\n";
-}
-
 const sessions = new Map();
+const metricsHistory = new Map();
+let metricsHistorySaveTimer = null;
+const networkLinkBpsHistory = new Map();
+let networkLinkBpsHistorySaveTimer = null;
+const probeSpeedTestHistory = new Map();
+let probeSpeedTestHistorySaveTimer = null;
 let state = {
   servers: [],
   groups: [],
@@ -341,6 +211,7 @@ let state = {
   events: [],
   alerts: [],
   probeUpdateRequests: [],
+  sessions: [],
   cloudBackup: emptyCloudBackupState(),
   proxmoxBackup: emptyProxmoxBackupState(),
   unifiNetwork: emptyUnifiNetworkState(),
@@ -554,16 +425,6 @@ function normalizeRouterosText(value, fieldName = "RouterOS") {
   return text;
 }
 
-function normalizeRouterosAddress(value) {
-  const text = normalizeRouterosText(value, "Endereco MikroTik");
-  if (!text) return { address: "", addressCidr: "" };
-  const [address] = text.split("/");
-  return {
-    address: normalizeRouterosText(address, "IP WAN MikroTik"),
-    addressCidr: text
-  };
-}
-
 function normalizeHostList(value, fallback = []) {
   const rawItems = Array.isArray(value)
     ? value
@@ -660,6 +521,25 @@ function normalizeNetworkDevice(payload, existing = {}) {
     throw error;
   }
 
+  const rawNetworkProbeId = payload.networkProbeId ?? payload.network_probe_id ?? existing.networkProbeId ?? "";
+  const networkProbeId = String(rawNetworkProbeId || "").trim();
+  if (
+    networkProbeId &&
+    !state.probes.some((probe) => probe.id === networkProbeId && !probe.deletedAt && (probe.probeType || "host") === "network")
+  ) {
+    const error = new Error("Network Probe informado nao encontrado.");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  // snmpCommunity so eh atualizada quando enviada explicitamente (string nao-vazia) —
+  // um payload de edicao sem esse campo preserva a community ja cadastrada.
+  const rawSnmpCommunity = payload.snmpCommunity ?? payload.snmp_community;
+  const snmpCommunity = rawSnmpCommunity !== undefined && rawSnmpCommunity !== null
+    ? String(rawSnmpCommunity).trim()
+    : String(existing.snmpCommunity || "");
+  const snmpPort = Math.max(1, Math.min(65535, Number(payload.snmpPort ?? payload.snmp_port ?? existing.snmpPort ?? 161) || 161));
+
   return {
     name,
     vendor: normalizeNetworkVendor(payload.vendor, existing.vendor),
@@ -667,6 +547,15 @@ function normalizeNetworkDevice(payload, existing = {}) {
     managementIp: normalizeOptionalHost(payload.managementIp ?? payload.management_ip ?? existing.managementIp, "IP de gerenciamento"),
     groupId,
     probeId: probeId || null,
+    networkProbeId: networkProbeId || null,
+    snmpEnabled: Boolean(payload.snmpEnabled ?? payload.snmp_enabled ?? existing.snmpEnabled ?? false),
+    snmpCommunity,
+    snmpPort,
+    vendorDetected: existing.vendorDetected === true,
+    cpuPercent: existing.cpuPercent ?? null,
+    memPercent: existing.memPercent ?? null,
+    snmpStatus: existing.snmpStatus || "unconfigured",
+    snmpLastCheckedAt: existing.snmpLastCheckedAt || null,
     environment: String(payload.environment || existing.environment || "production").trim() || "production",
     tags: normalizeTags(payload.tags ?? existing.tags ?? []),
     notes: String(payload.notes || existing.notes || "").trim(),
@@ -701,13 +590,20 @@ function normalizeNetworkLink(payload, existing = {}) {
     throw error;
   }
 
+  // Links alimentados por SNMP (interface de um networkDevice) nao usam ping,
+  // entao nao exigem probe/alvo de checagem — o status vem do poll SNMP do
+  // Network Probe responsavel pelo dispositivo.
+  const rawSnmpIfIndex = payload.snmpIfIndex ?? payload.snmp_if_index ?? existing.snmpIfIndex;
+  const snmpIfIndexValue = Number(rawSnmpIfIndex);
+  const isSnmpLink = Number.isFinite(snmpIfIndexValue) && snmpIfIndexValue >= 0;
+
   const probeId = String(payload.probeId ?? payload.probe_id ?? existing.probeId ?? device?.probeId ?? "").trim();
-  if (!probeId) {
+  if (!probeId && !isSnmpLink) {
     const error = new Error("Selecione um probe para monitorar este link.");
     error.statusCode = 400;
     throw error;
   }
-  if (!state.probes.some((probe) => probe.id === probeId && !probe.deletedAt)) {
+  if (probeId && !state.probes.some((probe) => probe.id === probeId && !probe.deletedAt)) {
     const error = new Error("Probe collector nao encontrado.");
     error.statusCode = 400;
     throw error;
@@ -721,12 +617,12 @@ function normalizeNetworkLink(payload, existing = {}) {
     fallbackTargets
   );
   const targetHosts = targets.map((target) => target.host);
-  if (!targetHosts.length) {
+  if (!targetHosts.length && !isSnmpLink) {
     const error = new Error("Informe o alvo de monitoramento do link.");
     error.statusCode = 400;
     throw error;
   }
-  const targetHost = targetHosts[0];
+  const targetHost = targetHosts[0] || "";
 
   const interval = Number(payload.checkInterval ?? payload.check_interval ?? existing.checkInterval ?? state.settings.defaultInterval);
   const threshold = Number(payload.failureThreshold ?? payload.failure_threshold ?? existing.failureThreshold ?? state.settings.defaultFailureThreshold);
@@ -752,6 +648,12 @@ function normalizeNetworkLink(payload, existing = {}) {
     ),
     contractedDownloadMbps: Math.max(0, Number(payload.contractedDownloadMbps ?? payload.contracted_download_mbps ?? existing.contractedDownloadMbps ?? 0) || 0),
     contractedUploadMbps: Math.max(0, Number(payload.contractedUploadMbps ?? payload.contracted_upload_mbps ?? existing.contractedUploadMbps ?? 0) || 0),
+    snmpIfIndex: (() => {
+      const raw = payload.snmpIfIndex ?? payload.snmp_if_index ?? existing.snmpIfIndex;
+      const value = Number(raw);
+      return Number.isFinite(value) && value >= 0 ? value : null;
+    })(),
+    snmpIfDescr: String(payload.snmpIfDescr ?? payload.snmp_if_descr ?? existing.snmpIfDescr ?? "").trim(),
     probeId,
     checkInterval: Math.max(10, Math.min(3600, Number.isFinite(interval) ? interval : 10)),
     failureThreshold: Math.max(3, Math.min(10, Number.isFinite(threshold) ? threshold : 3)),
@@ -760,6 +662,12 @@ function normalizeNetworkLink(payload, existing = {}) {
     degradedJitterMs: Math.max(0, Math.min(10000, Number.isFinite(degradedJitterMs) ? degradedJitterMs : 40)),
     sampleCount: 1,
     isActive: payload.isActive ?? payload.is_active ?? existing.isActive ?? true,
+    // Controla se o link aparece na lista principal ("Links por cliente") ou
+    // fica colapsado sob o dispositivo — links criados manualmente (dialogo)
+    // comecam destacados; links auto-criados pela descoberta SNMP (ver
+    // /api/network-probe/results) comecam featured:false ate o admin marcar
+    // no editor do dispositivo quais interfaces sao WAN de verdade.
+    featured: Boolean(payload.featured ?? payload.is_featured ?? existing.featured ?? true),
     notes: String(payload.notes || existing.notes || "").trim()
   };
 }
@@ -797,6 +705,35 @@ function syncVirtualizerChildren(parent, childIds = [], actorName = "Sistema") {
   return updated;
 }
 
+const SERVICE_CONTRACT_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+// Contratos com vigencia (data de fim, opcionalmente data de inicio) —
+// separado do array `contracts` (checkboxes de tipo de servico, sem data).
+// Casa por id pra preservar `expiryAlertedAt` entre edicoes: so reseta o
+// controle de alerta quando a data de fim realmente muda (renovacao/adiamento),
+// senao checkContractExpirations() reenviaria o mesmo alerta a cada ciclo.
+function normalizeGroupContracts(contractsPayload, existingContracts = []) {
+  if (!Array.isArray(contractsPayload)) return Array.isArray(existingContracts) ? existingContracts : [];
+  const existingById = new Map((existingContracts || []).map((entry) => [entry.id, entry]));
+  return contractsPayload
+    .map((entry) => {
+      const endDate = String(entry?.endDate || "").trim();
+      if (!SERVICE_CONTRACT_DATE_RE.test(endDate)) return null;
+      const startDateRaw = String(entry?.startDate || "").trim();
+      const id = String(entry?.id || "").trim() || randomUUID();
+      const previous = existingById.get(id);
+      return {
+        id,
+        label: String(entry?.label || "").trim().slice(0, 120) || "Contrato",
+        startDate: SERVICE_CONTRACT_DATE_RE.test(startDateRaw) ? startDateRaw : null,
+        endDate,
+        expiryAlertedAt: previous && previous.endDate === endDate ? previous.expiryAlertedAt || null : null
+      };
+    })
+    .filter(Boolean)
+    .slice(0, 20);
+}
+
 function normalizeGroup(payload, existing = {}) {
   const name = String(payload.name || existing.name || "").trim();
   const logoDataUrl = String(payload.logoDataUrl ?? existing.logoDataUrl ?? "").trim();
@@ -805,6 +742,10 @@ function normalizeGroup(payload, existing = {}) {
   const contracts = Array.isArray(contractsSource)
     ? [...new Set(contractsSource.map((contract) => String(contract || "").trim()).filter((contract) => allowedContracts.has(contract)))]
     : [];
+  const serviceContracts = normalizeGroupContracts(
+    payload.serviceContracts !== undefined ? payload.serviceContracts : existing.serviceContracts,
+    existing.serviceContracts || []
+  );
   if (!name) {
     const error = new Error("Informe o nome da empresa/grupo.");
     error.statusCode = 400;
@@ -824,6 +765,7 @@ function normalizeGroup(payload, existing = {}) {
     name,
     description: String(payload.description ?? existing.description ?? "").trim(),
     contracts,
+    serviceContracts,
     logoDataUrl,
     type: String(payload.type || existing.type || "company"),
     cloudBackupClientId:
@@ -1226,6 +1168,13 @@ function canAccessEvent(user, event) {
   return false;
 }
 
+function canAccessAlert(user, alert) {
+  if (!user || isAdminUser(user)) return true;
+  if (alert?.serverId) return canAccessServer(user, alert.serverId);
+  if (alert?.groupId) return canAccessGroup(user, alert.groupId);
+  return false;
+}
+
 function scopedEvents(user = null) {
   if (user && !canAccessSection(user, "history")) return [];
   const events = state.events || [];
@@ -1244,7 +1193,7 @@ function scopedAlerts(user = null) {
   if (user && !canAccessSection(user, "alerts")) return [];
   const alerts = state.alerts || [];
   if (!user || isAdminUser(user)) return alerts;
-  return alerts.filter((alert) => canAccessServer(user, alert.serverId));
+  return alerts.filter((alert) => canAccessAlert(user, alert));
 }
 
 function eventTimestampMs(event) {
@@ -1503,6 +1452,17 @@ async function loadState() {
       isActive: link.isActive !== false
     };
   });
+  if (Array.isArray(parsed.sessions)) {
+    for (const s of parsed.sessions) {
+      if (s.token && s.expiresAt > now) {
+        sessions.set(s.token, { userId: s.userId, expiresAt: s.expiresAt });
+      }
+    }
+  }
+  state.sessions = Array.isArray(parsed.sessions)
+    ? parsed.sessions.filter((s) => s.expiresAt > now)
+    : [];
+
   if (needsSave) await persistState();
 }
 
@@ -1510,7 +1470,8 @@ async function persistState() {
   const payload = {
     ...state,
     servers: state.servers.map(({ nextCheckAt, nextProbeFallbackCheckAt, ...server }) => server),
-    networkLinks: (state.networkLinks || []).map(({ nextCheckAt, ...link }) => link)
+    networkLinks: (state.networkLinks || []).map(({ nextCheckAt, ...link }) => link),
+    sessions: Array.from(sessions.entries()).map(([token, s]) => ({ token, userId: s.userId, expiresAt: s.expiresAt }))
   };
   await storage.saveState(payload);
 }
@@ -1520,6 +1481,203 @@ function scheduleSave() {
   saveTimer = setTimeout(() => {
     persistState().catch((error) => console.error("Falha ao salvar estado", error));
   }, 250);
+}
+
+function scheduleMetricsSave() {
+  clearTimeout(metricsHistorySaveTimer);
+  metricsHistorySaveTimer = setTimeout(() => {
+    saveMetricsHistory().catch((error) => console.error("Falha ao salvar historico de metricas", error));
+  }, 60_000);
+}
+
+async function saveMetricsHistory() {
+  const payload = {};
+  for (const [probeId, entry] of metricsHistory.entries()) {
+    payload[probeId] = entry;
+  }
+  await mkdir(DATA_DIR, { recursive: true });
+  const tempFile = `${METRICS_HISTORY_FILE}.${process.pid}.tmp`;
+  await writeFile(tempFile, JSON.stringify(payload), "utf8");
+  await rename(tempFile, METRICS_HISTORY_FILE);
+}
+
+async function loadMetricsHistory() {
+  try {
+    const raw = await readFile(METRICS_HISTORY_FILE, "utf8");
+    const parsed = JSON.parse(raw);
+    const now = Date.now();
+    for (const [probeId, entry] of Object.entries(parsed)) {
+      if (!entry || typeof entry !== "object") continue;
+      metricsHistory.set(probeId, {
+        lastShortAt: Number(entry.lastShortAt) || 0,
+        lastLongAt: Number(entry.lastLongAt) || 0,
+        short: Array.isArray(entry.short)
+          ? entry.short.filter((s) => s.t >= now - METRICS_SHORT_TTL_MS)
+          : [],
+        long: Array.isArray(entry.long)
+          ? entry.long.filter((s) => s.t >= now - METRICS_LONG_TTL_MS)
+          : []
+      });
+    }
+    console.log(`Historico de metricas carregado: ${metricsHistory.size} probe(s).`);
+  } catch (error) {
+    if (error.code !== "ENOENT") {
+      console.error(`Falha ao carregar historico de metricas: ${error.message}`);
+    }
+  }
+}
+
+function scheduleNetworkLinkBpsSave() {
+  clearTimeout(networkLinkBpsHistorySaveTimer);
+  networkLinkBpsHistorySaveTimer = setTimeout(() => {
+    saveNetworkLinkBpsHistory().catch((error) => console.error("Falha ao salvar historico de banda", error));
+  }, 60_000);
+}
+
+async function saveNetworkLinkBpsHistory() {
+  const payload = {};
+  for (const [linkId, entry] of networkLinkBpsHistory.entries()) {
+    payload[linkId] = entry;
+  }
+  await mkdir(DATA_DIR, { recursive: true });
+  const tempFile = `${NETWORK_LINK_BPS_HISTORY_FILE}.${process.pid}.tmp`;
+  await writeFile(tempFile, JSON.stringify(payload), "utf8");
+  await rename(tempFile, NETWORK_LINK_BPS_HISTORY_FILE);
+}
+
+async function loadNetworkLinkBpsHistory() {
+  try {
+    const raw = await readFile(NETWORK_LINK_BPS_HISTORY_FILE, "utf8");
+    const parsed = JSON.parse(raw);
+    const now = Date.now();
+    for (const [linkId, entry] of Object.entries(parsed)) {
+      if (!entry || typeof entry !== "object") continue;
+      networkLinkBpsHistory.set(linkId, {
+        lastAt: Number(entry.lastAt) || 0,
+        samples: Array.isArray(entry.samples) ? entry.samples.filter((s) => s.t >= now - NETWORK_LINK_BPS_TTL_MS) : []
+      });
+    }
+    console.log(`Historico de banda carregado: ${networkLinkBpsHistory.size} link(s).`);
+  } catch (error) {
+    if (error.code !== "ENOENT") {
+      console.error(`Falha ao carregar historico de banda: ${error.message}`);
+    }
+  }
+}
+
+// Amostra periodica de banda por link SNMP — mesma cadencia do historico
+// "short" de CPU/memoria (1 amostra/min, retem 72h), usada pro grafico de
+// variacao de velocidade na visao de empresa (ver renderNetworkCompanyDetail).
+function recordNetworkLinkBps(linkId, inBps, outBps) {
+  if (!linkId || (inBps == null && outBps == null)) return;
+  const now = Date.now();
+  let entry = networkLinkBpsHistory.get(linkId);
+  if (!entry) {
+    entry = { lastAt: 0, samples: [] };
+    networkLinkBpsHistory.set(linkId, entry);
+  }
+  if (now - entry.lastAt < NETWORK_LINK_BPS_INTERVAL_MS) return;
+  entry.samples.push({ t: now, inBps: inBps ?? null, outBps: outBps ?? null });
+  const cut = now - NETWORK_LINK_BPS_TTL_MS;
+  entry.samples = entry.samples.filter((s) => s.t >= cut);
+  entry.lastAt = now;
+  scheduleNetworkLinkBpsSave();
+}
+
+function scheduleProbeSpeedTestSave() {
+  clearTimeout(probeSpeedTestHistorySaveTimer);
+  probeSpeedTestHistorySaveTimer = setTimeout(() => {
+    saveProbeSpeedTestHistory().catch((error) => console.error("Falha ao salvar historico de teste de velocidade", error));
+  }, 60_000);
+}
+
+async function saveProbeSpeedTestHistory() {
+  const payload = {};
+  for (const [probeId, entry] of probeSpeedTestHistory.entries()) {
+    payload[probeId] = entry;
+  }
+  await mkdir(DATA_DIR, { recursive: true });
+  const tempFile = `${PROBE_SPEEDTEST_HISTORY_FILE}.${process.pid}.tmp`;
+  await writeFile(tempFile, JSON.stringify(payload), "utf8");
+  await rename(tempFile, PROBE_SPEEDTEST_HISTORY_FILE);
+}
+
+async function loadProbeSpeedTestHistory() {
+  try {
+    const raw = await readFile(PROBE_SPEEDTEST_HISTORY_FILE, "utf8");
+    const parsed = JSON.parse(raw);
+    const now = Date.now();
+    for (const [probeId, entry] of Object.entries(parsed)) {
+      if (!entry || typeof entry !== "object") continue;
+      probeSpeedTestHistory.set(probeId, {
+        samples: Array.isArray(entry.samples) ? entry.samples.filter((s) => s.t >= now - PROBE_SPEEDTEST_TTL_MS) : []
+      });
+    }
+    console.log(`Historico de teste de velocidade carregado: ${probeSpeedTestHistory.size} probe(s).`);
+  } catch (error) {
+    if (error.code !== "ENOENT") {
+      console.error(`Falha ao carregar historico de teste de velocidade: ${error.message}`);
+    }
+  }
+}
+
+function recordProbeSpeedTest(probeId, downloadMbps, uploadMbps, testedAt) {
+  if (!probeId || downloadMbps == null) return;
+  const t = testedAt ? new Date(testedAt).getTime() : Date.now();
+  if (!Number.isFinite(t)) return;
+  let entry = probeSpeedTestHistory.get(probeId);
+  if (!entry) {
+    entry = { samples: [] };
+    probeSpeedTestHistory.set(probeId, entry);
+  }
+  entry.samples.push({ t, downloadMbps, uploadMbps: uploadMbps ?? null });
+  const cut = Date.now() - PROBE_SPEEDTEST_TTL_MS;
+  entry.samples = entry.samples.filter((s) => s.t >= cut);
+  scheduleProbeSpeedTestSave();
+}
+
+function recordProbeMetrics(probeId, metrics) {
+  if (!metrics || !probeId) return;
+  const cpu = Number.isFinite(metrics.cpu?.usagePercent) ? Math.round(metrics.cpu.usagePercent) : null;
+  const mem = Number.isFinite(metrics.memory?.usedPercent) ? Math.round(metrics.memory.usedPercent) : null;
+  const diskPct = Number.isFinite(metrics.disk?.usedPercent) ? Math.round(metrics.disk.usedPercent) : null;
+  const diskUsed = Number.isFinite(metrics.disk?.usedBytes) ? metrics.disk.usedBytes : null;
+  const diskTotal = Number.isFinite(metrics.disk?.totalBytes) ? metrics.disk.totalBytes : null;
+  if (cpu === null && mem === null && diskPct === null) return;
+
+  const partitions = Array.isArray(metrics.diskPartitions)
+    ? metrics.diskPartitions
+        .filter((p) => Number.isFinite(p.usedPercent))
+        .map((p) => ({
+          m: String(p.mount || p.filesystem || "?").slice(0, 40),
+          pct: Math.round(p.usedPercent),
+          used: Number.isFinite(p.usedBytes) ? p.usedBytes : null,
+          total: Number.isFinite(p.totalBytes) ? p.totalBytes : null
+        }))
+    : [];
+
+  const now = Date.now();
+  let entry = metricsHistory.get(probeId);
+  if (!entry) {
+    entry = { lastShortAt: 0, lastLongAt: 0, short: [], long: [] };
+    metricsHistory.set(probeId, entry);
+  }
+
+  if (now - entry.lastShortAt >= METRICS_SHORT_INTERVAL_MS) {
+    entry.short.push({ t: now, cpu, mem, diskPct, diskUsed, diskTotal, partitions });
+    const cutShort = now - METRICS_SHORT_TTL_MS;
+    entry.short = entry.short.filter((s) => s.t >= cutShort);
+    entry.lastShortAt = now;
+    scheduleMetricsSave();
+  }
+
+  if (now - entry.lastLongAt >= METRICS_LONG_INTERVAL_MS) {
+    entry.long.push({ t: now, cpu, mem, diskPct, diskUsed, diskTotal, partitions });
+    const cutLong = now - METRICS_LONG_TTL_MS;
+    entry.long = entry.long.filter((s) => s.t >= cutLong);
+    entry.lastLongAt = now;
+    scheduleMetricsSave();
+  }
 }
 
 let broadcastSnapshotTimer = null;
@@ -1687,6 +1845,7 @@ function publicGroup(group) {
     name: group.name,
     description: group.description,
     contracts: Array.isArray(group.contracts) ? group.contracts : [],
+    serviceContracts: Array.isArray(group.serviceContracts) ? group.serviceContracts : [],
     type: group.type || "company",
     serverCount: servers.length,
     activeServerCount: activeServers.length,
@@ -1739,6 +1898,19 @@ function publicNetworkDevice(device) {
     groupId: device.groupId || null,
     groupName: group?.name || null,
     probeId: device.probeId || null,
+    networkProbeId: device.networkProbeId || null,
+    networkProbeName: device.networkProbeId
+      ? (state.probes || []).find((probe) => probe.id === device.networkProbeId)?.name || device.networkProbeId
+      : null,
+    snmpEnabled: device.snmpEnabled === true,
+    snmpCommunitySet: Boolean(device.snmpCommunity),
+    snmpPort: device.snmpPort || 161,
+    vendorDetected: device.vendorDetected === true,
+    cpuPercent: device.cpuPercent ?? null,
+    memPercent: device.memPercent ?? null,
+    snmpStatus: device.snmpStatus || "unconfigured",
+    snmpLastCheckedAt: device.snmpLastCheckedAt || null,
+    discoveredInterfaces: Array.isArray(device.discoveredInterfaces) ? device.discoveredInterfaces : [],
     environment: device.environment || "production",
     tags: Array.isArray(device.tags) ? device.tags : [],
     notes: device.notes || "",
@@ -1788,7 +1960,18 @@ function publicNetworkLink(link) {
     expectedPublicPrefixLength: link.expectedPublicPrefixLength || null,
     contractedDownloadMbps: link.contractedDownloadMbps || 0,
     contractedUploadMbps: link.contractedUploadMbps || 0,
-    monitorSource: link.monitorSource || (link.linkProbeAgentId ? "linkprobe" : "probe"),
+    snmpIfIndex: link.snmpIfIndex ?? null,
+    snmpIfDescr: link.snmpIfDescr || "",
+    featured: link.featured !== false,
+    snmpInOctets: link.snmpLastInOctets ?? null,
+    snmpOutOctets: link.snmpLastOutOctets ?? null,
+    snmpInBps: link.snmpLastInBps ?? null,
+    snmpOutBps: link.snmpLastOutBps ?? null,
+    // true/false = tabela de rotas confirmou (ver applyNetworkDeviceSnmpResult);
+    // undefined = sem sinal de rota ainda, frontend cai pro heuristico de trafego.
+    snmpActiveRoute: link.snmpActiveRoute === true ? true : link.snmpActiveRoute === false ? false : undefined,
+    monitorSource:
+      link.monitorSource || (link.linkProbeAgentId ? "linkprobe" : link.snmpIfIndex != null ? "snmp" : "probe"),
     linkProbeAgentId: link.linkProbeAgentId || null,
     linkProbeVersion: link.linkProbeVersion || null,
     linkProbeSourceIp: link.linkProbeSourceIp || "",
@@ -1834,7 +2017,7 @@ function publicNetworkLink(link) {
 }
 
 function networkSummary(currentUser = null) {
-  const links = scopedNetworkLinks(currentUser).filter((link) => link.isActive !== false);
+  const links = scopedNetworkLinks(currentUser).filter((link) => link.isActive !== false && link.featured !== false);
   const publicLinks = links.map(publicNetworkLink);
   return {
     totalLinks: links.length,
@@ -1965,6 +2148,7 @@ function networkCandidateStatus(link, result) {
 function applyNetworkLinkResult(link, result, probeId) {
   if (!link || link.deletedAt || link.probeId !== probeId) return false;
   if (link.monitorSource === "linkprobe" || link.linkProbeAgentId) return false;
+  if (link.monitorSource === "snmp" || link.snmpIfIndex != null) return false;
   const adjustedResult = reconcileNetworkLinkResult(link, result);
   const checkedAt = result.checkedAt || nowIso();
   const previousStatus = link.currentStatus || "unknown";
@@ -2007,476 +2191,274 @@ function applyNetworkLinkResult(link, result, probeId) {
   return true;
 }
 
-function normalizeLinkProbePayload(payload) {
-  const agentId = String(payload.agent_id || payload.agentId || "").trim();
-  if (!agentId) {
-    const error = new Error("Informe agent_id.");
-    error.statusCode = 400;
-    throw error;
-  }
-  const pingResults = Array.isArray(payload.ping_results)
-    ? payload.ping_results
-    : Array.isArray(payload.pingResults)
-    ? payload.pingResults
-    : [];
-  if (!pingResults.length) {
-    const error = new Error("Informe ping_results.");
-    error.statusCode = 400;
-    throw error;
-  }
-  const targets = pingResults
-    .map((item) => ({
-      name: String(item.name || item.target_name || item.targetName || "").trim(),
-      host: normalizeOptionalHost(item.target || item.targetHost || item.host, "Alvo do LinkProbe"),
-      gateway: normalizeOptionalHost(item.gateway || item.expectedPublicIp || item.expected_public_ip || "", "Gateway do LinkProbe"),
-      prefixLength: normalizeNetworkPrefixLength(item.prefix_length ?? item.prefixLength ?? item.subnetPrefix ?? item.subnet_prefix)
-    }))
-    .filter((item) => item.host);
-  if (!targets.length) {
-    const error = new Error("Nenhum alvo valido recebido do LinkProbe.");
-    error.statusCode = 400;
-    throw error;
-  }
-  const successRate = Math.max(0, Math.min(1, Number(payload.success_rate ?? payload.successRate ?? 0) || 0));
-  const publicIp = normalizeOptionalHost(payload.public_ip ?? payload.publicIp ?? "", "IP publico observado");
-  const timestamp = payload.timestamp ? new Date(payload.timestamp) : new Date();
-  return {
-    agentId,
-    linkName: String(payload.link_name || payload.linkName || agentId).trim() || agentId,
-    timestamp: Number.isNaN(timestamp.getTime()) ? nowIso() : timestamp.toISOString(),
-    isOnline: payload.is_online ?? payload.isOnline ?? false,
-    successRate,
-    publicIp,
-    ipChanged: Boolean(payload.ip_changed ?? payload.ipChanged),
-    version: String(payload.version || "").trim(),
-    sourceIp: normalizeOptionalHost(payload.source_ip ?? payload.sourceIp ?? "", "Source IP"),
-    interfaceName: String(payload.interface || payload.interfaceName || payload.interface_name || "").trim(),
-    targets,
-    pingResults
-  };
-}
+// Aplica um resultado de coleta SNMP (status da interface + contadores de trafego)
+// vindo do Network Probe. Espelha applyNetworkLinkResult, mas sem os campos
+// especificos de ping (latencia/perda/jitter/deteccao de IP publico) — o status
+// vem direto do ifOperStatus da interface (1 = up).
+function applyNetworkLinkSnmpResult(link, result, networkProbeId) {
+  if (!link || link.deletedAt) return false;
+  if (link.snmpIfIndex == null) return false;
+  const device = link.networkDeviceId ? listedNetworkDevices().find((item) => item.id === link.networkDeviceId) : null;
+  if (!device || device.networkProbeId !== networkProbeId) return false;
 
-function averagePingLatency(pingResults) {
-  const values = pingResults
-    .map((item) => Number(item.avg_rtt_ms ?? item.avgRTTMs ?? item.avgRttMs ?? item.latencyMs))
-    .filter((value) => Number.isFinite(value) && value >= 0);
-  if (!values.length) return null;
-  return Math.round((values.reduce((sum, value) => sum + value, 0) / values.length) * 10) / 10;
-}
-
-function linkProbeTargetResults(data) {
-  return data.pingResults.slice(0, 20).map((item) => {
-    const targetHost = String(item.target || item.targetHost || item.host || "").trim();
-    const sent = Math.max(0, Number(item.sent || 0) || 0);
-    const received = Math.max(0, Number(item.received || 0) || 0);
-    const lostPct = Number(item.lost_pct ?? item.lostPct ?? (sent ? ((sent - received) / sent) * 100 : received ? 0 : 100));
-    return {
-      targetHost,
-      targetName: String(item.name || item.target_name || item.targetName || "").trim(),
-      gateway: normalizeOptionalHost(item.gateway || item.expectedPublicIp || item.expected_public_ip || "", "Gateway do LinkProbe"),
-      prefixLength: normalizeNetworkPrefixLength(item.prefix_length ?? item.prefixLength ?? item.subnetPrefix ?? item.subnet_prefix),
-      online: Boolean(item.reachable ?? item.online ?? received > 0),
-      latencyMs: Number(item.avg_rtt_ms ?? item.avgRTTMs ?? item.avgRttMs ?? item.latencyMs ?? 0) || null,
-      minLatencyMs: Number(item.min_rtt_ms ?? item.minRTTMs ?? item.minRttMs ?? 0) || null,
-      maxLatencyMs: Number(item.max_rtt_ms ?? item.maxRTTMs ?? item.maxRttMs ?? 0) || null,
-      sent,
-      received,
-      packetLossPercent: Math.round(Math.max(0, Math.min(100, lostPct)) * 10) / 10,
-      error: item.error ? String(item.error).slice(0, 300) : null
-    };
-  }).filter((item) => item.targetHost);
-}
-
-function findOrCreateLinkProbeLink(data) {
-  const existing = listedNetworkLinks().find((link) => link.linkProbeAgentId === data.agentId);
-  if (existing) return { link: existing, created: false };
-  const createdAt = nowIso();
-  const primaryGateway = data.targets.find((target) => target.gateway)?.gateway || "";
-  const primaryPrefixLength = data.targets.find((target) => target.gateway)?.prefixLength || null;
-  const link = {
-    id: randomUUID(),
-    name: data.linkName,
-    networkDeviceId: null,
-    groupId: null,
-    provider: "",
-    linkType: "internet",
-    interfaceName: data.interfaceName,
-    targetHost: data.targets[0]?.host,
-    targetHosts: data.targets.map((target) => target.host),
-    targets: data.targets,
-    expectedPublicIp: primaryGateway,
-    expectedPublicPrefixLength: primaryPrefixLength,
-    contractedDownloadMbps: 0,
-    contractedUploadMbps: 0,
-    probeId: null,
-    monitorSource: "linkprobe",
-    linkProbeAgentId: data.agentId,
-    linkProbeVersion: data.version || null,
-    linkProbeSourceIp: data.sourceIp,
-    linkProbeSuccessRate: null,
-    linkProbeIpChanged: false,
-    checkInterval: 60,
-    failureThreshold: 1,
-    degradedLatencyMs: 120,
-    degradedPacketLossPercent: 10,
-    degradedJitterMs: 40,
-    sampleCount: 1,
-    currentStatus: "unknown",
-    previousStatus: "unknown",
-    statusChangedAt: createdAt,
-    lastCheckedAt: null,
-    lastLatencyMs: null,
-    lastPacketLossPercent: null,
-    lastJitterMs: null,
-    targetResults: [],
-    lastError: null,
-    lastProbeSeenAt: null,
-    consecutiveFailures: 0,
-    isActive: true,
-    notes: "Criado automaticamente pelo LinkProbe.",
-    createdAt,
-    updatedAt: createdAt,
-    deletedAt: null
-  };
-  state.networkLinks.unshift(link);
-  return { link, created: true };
-}
-
-function applyLinkProbeStatus(payload, req) {
-  const data = normalizeLinkProbePayload(payload);
-  const { link, created } = findOrCreateLinkProbeLink(data);
+  const checkedAt = result.checkedAt || nowIso();
   const previousStatus = link.currentStatus || "unknown";
-  const targetResults = linkProbeTargetResults(data);
-  const packetLossPercent = Math.round((1 - data.successRate) * 1000) / 10;
-  const latencyMs = averagePingLatency(data.pingResults);
-  const result = {
-    online: Boolean(data.isOnline),
-    packetLossPercent,
-    latencyMs,
-    jitterMs: null,
-    targetResults,
-    activeTargetHost: null,
-    activeTargetName: "",
-    activeDetection: "",
-    observedPublicIp: data.publicIp || null,
-    checkedAt: data.timestamp,
-    error: data.isOnline ? null : "LinkProbe reportou o link como offline."
-  };
-  const adjustedResult = reconcileNetworkLinkResult(link, result);
-  const candidate = networkCandidateStatus(link, adjustedResult);
+  const online = Number(result.ifOperStatus) === 1;
 
-  link.name = data.linkName || link.name;
-  link.monitorSource = "linkprobe";
-  link.linkProbeAgentId = data.agentId;
-  link.linkProbeVersion = data.version || link.linkProbeVersion || null;
-  link.linkProbeSourceIp = data.sourceIp || link.linkProbeSourceIp || "";
-  link.linkProbeSuccessRate = data.successRate;
-  link.linkProbeIpChanged = data.ipChanged;
-  link.interfaceName = data.interfaceName || link.interfaceName || "";
-  link.targetHost = data.targets[0]?.host || link.targetHost;
-  link.targetHosts = data.targets.map((target) => target.host);
-  link.targets = data.targets;
-  const primaryGateway = data.targets.find((target) => target.gateway)?.gateway || "";
-  const primaryPrefixLength = data.targets.find((target) => target.gateway)?.prefixLength || null;
-  if (primaryGateway) {
-    link.expectedPublicIp = primaryGateway;
-    link.expectedPublicPrefixLength = primaryPrefixLength;
-  }
+  const inOctets = Number.isFinite(Number(result.inOctets)) ? Number(result.inOctets) : null;
+  const outOctets = Number.isFinite(Number(result.outOctets)) ? Number(result.outOctets) : null;
+  const sampleAt = new Date(checkedAt).getTime();
+  const previousSampleAt = link.snmpLastSampleAt ? new Date(link.snmpLastSampleAt).getTime() : null;
+  const elapsedSeconds = previousSampleAt && Number.isFinite(sampleAt) ? Math.max(1, (sampleAt - previousSampleAt) / 1000) : null;
+  // Contadores de interface podem zerar (reboot do equipamento) — so calcula bps
+  // quando o valor novo eh maior ou igual ao anterior, senao apenas reseta a base.
+  const computeBps = (previous, current) =>
+    previous != null && current != null && elapsedSeconds && current >= previous
+      ? Math.round(((current - previous) * 8) / elapsedSeconds)
+      : null;
+  link.snmpLastInBps = computeBps(link.snmpLastInOctets, inOctets);
+  link.snmpLastOutBps = computeBps(link.snmpLastOutOctets, outOctets);
+  link.snmpLastInOctets = inOctets ?? link.snmpLastInOctets ?? null;
+  link.snmpLastOutOctets = outOctets ?? link.snmpLastOutOctets ?? null;
+  link.snmpLastSampleAt = checkedAt;
+  recordNetworkLinkBps(link.id, link.snmpLastInBps, link.snmpLastOutBps);
+
+  link.snmpIfDescr = result.ifDescr || link.snmpIfDescr || "";
+  link.monitorSource = "snmp";
   link.lastProbeSeenAt = nowIso();
-  link.lastCheckedAt = data.timestamp;
-  link.lastLatencyMs = latencyMs;
-  link.lastPacketLossPercent = packetLossPercent;
-  link.lastJitterMs = null;
-  link.lastError = adjustedResult.error || null;
-  link.activeTargetHost = adjustedResult.activeTargetHost || null;
-  link.activeTargetName = adjustedResult.activeTargetName || "";
-  link.activeDetection = adjustedResult.activeDetection || "";
-  link.observedPublicIp = data.publicIp || null;
-  link.targetResults = adjustedResult.targetResults;
+  link.lastCheckedAt = checkedAt;
+  link.lastError = result.error || null;
   link.forceCheckAt = null;
-  link.consecutiveFailures = data.isOnline ? 0 : (link.consecutiveFailures || 0) + 1;
-  link.currentStatus = data.isOnline ? candidate : "offline";
-  link.updatedAt = nowIso();
 
-  if (created || link.currentStatus !== previousStatus || data.ipChanged) {
+  if (!online) {
+    link.consecutiveFailures = (link.consecutiveFailures || 0) + 1;
+    if (link.consecutiveFailures >= Math.max(1, Number(link.failureThreshold || 1))) {
+      link.currentStatus = "offline";
+    }
+  } else {
+    link.consecutiveFailures = 0;
+    link.currentStatus = "online";
+  }
+
+  const changed = (link.currentStatus || "unknown") !== previousStatus;
+  if (changed) {
     link.previousStatus = previousStatus;
-    link.statusChangedAt = data.timestamp;
+    link.statusChangedAt = checkedAt;
     addNetworkEvent(
       link,
       previousStatus,
       link.currentStatus,
-      data.ipChanged
-        ? `LinkProbe ${data.agentId} detectou troca de IP de saida para ${data.publicIp || "desconhecido"}.`
-        : `Resultado recebido do LinkProbe ${data.agentId}${req?.socket?.remoteAddress ? ` (${req.socket.remoteAddress})` : ""}.`
+      link.lastError || `Resultado SNMP recebido do network probe ${networkProbeId}.`
     );
   }
-
-  scheduleSave();
-  scheduleBroadcastSnapshot();
-  return publicNetworkLink(link);
+  link.updatedAt = nowIso();
+  return true;
 }
 
-function normalizeMikrotikPayload(payload) {
-  const agentId = String(payload.agentId || payload.agent_id || "").trim();
-  if (!agentId) {
-    const error = new Error("Informe agentId.");
-    error.statusCode = 400;
-    throw error;
+// Aplica um resultado de coleta SNMP (CPU/RAM/interfaces) a um dispositivo —
+// compartilhado entre o handler HTTP de resultados de Network Probe (LAN) e o
+// coletor central via VPN (runCentralSnmpCycle), que chama isso diretamente
+// em vez de ir por HTTP. networkProbeId eh repassado pra applyNetworkLinkSnmpResult
+// checar a consistencia link->dispositivo->probe (ver funcao acima).
+function applyNetworkDeviceSnmpResult(device, result, networkProbeId) {
+  device.snmpStatus = String(result.snmpStatus || (result.error ? "unreachable" : "ok")).trim() || "unconfigured";
+  device.cpuPercent = Number.isFinite(Number(result.cpuPercent)) ? Number(result.cpuPercent) : null;
+  device.memPercent = Number.isFinite(Number(result.memPercent)) ? Number(result.memPercent) : null;
+  device.snmpLastCheckedAt = nowIso();
+  device.updatedAt = nowIso();
+  if (result.detectedVendor && !device.vendorDetected) {
+    device.vendor = normalizeNetworkVendor(result.detectedVendor, device.vendor);
+    device.vendorDetected = true;
   }
-  const uplinks = Array.isArray(payload.uplinks) ? payload.uplinks : [];
-  if (!uplinks.length) {
-    const error = new Error("Informe ao menos um uplink.");
-    error.statusCode = 400;
-    throw error;
-  }
-  return {
-    agentId,
-    deviceName: String(payload.deviceName || payload.device_name || payload.identity || agentId).trim() || agentId,
-    identity: String(payload.identity || "").trim(),
-    version: String(payload.version || "").trim(),
-    groupId: String(payload.groupId || payload.group_id || "").trim(),
-    groupName: String(payload.groupName || payload.group_name || "").trim(),
-    timestamp: payload.timestamp ? new Date(payload.timestamp).toISOString() : nowIso(),
-    uplinks: uplinks
-      .map((item) => {
-        const gateway = normalizeRouterosText(item.gateway || item.expectedPublicIp || item.expected_public_ip || "", "Gateway MikroTik");
-        const interfaceName = normalizeRouterosText(item.interface || item.interfaceName || item.interface_name || "", "Interface MikroTik");
-        const name = normalizeRouterosText(item.name || item.linkName || item.link_name || interfaceName || gateway || "", "Nome do link MikroTik");
-        const prefixLength = normalizeNetworkPrefixLength(item.prefixLength ?? item.prefix_length ?? item.prefix ?? item.mask);
-        const addressInfo = normalizeRouterosAddress(item.address || item.publicIp || item.public_ip || "");
-        return {
-          name,
-          interfaceName,
-          gateway,
-          prefixLength,
-          healthTarget: normalizeOptionalHost(item.healthTarget || item.health_target || item.target || item.checkHost || item.check_host || "", "Alvo de teste MikroTik"),
-          address: addressInfo.address,
-          addressCidr: normalizeRouterosText(item.addressCidr || item.address_cidr || addressInfo.addressCidr || "", "Endereco CIDR MikroTik"),
-          running: item.running === true || item.running === "true" || item.status === "up" || item.status === "online",
-          healthy: item.healthy === true || item.healthy === "true" || item.status === "up" || item.status === "online",
-          activeRoute: item.activeRoute === true || item.active_route === true || item.activeRoute === "true" || item.role === "active",
-          role: String(item.role || "").trim(),
-          pingSent: Math.max(0, Number(item.pingSent ?? item.ping_sent ?? 0) || 0),
-          pingReceived: Math.max(0, Number(item.pingReceived ?? item.ping_received ?? 0) || 0),
-          routeDistance: String(item.routeDistance || item.route_distance || "").trim()
+  if (Array.isArray(result.discoveredInterfaces) && result.discoveredInterfaces.length) {
+    device.discoveredInterfaces = result.discoveredInterfaces
+      .slice(0, 200)
+      .map((entry) => ({
+        ifIndex: Number(entry?.ifIndex),
+        ifDescr: String(entry?.ifDescr || "").trim().slice(0, 200)
+      }))
+      .filter((entry) => Number.isFinite(entry.ifIndex) && entry.ifIndex >= 0);
+
+    // Cria automaticamente um link pra cada interface nova encontrada no walk
+    // SNMP — comeca com featured:false (colapsado sob o dispositivo na UI)
+    // ate o admin marcar no editor do dispositivo quais interfaces sao WAN de
+    // verdade (ver checklist em openNetworkDeviceDialog/submitNetworkDevice
+    // no app.js).
+    const existingIfIndexes = new Set(
+      listedNetworkLinks()
+        .filter((link) => link.networkDeviceId === device.id && link.snmpIfIndex != null)
+        .map((link) => link.snmpIfIndex)
+    );
+    for (const iface of device.discoveredInterfaces) {
+      if (existingIfIndexes.has(iface.ifIndex)) continue;
+      const createdAt = nowIso();
+      try {
+        const newLink = {
+          id: randomUUID(),
+          currentStatus: "unknown",
+          previousStatus: "unknown",
+          statusChangedAt: createdAt,
+          lastCheckedAt: null,
+          lastLatencyMs: null,
+          lastPacketLossPercent: null,
+          lastJitterMs: null,
+          lastError: null,
+          consecutiveFailures: 0,
+          createdAt,
+          updatedAt: createdAt,
+          ...normalizeNetworkLink({
+            name: iface.ifDescr || `Interface ${iface.ifIndex}`,
+            networkDeviceId: device.id,
+            snmpIfIndex: iface.ifIndex,
+            snmpIfDescr: iface.ifDescr,
+            featured: false
+          })
         };
-      })
-      .filter((item) => item.name && (item.interfaceName || item.gateway))
-      .slice(0, 20)
-  };
-}
-
-function groupIdForMikrotikPayload(data) {
-  if (data.groupId && listedGroups().some((group) => group.id === data.groupId)) return data.groupId;
-  if (!data.groupName) return null;
-  const existing = listedGroups().find((group) => group.name.toLowerCase() === data.groupName.toLowerCase());
-  if (existing) return existing.id;
-  const createdAt = nowIso();
-  const group = {
-    id: randomUUID(),
-    name: data.groupName,
-    description: "Criada automaticamente pelo MikroTik Uplink Probe.",
-    type: "company",
-    logoDataUrl: "",
-    createdAt,
-    updatedAt: createdAt,
-    deletedAt: null
-  };
-  state.groups.unshift(group);
-  return group.id;
-}
-
-function findOrCreateMikrotikDevice(data, groupId, req) {
-  const existing = listedNetworkDevices().find((device) => device.mikrotikAgentId === data.agentId);
-  if (existing) {
-    existing.name = data.deviceName || existing.name;
-    existing.vendor = "mikrotik";
-    existing.model = existing.model || "RouterOS";
-    existing.groupId = groupId || existing.groupId || null;
-    existing.managementIp = existing.managementIp || normalizeRemoteAddress(req?.socket?.remoteAddress || "");
-    existing.mikrotikAgentId = data.agentId;
-    existing.mikrotikIdentity = data.identity || existing.mikrotikIdentity || "";
-    existing.mikrotikVersion = data.version || existing.mikrotikVersion || "";
-    existing.lastSeenAt = data.timestamp;
-    existing.isActive = true;
-    existing.updatedAt = nowIso();
-    return { device: existing, created: false };
-  }
-
-  const createdAt = nowIso();
-  const device = {
-    id: randomUUID(),
-    name: data.deviceName,
-    vendor: "mikrotik",
-    model: "RouterOS",
-    managementIp: normalizeRemoteAddress(req?.socket?.remoteAddress || ""),
-    groupId,
-    probeId: null,
-    environment: "production",
-    tags: ["mikrotik", "uplink-probe"],
-    notes: "Criado automaticamente pelo MikroTik Uplink Probe.",
-    isActive: true,
-    mikrotikAgentId: data.agentId,
-    mikrotikIdentity: data.identity || "",
-    mikrotikVersion: data.version || "",
-    lastSeenAt: data.timestamp,
-    createdAt,
-    updatedAt: createdAt,
-    deletedAt: null
-  };
-  state.networkDevices.unshift(device);
-  return { device, created: true };
-}
-
-function findOrCreateMikrotikLink(data, device, uplink, groupId) {
-  const existing = listedNetworkLinks().find(
-    (link) =>
-      link.monitorSource === "mikrotik" &&
-      link.mikrotikAgentId === data.agentId &&
-      ((uplink.interfaceName && link.interfaceName === uplink.interfaceName) || (uplink.gateway && link.expectedPublicIp === uplink.gateway))
-  );
-  if (existing) return { link: existing, created: false };
-
-  const createdAt = nowIso();
-  const link = {
-    id: randomUUID(),
-    name: uplink.name,
-    networkDeviceId: device.id,
-    groupId,
-    provider: "",
-    linkType: "internet",
-    interfaceName: uplink.interfaceName,
-    targetHost: uplink.gateway || uplink.address || uplink.interfaceName,
-    targetHosts: [uplink.gateway || uplink.address || uplink.interfaceName].filter(Boolean),
-    targets: [{ name: uplink.name, host: uplink.gateway || uplink.address || uplink.interfaceName, gateway: uplink.gateway, prefixLength: uplink.prefixLength }],
-    expectedPublicIp: uplink.gateway || "",
-    expectedPublicPrefixLength: uplink.prefixLength,
-    contractedDownloadMbps: 0,
-    contractedUploadMbps: 0,
-    probeId: null,
-    monitorSource: "mikrotik",
-    mikrotikAgentId: data.agentId,
-    mikrotikVersion: data.version || null,
-    checkInterval: 10,
-    failureThreshold: 1,
-    degradedLatencyMs: 120,
-    degradedPacketLossPercent: 10,
-    degradedJitterMs: 40,
-    sampleCount: 1,
-    currentStatus: "unknown",
-    previousStatus: "unknown",
-    statusChangedAt: createdAt,
-    lastCheckedAt: null,
-    lastLatencyMs: null,
-    lastPacketLossPercent: null,
-    lastJitterMs: null,
-    targetResults: [],
-    lastError: null,
-    lastProbeSeenAt: null,
-    consecutiveFailures: 0,
-    isActive: true,
-    notes: "Criado automaticamente pelo MikroTik Uplink Probe.",
-    createdAt,
-    updatedAt: createdAt,
-    deletedAt: null
-  };
-  state.networkLinks.unshift(link);
-  return { link, created: true };
-}
-
-function applyMikrotikUplinkStatus(payload, req) {
-  const data = normalizeMikrotikPayload(payload);
-  const groupId = groupIdForMikrotikPayload(data);
-  const { device, created: deviceCreated } = findOrCreateMikrotikDevice(data, groupId, req);
-  const updatedLinks = [];
-  let changed = deviceCreated;
-
-  for (const uplink of data.uplinks) {
-    const { link, created } = findOrCreateMikrotikLink(data, device, uplink, device.groupId || groupId || null);
-    const previousStatus = link.currentStatus || "unknown";
-    const currentStatus = uplink.running && uplink.healthy ? "online" : "offline";
-    const activeTargetHost = uplink.activeRoute ? (uplink.gateway || uplink.address || null) : null;
-    const targetHost = uplink.healthTarget || uplink.gateway || uplink.address || uplink.interfaceName;
-    const lossPercent = uplink.pingSent ? Math.round(((uplink.pingSent - uplink.pingReceived) / uplink.pingSent) * 1000) / 10 : uplink.healthy ? 0 : 100;
-    const routeLabel = uplink.activeRoute && uplink.healthy
-      ? "Rota padrao ativa com navegacao"
-      : uplink.running && uplink.healthy
-      ? "Redundancia com navegacao"
-      : uplink.running
-      ? "Interface ativa sem navegacao"
-      : "Interface sem link";
-
-    link.name = uplink.name || link.name;
-    link.networkDeviceId = device.id;
-    link.groupId = device.groupId || groupId || link.groupId || null;
-    link.monitorSource = "mikrotik";
-    link.mikrotikAgentId = data.agentId;
-    link.mikrotikVersion = data.version || link.mikrotikVersion || null;
-    link.mikrotikRole = uplink.activeRoute ? "active" : uplink.running ? "redundancy" : "offline";
-    link.mikrotikRouteDistance = uplink.routeDistance || "";
-    link.mikrotikInterfaceRunning = uplink.running;
-    link.mikrotikHealthTarget = uplink.healthTarget || "";
-    link.mikrotikHealthReceived = uplink.pingReceived;
-    link.mikrotikHealthSent = uplink.pingSent;
-    link.interfaceName = uplink.interfaceName || link.interfaceName || "";
-    link.targetHost = targetHost;
-    link.targetHosts = [targetHost].filter(Boolean);
-    link.targets = [{ name: uplink.name, host: targetHost, gateway: uplink.gateway, prefixLength: uplink.prefixLength }];
-    link.expectedPublicIp = uplink.gateway || link.expectedPublicIp || "";
-    link.expectedPublicPrefixLength = uplink.prefixLength || link.expectedPublicPrefixLength || null;
-    link.observedPublicIp = uplink.address || null;
-    link.lastProbeSeenAt = data.timestamp;
-    link.lastCheckedAt = data.timestamp;
-    link.lastLatencyMs = null;
-    link.lastPacketLossPercent = lossPercent;
-    link.lastJitterMs = null;
-    link.lastError = currentStatus === "online" ? null : uplink.running ? "Interface ativa, mas sem navegacao pelo health-check." : "MikroTik reportou interface sem link.";
-    link.activeTargetHost = activeTargetHost;
-    link.activeTargetName = uplink.activeRoute ? uplink.name : "";
-    link.activeDetection = uplink.activeRoute ? "mikrotik_default_route" : "";
-    link.targetResults = [
-      {
-        targetHost,
-        targetName: uplink.name,
-        gateway: uplink.gateway,
-        prefixLength: uplink.prefixLength,
-        online: uplink.healthy,
-        latencyMs: null,
-        packetLossPercent: lossPercent,
-        egressActive: uplink.activeRoute,
-        egressSubnetActive: false,
-        sent: uplink.pingSent,
-        received: uplink.pingReceived,
-        error: currentStatus === "online" ? null : link.lastError,
-        detail: routeLabel
+        state.networkLinks.unshift(newLink);
+        existingIfIndexes.add(iface.ifIndex);
+      } catch {
+        // nome invalido ou outro erro de validacao — pula essa interface, nao derruba o resto
       }
-    ];
-    link.consecutiveFailures = currentStatus === "online" ? 0 : (link.consecutiveFailures || 0) + 1;
-    link.currentStatus = currentStatus;
-    link.updatedAt = nowIso();
-    updatedLinks.push(publicNetworkLink(link));
-
-    if (link.isActive !== false && (created || previousStatus !== currentStatus || uplink.activeRoute !== (link.previousMikrotikActiveRoute === true))) {
-      link.previousStatus = previousStatus;
-      link.statusChangedAt = data.timestamp;
-      addNetworkEvent(
-        link,
-        previousStatus,
-        currentStatus,
-        `${routeLabel} via MikroTik ${data.agentId}${uplink.gateway ? ` gateway ${uplink.gateway}` : ""}.`
-      );
-      changed = true;
     }
-    link.previousMikrotikActiveRoute = uplink.activeRoute;
   }
 
-  scheduleSave();
-  scheduleBroadcastSnapshot();
-  return {
-    device: publicNetworkDevice(device),
-    links: updatedLinks,
-    changed
-  };
+  let acceptedInterfaces = 0;
+  const interfaceResults = Array.isArray(result.interfaceResults) ? result.interfaceResults : [];
+  for (const interfaceResult of interfaceResults) {
+    const link = listedNetworkLinks().find((item) => item.id === interfaceResult.linkId);
+    if (!link || link.networkDeviceId !== device.id) continue;
+    if (applyNetworkLinkSnmpResult(link, interfaceResult, networkProbeId)) acceptedInterfaces += 1;
+  }
+
+  // Interface que a tabela de rotas do dispositivo diz que carrega a rota
+  // padrao agora — sinal mais confiavel de "link ativo de verdade" do que
+  // volume de trafego (ver pollActiveRouteIfIndex em probe/snmp/poller.js).
+  // Se o agente nao expoe ipCidrRouteTable, activeRouteIfIndex vem null e os
+  // links do dispositivo mantem snmpActiveRoute como esta (undefined), o que
+  // faz o frontend cair pro heuristico de trafego.
+  if (result.activeRouteIfIndex != null) {
+    for (const link of listedNetworkLinks()) {
+      if (link.networkDeviceId !== device.id) continue;
+      const isActiveRoute = link.snmpIfIndex === result.activeRouteIfIndex;
+      link.snmpActiveRoute = isActiveRoute;
+      // A interface confirmada como rota ativa promove-se sozinha pra fora
+      // da lista de "nao destacadas" — sem isso, quando a rota ativa cai
+      // numa interface que o admin ainda nao tinha marcado como WAN, NENHUM
+      // link visivel ficava com o selo ATIVO (o vencedor ficava escondido
+      // atras do toggle de interfaces colapsadas). So promove, nunca despromove
+      // (perder a rota ativa nao deveria esconder um link que o admin
+      // decidiu manter visivel).
+      if (isActiveRoute && link.featured === false) {
+        link.featured = true;
+        link.updatedAt = nowIso();
+      }
+    }
+  }
+
+  return acceptedInterfaces;
+}
+
+// Dispositivos com SNMP habilitado e sem Network Probe de LAN atribuido —
+// alcancados direto pelo servidor (ex: via tunel WireGuard ate a VPN do
+// cliente), sem precisar instalar um probe na rede.
+function centrallyCollectedNetworkDevices() {
+  return listedNetworkDevices().filter(
+    (device) => device.snmpEnabled && !device.networkProbeId && device.managementIp && device.snmpCommunity
+  );
+}
+
+async function runCentralSnmpCycle() {
+  const devices = centrallyCollectedNetworkDevices();
+  if (!devices.length) return;
+  let touched = false;
+  await Promise.all(
+    devices.map(async (device) => {
+      const interfaces = listedNetworkLinks()
+        .filter((link) => link.networkDeviceId === device.id && link.snmpIfIndex != null)
+        .map((link) => ({ linkId: link.id, snmpIfIndex: link.snmpIfIndex }));
+      const target = {
+        deviceId: device.id,
+        managementIp: device.managementIp,
+        snmpPort: device.snmpPort || 161,
+        snmpCommunity: device.snmpCommunity,
+        vendor: device.vendor || "generic",
+        interfaces
+      };
+      try {
+        const result = await pollDevice(target, CENTRAL_SNMP_TIMEOUT_MS);
+        applyNetworkDeviceSnmpResult(device, result, device.networkProbeId);
+      } catch (error) {
+        applyNetworkDeviceSnmpResult(device, { snmpStatus: "unreachable", error: error.message }, device.networkProbeId);
+      }
+      touched = true;
+    })
+  );
+  if (touched) {
+    scheduleSave();
+    scheduleBroadcastSnapshot();
+  }
+}
+
+function daysUntilDate(dateStr) {
+  const end = new Date(`${dateStr}T00:00:00`).getTime();
+  if (!Number.isFinite(end)) return null;
+  const today = new Date();
+  const todayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime();
+  return Math.round((end - todayStart) / 86400000);
+}
+
+function formatBrDate(dateStr) {
+  const [year, month, day] = String(dateStr || "").split("-");
+  return year && month && day ? `${day}/${month}/${year}` : String(dateStr || "");
+}
+
+// Varre os serviceContracts de todas as empresas e gera um alerta quando a
+// data de fim entra na janela de aviso (10 dias). `expiryAlertedAt` no
+// proprio contrato evita reenviar o mesmo alerta a cada ciclo; se a data foi
+// adiada pra fora da janela, reseta o controle pra permitir um novo alerta
+// caso ela volte a entrar na janela depois.
+function checkContractExpirations() {
+  let changed = false;
+  for (const group of listedGroups()) {
+    for (const contract of group.serviceContracts || []) {
+      const daysLeft = daysUntilDate(contract.endDate);
+      if (daysLeft === null) continue;
+      if (daysLeft > CONTRACT_EXPIRY_NOTIFY_DAYS) {
+        if (contract.expiryAlertedAt) {
+          contract.expiryAlertedAt = null;
+          changed = true;
+        }
+        continue;
+      }
+      if (contract.expiryAlertedAt) continue;
+      const message =
+        daysLeft < 0
+          ? `${contract.label} de ${group.name} venceu ha ${Math.abs(daysLeft)} dia(s) (${formatBrDate(contract.endDate)}).`
+          : daysLeft === 0
+          ? `${contract.label} de ${group.name} vence hoje (${formatBrDate(contract.endDate)}).`
+          : `${contract.label} de ${group.name} vence em ${daysLeft} dia(s) (${formatBrDate(contract.endDate)}).`;
+      const createdAt = nowIso();
+      const alert = {
+        id: randomUUID(),
+        groupId: group.id,
+        groupName: group.name,
+        type: "contract_expiring",
+        severity: daysLeft < 0 ? "critical" : "warning",
+        message,
+        createdAt,
+        read: false,
+        acknowledgedAt: null,
+        acknowledgedBy: null,
+        acknowledgmentNote: ""
+      };
+      state.alerts.unshift(alert);
+      state.alerts = state.alerts.slice(0, 200);
+      contract.expiryAlertedAt = createdAt;
+      changed = true;
+      broadcast({ type: "alert", alert });
+    }
+  }
+  if (changed) scheduleSave();
 }
 
 function summary(currentUser = null) {
@@ -2518,6 +2500,7 @@ function snapshot(currentUser = null) {
     networkDevices: visibleNetworkDevices.map(publicNetworkDevice),
     networkLinks: visibleNetworkLinks.map(publicNetworkLink),
     networkEvents: scopedNetworkEvents(currentUser).slice(0, 100),
+    networkDiscoverySuggestions: isAdminUser(currentUser) ? networkDiscoverySuggestions() : [],
     probes: isAdminUser(currentUser) ? (state.probes || []).filter((probe) => !probe.deletedAt).map(publicProbe) : [],
     users: isAdminUser(currentUser) ? listedUsers().map(publicUser) : [],
     currentUser: currentUser ? publicUser(currentUser) : null,
@@ -2881,6 +2864,60 @@ function normalizeProxmoxSettings(payload, existing = {}) {
   };
 }
 
+const PROXMOX_DATASTORE_HISTORY_DAYS = 180;
+
+function proxmoxHistoryDay(value = new Date()) {
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return new Date().toISOString().slice(0, 10);
+  return date.toISOString().slice(0, 10);
+}
+
+function normalizeProxmoxDatastoreHistory(history = []) {
+  if (!Array.isArray(history)) return [];
+  return history
+    .map((entry) => ({
+      datastore: String(entry.datastore || "").trim(),
+      day: String(entry.day || "").trim(),
+      sampledAt: entry.sampledAt || null,
+      usedBytes: Number(entry.usedBytes) || 0,
+      totalBytes: Number(entry.totalBytes) || 0,
+      availBytes: Number(entry.availBytes) || 0
+    }))
+    .filter((entry) => entry.datastore && /^\d{4}-\d{2}-\d{2}$/.test(entry.day));
+}
+
+function withProxmoxDatastoreHistory(previousState = {}, nextState = {}) {
+  const now = new Date();
+  const today = proxmoxHistoryDay(now);
+  const cutoff = new Date(now);
+  cutoff.setUTCDate(cutoff.getUTCDate() - PROXMOX_DATASTORE_HISTORY_DAYS);
+  const cutoffDay = proxmoxHistoryDay(cutoff);
+  const entries = normalizeProxmoxDatastoreHistory(previousState.datastoreHistory);
+  const byKey = new Map(entries.map((entry) => [`${entry.datastore}::${entry.day}`, entry]));
+
+  for (const datastore of nextState.datastores || []) {
+    const name = String(datastore.datastore || "").trim();
+    if (!name) continue;
+    byKey.set(`${name}::${today}`, {
+      datastore: name,
+      day: today,
+      sampledAt: now.toISOString(),
+      usedBytes: Number(datastore.usedBytes) || 0,
+      totalBytes: Number(datastore.totalBytes) || 0,
+      availBytes: Number(datastore.availBytes) || 0
+    });
+  }
+
+  const datastoreHistory = [...byKey.values()]
+    .filter((entry) => entry.day >= cutoffDay)
+    .sort((left, right) => left.datastore.localeCompare(right.datastore) || left.day.localeCompare(right.day));
+
+  return {
+    ...nextState,
+    datastoreHistory
+  };
+}
+
 function getUnifiConfig() {
   const baseUrl = String(process.env.UNIFI_BASE_URL || state.settings.unifiBaseUrl || "").trim().replace(/\/+$/, "");
   const apiKey = String(process.env.UNIFI_API_KEY || state.settings.unifiApiKey || "").trim();
@@ -2946,7 +2983,9 @@ async function refreshProxmoxBackup() {
     return;
   }
   try {
-    state.proxmoxBackup = await fetchProxmoxBackupSummary(config);
+    const previousProxmoxBackup = state.proxmoxBackup || emptyProxmoxBackupState();
+    const nextProxmoxBackup = await fetchProxmoxBackupSummary(config);
+    state.proxmoxBackup = withProxmoxDatastoreHistory(previousProxmoxBackup, nextProxmoxBackup);
   } catch (error) {
     state.proxmoxBackup = {
       ...(state.proxmoxBackup || emptyProxmoxBackupState()),
@@ -2994,7 +3033,7 @@ function compareVersions(left, right) {
 
 function probeVersionStatus(probe) {
   if (!probe.version) return "unknown";
-  return compareVersions(probe.version, PROBE_COLLECTOR_VERSION) < 0 ? "outdated" : "current";
+  return compareVersions(probe.version, expectedProbeVersion(probe)) < 0 ? "outdated" : "current";
 }
 
 function probeUpdateSupported(probe) {
@@ -3031,16 +3070,23 @@ function publicProbe(probe) {
   const servers = listedServers().filter((server) => server.checkSource === "probe" && server.probeId === probe.id);
   const staleServers = servers.filter((server) => probeConnection(server).status === "stale").length;
   const versionStatus = probeVersionStatus(probe);
-  const updateRequest = activeProbeUpdateRequest(probe.id) || latestProbeUpdateRequest(probe.id);
+  const updateRequest = probeUpdateSupported(probe)
+    ? activeProbeUpdateRequest(probe.id) || latestProbeUpdateRequest(probe.id)
+    : null;
+  const visibleUpdateRequest =
+    updateRequest?.status === "failed" && versionStatus === "outdated" ? null : updateRequest;
   return {
     id: probe.id,
     name: probe.name || probe.id,
+    probeType: probe.probeType || "host",
+    discoveredGatewayIp: probe.discoveredGatewayIp || null,
+    discoveredGatewayReportedAt: probe.discoveredGatewayReportedAt || null,
     version: probe.version || null,
-    latestVersion: PROBE_COLLECTOR_VERSION,
+    latestVersion: expectedProbeVersion(probe),
     versionStatus,
     updateAvailable: versionStatus === "outdated",
     updateSupported: probeUpdateSupported(probe),
-    updateRequest: publicProbeUpdateRequest(updateRequest),
+    updateRequest: publicProbeUpdateRequest(visibleUpdateRequest),
     hostName: probe.hostName || null,
     primaryAddress: probe.primaryAddress || null,
     addresses: Array.isArray(probe.addresses) ? probe.addresses : [],
@@ -3054,7 +3100,13 @@ function publicProbe(probe) {
     deletedAt: probe.deletedAt || null,
     status: staleServers ? "stale" : probe.lastSeenAt ? "online" : "unknown",
     targetCount: servers.length,
-    staleTargetCount: staleServers
+    staleTargetCount: staleServers,
+    // Teste ativo de banda (download real, nao so trafego observado por SNMP)
+    // — so existe pra Network Probes, ver runSpeedTest() em network-collector.js.
+    speedTestDownloadMbps: probe.speedTestDownloadMbps ?? null,
+    speedTestUploadMbps: probe.speedTestUploadMbps ?? null,
+    speedTestAt: probe.speedTestAt || null,
+    speedTestPending: Boolean(probe.forceSpeedTestAt)
   };
 }
 
@@ -3366,7 +3418,7 @@ function createProbeUpdateRequest(probe, requestedBy = "Sistema") {
   const request = {
     id: randomUUID(),
     probeId: probe.id,
-    targetVersion: PROBE_COLLECTOR_VERSION,
+    targetVersion: expectedProbeVersion(probe),
     status: "pending",
     requestedAt: nowIso(),
     requestedBy,
@@ -3377,11 +3429,25 @@ function createProbeUpdateRequest(probe, requestedBy = "Sistema") {
   state.probeUpdateRequests.unshift(request);
   state.probeUpdateRequests = state.probeUpdateRequests.slice(0, 500);
   const server = linkedServerForProbe(probe.id);
-  if (server) addProbeEvent(server, "probe_update_requested", `Atualizacao do probe solicitada para ${PROBE_COLLECTOR_VERSION}.`);
+  if (server) addProbeEvent(server, "probe_update_requested", `Atualizacao do probe solicitada para ${request.targetVersion}.`);
   return { request, created: true };
 }
 
-function upsertProbe({ probeId, name, version, hostName, primaryAddress, addresses, platform, primaryMac, macAddresses, hostMetrics, remoteAddress }) {
+function upsertProbe({
+  probeId,
+  name,
+  version,
+  hostName,
+  primaryAddress,
+  addresses,
+  platform,
+  primaryMac,
+  macAddresses,
+  hostMetrics,
+  remoteAddress,
+  probeType,
+  discoveredGatewayIp
+}) {
   const id = String(probeId || "").trim();
   if (!id) return null;
   const existing = state.probes.find((probe) => probe.id === id);
@@ -3393,6 +3459,7 @@ function upsertProbe({ probeId, name, version, hostName, primaryAddress, address
   const payload = {
     id,
     name: String(name || existing?.name || id).trim(),
+    probeType: probeType === "network" ? "network" : existing?.probeType || "host",
     version: String(version || existing?.version || "").trim() || null,
     hostName: String(hostName || existing?.hostName || "").trim() || null,
     primaryAddress: normalizedPrimaryAddress,
@@ -3406,10 +3473,16 @@ function upsertProbe({ probeId, name, version, hostName, primaryAddress, address
     lastAddress: remoteAddress || existing?.lastAddress || null,
     deletedAt: null
   };
+  if (discoveredGatewayIp !== undefined) {
+    const trimmedGateway = String(discoveredGatewayIp || "").trim();
+    payload.discoveredGatewayIp = trimmedGateway || null;
+    payload.discoveredGatewayReportedAt = trimmedGateway ? nowIso() : existing?.discoveredGatewayReportedAt || null;
+  }
   if (existing) {
     const previousVersion = existing.version || null;
     let changed =
       existing.name !== payload.name ||
+      existing.probeType !== payload.probeType ||
       existing.version !== payload.version ||
       existing.hostName !== payload.hostName ||
       existing.primaryAddress !== payload.primaryAddress ||
@@ -3424,11 +3497,13 @@ function upsertProbe({ probeId, name, version, hostName, primaryAddress, address
     Object.assign(existing, payload);
     recordProbeVersionChange(existing.id, previousVersion, existing.version || null);
     if (finishProbeUpdateIfCurrent(existing)) changed = true;
+    recordProbeMetrics(id, normalizedHostMetrics);
     return { probe: existing, changed };
   }
   const probe = { createdAt: nowIso(), ...payload };
   state.probes.push(probe);
   finishProbeUpdateIfCurrent(probe);
+  recordProbeMetrics(id, normalizedHostMetrics);
   return { probe, changed: true };
 }
 
@@ -3601,6 +3676,45 @@ function probeTargets(probeId) {
   };
 }
 
+// Dispositivos SNMP atribuidos a um Network Probe, com a community string em
+// texto puro — so sai do servidor aqui, autenticado por token de probe, nunca
+// via sessao de usuario (ver publicNetworkDevice, que expoe so snmpCommunitySet).
+function networkDeviceTargets(networkProbeId) {
+  return listedNetworkDevices()
+    .filter((device) => device.networkProbeId === networkProbeId && device.snmpEnabled && device.managementIp)
+    .map((device) => ({
+      deviceId: device.id,
+      managementIp: device.managementIp,
+      snmpCommunity: device.snmpCommunity || "",
+      snmpPort: device.snmpPort || 161,
+      vendor: device.vendor || "generic",
+      interfaces: listedNetworkLinks()
+        .filter((link) => link.networkDeviceId === device.id && link.snmpIfIndex != null && link.isActive !== false)
+        .map((link) => ({ linkId: link.id, snmpIfIndex: link.snmpIfIndex }))
+    }));
+}
+
+// Probes de rede que ja reportaram um gateway detectado automaticamente mas
+// ainda nao tem nenhum networkDevice cadastrado com esse IP — vira sugestao
+// de cadastro na tela de Redes.
+function networkDiscoverySuggestions() {
+  const knownManagementIps = new Set(listedNetworkDevices().map((device) => device.managementIp).filter(Boolean));
+  return (state.probes || [])
+    .filter(
+      (probe) =>
+        !probe.deletedAt &&
+        (probe.probeType || "host") === "network" &&
+        probe.discoveredGatewayIp &&
+        !knownManagementIps.has(probe.discoveredGatewayIp)
+    )
+    .map((probe) => ({
+      probeId: probe.id,
+      probeName: probe.name || probe.id,
+      discoveredGatewayIp: probe.discoveredGatewayIp,
+      discoveredGatewayReportedAt: probe.discoveredGatewayReportedAt || null
+    }));
+}
+
 function applyProbeResult(server, result, probeId, options = {}) {
   const verification = Boolean(options.verification);
   const wasProbeStale = !verification && server.probeEventStatus === "stale";
@@ -3644,14 +3758,24 @@ function getSession(req) {
   const token = parseCookies(req)[SESSION_COOKIE];
   if (!token) return null;
   const session = sessions.get(token);
-  if (!session || session.expiresAt <= Date.now()) {
+  const now = Date.now();
+  if (!session || session.expiresAt <= now) {
     sessions.delete(token);
+    state.sessions = (state.sessions || []).filter((s) => s.token !== token);
     return null;
   }
   const user = listedUsers().find((item) => item.id === session.userId && item.isActive !== false);
   if (!user) {
     sessions.delete(token);
+    state.sessions = (state.sessions || []).filter((s) => s.token !== token);
     return null;
+  }
+  // Sliding window: renew if more than 1 day has elapsed since last renewal
+  if (session.expiresAt - now < SESSION_TTL_MS - 24 * 60 * 60 * 1000) {
+    session.expiresAt = now + SESSION_TTL_MS;
+    const idx = (state.sessions || []).findIndex((s) => s.token === token);
+    if (idx !== -1) state.sessions[idx].expiresAt = session.expiresAt;
+    scheduleSave();
   }
   return { token, user };
 }
@@ -3682,25 +3806,6 @@ async function handleApi(req, res) {
       return sendJson(res, 200, healthPayload());
     }
 
-    if (parts[1] === "link-status") {
-      if (req.method !== "POST") return notFound(res);
-      if (!authorizeProbe(req)) {
-        return sendJson(res, 401, { error: "Token do LinkProbe invalido." });
-      }
-      const payload = await readBody(req);
-      const link = applyLinkProbeStatus(payload, req);
-      return sendJson(res, 202, { ok: true, link });
-    }
-
-    if (parts[1] === "network" && parts[2] === "mikrotik-uplinks") {
-      if (req.method !== "POST") return notFound(res);
-      if (!authorizeProbe(req)) {
-        return sendJson(res, 401, { error: "Token do MikroTik Uplink Probe invalido." });
-      }
-      const payload = await readBody(req);
-      const result = applyMikrotikUplinkStatus(payload, req);
-      return sendJson(res, 202, { ok: true, ...result });
-    }
 
     if (parts[1] === "auth") {
       if (req.method === "GET" && parts[2] === "session") {
@@ -3720,7 +3825,9 @@ async function handleApi(req, res) {
           return sendJson(res, 401, { error: "E-mail ou senha invalidos." });
         }
         const token = randomUUID();
-        sessions.set(token, { userId: user.id, expiresAt: Date.now() + SESSION_TTL_MS });
+        const expiresAt = Date.now() + SESSION_TTL_MS;
+        sessions.set(token, { userId: user.id, expiresAt });
+        state.sessions = [...(state.sessions || []), { token, userId: user.id, expiresAt }];
         user.lastLoginAt = nowIso();
         user.updatedAt = user.updatedAt || user.lastLoginAt;
         scheduleSave();
@@ -3753,10 +3860,62 @@ async function handleApi(req, res) {
 
       if (req.method === "POST" && parts[2] === "logout") {
         const session = getSession(req);
-        if (session) sessions.delete(session.token);
+        if (session) {
+          sessions.delete(session.token);
+          state.sessions = (state.sessions || []).filter((s) => s.token !== session.token);
+          scheduleSave();
+        }
         clearSessionCookie(res, SESSION_COOKIE);
         return sendJson(res, 200, { ok: true });
       }
+    }
+
+    if (req.method === "GET" && parts[1] === "metrics" && parts[2] === "history") {
+      const session = requireSession(req, res);
+      if (!session) return;
+      const probeId = url.searchParams.get("probeId");
+      if (!probeId) return sendJson(res, 400, { error: "Informe probeId." });
+      const type = url.searchParams.get("type") === "long" ? "long" : "short";
+      const entry = metricsHistory.get(probeId);
+      return sendJson(res, 200, { probeId, type, samples: entry ? entry[type] : [] });
+    }
+
+    // Historico agregado de banda (soma de todos os links SNMP "featured" da
+    // empresa) — alimenta o grafico de variacao de velocidade na visao de
+    // empresa da pagina Redes. Agrupa amostras de cada link por minuto.
+    if (req.method === "GET" && parts[1] === "network" && parts[2] === "groups" && parts[4] === "bps-history") {
+      const session = requireSession(req, res);
+      if (!session) return;
+      const groupId = decodeURIComponent(parts[3] || "");
+      if (groupId !== "none" && !canAccessGroup(session.user, groupId)) {
+        return sendJson(res, 403, { error: "Sem acesso a esta empresa." });
+      }
+      const links = listedNetworkLinks().filter(
+        (link) => (link.groupId || "none") === groupId && link.featured !== false && link.snmpIfIndex != null
+      );
+      const buckets = new Map();
+      for (const link of links) {
+        const entry = networkLinkBpsHistory.get(link.id);
+        if (!entry) continue;
+        for (const sample of entry.samples) {
+          const bucketKey = Math.round(sample.t / 60_000) * 60_000;
+          const bucket = buckets.get(bucketKey) || { t: bucketKey, inBps: 0, outBps: 0 };
+          bucket.inBps += Number(sample.inBps) || 0;
+          bucket.outBps += Number(sample.outBps) || 0;
+          buckets.set(bucketKey, bucket);
+        }
+      }
+      const samples = Array.from(buckets.values()).sort((a, b) => a.t - b.t);
+      return sendJson(res, 200, { groupId, linkCount: links.length, samples });
+    }
+
+    // Historico do teste ATIVO de velocidade de um probe (nao o trafego
+    // passivo) — alimenta o grafico "Capacidade real" no detalhe do probe.
+    if (req.method === "GET" && parts[1] === "probes" && parts[3] === "speed-test-history") {
+      if (!requireAdmin(req, res)) return;
+      const probeId = decodeURIComponent(parts[2] || "");
+      const entry = probeSpeedTestHistory.get(probeId);
+      return sendJson(res, 200, { probeId, samples: entry ? entry.samples : [] });
     }
 
     if (parts[1] === "probe") {
@@ -3880,6 +4039,99 @@ async function handleApi(req, res) {
       }
     }
 
+    if (parts[1] === "network-probe") {
+      if (!authorizeProbe(req)) {
+        return sendJson(res, 401, { error: "Token do Network Probe invalido." });
+      }
+
+      if (req.method === "GET" && parts[2] === "validate") {
+        return sendJson(res, 200, {
+          ok: true,
+          service: "serverwatch",
+          timestamp: nowIso(),
+          probeId: String(url.searchParams.get("probeId") || "").trim() || null
+        });
+      }
+
+      if (req.method === "GET" && parts[2] === "targets") {
+        const probeId = String(url.searchParams.get("probeId") || "").trim();
+        const registered = upsertProbe({
+          probeId,
+          name: url.searchParams.get("name") || probeId,
+          version: url.searchParams.get("version") || null,
+          hostName: url.searchParams.get("hostName") || null,
+          primaryAddress: url.searchParams.get("primaryAddress") || null,
+          addresses: url.searchParams.get("addresses") || [],
+          platform: url.searchParams.get("platform") || null,
+          primaryMac: url.searchParams.get("primaryMac") || null,
+          macAddresses: url.searchParams.get("macAddresses") || [],
+          remoteAddress: req.socket.remoteAddress,
+          probeType: "network",
+          discoveredGatewayIp: url.searchParams.get("discoveredGatewayIp") || undefined
+        });
+        if (!registered) return sendJson(res, 400, { error: "Informe probeId." });
+        // Diferente do probe de host, aqui NAO chamamos ensureProbeServer — um
+        // network probe nunca deve virar um "servidor" fantasma no inventario.
+        scheduleSave();
+        if (registered.changed) scheduleBroadcastSnapshot();
+        return sendJson(res, 200, {
+          probe: publicProbe(registered.probe),
+          targets: networkDeviceTargets(registered.probe.id),
+          // Teste de velocidade ativo solicitado manualmente (botao "Testar
+          // agora") — o coletor roda fora do ciclo horario quando ve isto.
+          forceSpeedTestAt: registered.probe.forceSpeedTestAt || null,
+          // Atualizacao remota — o probe de host ja consumia isto, o network
+          // probe nunca recebia porque essa rota nao incluia o campo.
+          updateRequest: activeProbeUpdateRequest(registered.probe.id)
+        });
+      }
+
+      if (req.method === "POST" && parts[2] === "results") {
+        const payload = await readBody(req);
+        const registered = upsertProbe({
+          probeId: payload.probeId,
+          name: payload.name || payload.probeId,
+          version: payload.version || null,
+          hostName: payload.hostName || null,
+          primaryAddress: payload.primaryAddress || null,
+          addresses: payload.addresses || [],
+          platform: payload.platform || null,
+          primaryMac: payload.primaryMac || null,
+          macAddresses: payload.macAddresses || [],
+          remoteAddress: req.socket.remoteAddress,
+          probeType: "network",
+          discoveredGatewayIp: payload.discoveredGatewayIp ?? undefined
+        });
+        if (!registered) return sendJson(res, 400, { error: "Informe probeId." });
+        const probe = registered.probe;
+        const deviceResults = Array.isArray(payload.deviceResults) ? payload.deviceResults : [];
+        let acceptedDevices = 0;
+        let acceptedInterfaces = 0;
+        for (const deviceResult of deviceResults) {
+          const device = listedNetworkDevices().find((item) => item.id === deviceResult.deviceId);
+          if (!device || device.networkProbeId !== probe.id) continue;
+          acceptedInterfaces += applyNetworkDeviceSnmpResult(device, deviceResult, probe.id);
+          acceptedDevices += 1;
+        }
+        // Resultado do teste ativo de banda (download/upload real, medido
+        // contra um servidor externo — nao e o mesmo dado que o trafego SNMP
+        // passivo). So existe pra Network Probes, ver runSpeedTest().
+        let speedTestApplied = false;
+        const speedTest = payload.speedTest;
+        if (speedTest && Number.isFinite(Number(speedTest.downloadMbps))) {
+          probe.speedTestDownloadMbps = Number(speedTest.downloadMbps);
+          probe.speedTestUploadMbps = Number.isFinite(Number(speedTest.uploadMbps)) ? Number(speedTest.uploadMbps) : null;
+          probe.speedTestAt = speedTest.testedAt || nowIso();
+          probe.forceSpeedTestAt = null;
+          speedTestApplied = true;
+          recordProbeSpeedTest(probe.id, probe.speedTestDownloadMbps, probe.speedTestUploadMbps, probe.speedTestAt);
+        }
+        scheduleSave();
+        if (registered.changed || acceptedDevices > 0 || acceptedInterfaces > 0 || speedTestApplied) scheduleBroadcastSnapshot();
+        return sendJson(res, 200, { ok: true, acceptedDevices, acceptedInterfaces });
+      }
+    }
+
     const session = requireSession(req, res);
     if (!session) return;
 
@@ -3946,7 +4198,7 @@ function scopedRealtimePayload(user, payload) {
   if (!payload || !user || isAdminUser(user)) return payload;
   if (payload.server && !canAccessServer(user, payload.server.id)) return null;
   if (payload.event && !canAccessEvent(user, payload.event)) return null;
-  if (payload.alert && !canAccessServer(user, payload.alert.serverId)) return null;
+  if (payload.alert && !canAccessAlert(user, payload.alert)) return null;
   const scoped = { ...payload };
   if (payload.summary) scoped.summary = summary(user);
   if (payload.networkSummary) scoped.networkSummary = networkSummary(user);
@@ -4199,10 +4451,15 @@ const server = createServer((req, res) => {
 server.on("upgrade", handleUpgrade);
 
 await loadState();
+await loadMetricsHistory();
+await loadNetworkLinkBpsHistory();
+await loadProbeSpeedTestHistory();
 startMonitor();
 refreshCloudBackup().catch((error) => console.error("Falha ao buscar backups na inicializacao", error));
 refreshProxmoxBackup().catch((error) => console.error("Falha ao buscar Proxmox Backup Server na inicializacao", error));
 refreshUnifiNetwork().catch((error) => console.error("Falha ao buscar UniFi Network na inicializacao", error));
+runCentralSnmpCycle().catch((error) => console.error("Falha na coleta SNMP central na inicializacao", error));
+checkContractExpirations();
 setInterval(() => {
   refreshCloudBackup().catch((error) => console.error("Falha ao atualizar backups", error));
 }, CLOUDBACKUP_POLL_MS);
@@ -4212,4 +4469,8 @@ setInterval(() => {
 setInterval(() => {
   refreshUnifiNetwork().catch((error) => console.error("Falha ao atualizar UniFi Network", error));
 }, UNIFI_POLL_MS);
+setInterval(() => {
+  runCentralSnmpCycle().catch((error) => console.error("Falha na coleta SNMP central", error));
+}, CENTRAL_SNMP_POLL_MS);
+setInterval(checkContractExpirations, CONTRACT_EXPIRY_CHECK_MS);
 server.listen(PORT, HOST, printStartup);

@@ -4,6 +4,7 @@ const state = {
   probes: [],
   networkDevices: [],
   networkLinks: [],
+  networkDiscoverySuggestions: [],
   networkEvents: [],
   users: [],
   currentUser: null,
@@ -19,9 +20,11 @@ const state = {
   selectedNetworkLinkId: null,
   selectedNetworkGroupId: null,
   companyScopeQuery: "",
+  dashboardMode: localStorage.getItem("serverwatch.dashboardMode") === "complete" ? "complete" : "simple",
   groupLogoDraft: "",
   themeDraft: null,
   topologyExpanded: new Set(),
+  networkDeviceExpanded: new Set(),
   selectedBackupClientId: null,
   backupProvider: "msp",
   networkProvider: "connectivity",
@@ -30,11 +33,13 @@ const state = {
   backupLinkEditorOpen: null,
   probeInstallTarget: "linux",
   commandGeneratorMode: "server",
-  commandGeneratorMikrotikUplinks: [
-    { name: "Link 1 - Operadora", interfaceName: "ether1-WAN", gateway: "192.0.2.1", prefix: "30", target: "4.2.2.2" },
-    { name: "Link 2 - Operadora", interfaceName: "ether2-WAN", gateway: "198.51.100.1", prefix: "30", target: "149.112.112.112" }
-  ],
   filters: {
+    status: "all",
+    environment: "all",
+    groupId: "all",
+    query: ""
+  },
+  filterDraft: {
     status: "all",
     environment: "all",
     groupId: "all",
@@ -53,6 +58,73 @@ const state = {
   reconnectTimer: null,
   notificationsEnabled: false
 };
+
+const _mh = { open: false, probeId: null, type: "short", rangeMs: 6 * 60 * 60_000, chartsHtml: "" };
+
+const _nocSort = { column: null, direction: "asc" };
+
+// Campos que mudam em praticamente todo snapshot (timestamps de "ultima
+// checagem", latencia com jitter natural, metricas de host que oscilam a
+// cada coleta) mas nao representam algo que precise reconstruir a tela.
+// Ignorados ao decidir se um snapshot novo justifica um render completo —
+// sem isso, qualquer probe reportando (a cada poucos segundos, para dezenas
+// de probes) disparava um render() a cada ~300ms e piscava a interface
+// inteira embaixo do cursor do mouse.
+const SNAPSHOT_VOLATILE_KEYS = new Set([
+  "lastCheckedAt",
+  "probeLastSeenAt",
+  "lastProbeSeenAt",
+  "probeHostMetricsUpdatedAt",
+  "probeFallbackCheckedAt",
+  "updatedAt",
+  "lastSeenAt",
+  "hostMetricsUpdatedAt",
+  "fetchedAt",
+  "collectedAt",
+  "lastLatencyMs",
+  "probeHostMetrics",
+  "hostMetrics",
+  "consecutiveFailures",
+  "activeTargetHost",
+  "clientCount",
+  "totalBytes"
+]);
+
+function stripVolatileForFingerprint(value) {
+  if (Array.isArray(value)) return value.map(stripVolatileForFingerprint);
+  if (value && typeof value === "object") {
+    const out = {};
+    for (const key of Object.keys(value)) {
+      if (SNAPSHOT_VOLATILE_KEYS.has(key)) continue;
+      out[key] = stripVolatileForFingerprint(value[key]);
+    }
+    return out;
+  }
+  return value;
+}
+
+let _lastSnapshotFingerprint = null;
+
+function snapshotFingerprint(payload) {
+  return JSON.stringify(
+    stripVolatileForFingerprint({
+      summary: payload.summary,
+      servers: payload.servers,
+      groups: payload.groups,
+      probes: payload.probes,
+      networkDevices: payload.networkDevices,
+      networkLinks: payload.networkLinks,
+      networkEvents: payload.networkEvents,
+      users: payload.users,
+      settings: payload.settings,
+      alerts: payload.alerts,
+      events: payload.events,
+      cloudBackup: payload.cloudBackup,
+      proxmoxBackup: payload.proxmoxBackup,
+      unifiNetwork: payload.unifiNetwork
+    })
+  );
+}
 
 const PROBE_PUBLIC_ORIGIN = "http://sw.grupoinsideti.com.br:3000";
 const DEFAULT_BRAND_LOGO = "/assets/brand/serverwatch-mark-transparent-256.png?v=20260619-newlogo";
@@ -92,6 +164,7 @@ const els = {
   simpleDashboardContent: document.querySelector("#simpleDashboardContent"),
   dashboardScopeTitle: document.querySelector("#dashboardScopeTitle"),
   dashboardScopeMeta: document.querySelector("#dashboardScopeMeta"),
+  dashboardModeToggle: document.querySelector("#dashboardModeToggle"),
   companyScopeSummary: document.querySelector("#companyScopeSummary"),
   companyScopeSearch: document.querySelector("#companyScopeSearch"),
   companyScopeList: document.querySelector("#companyScopeList"),
@@ -112,6 +185,7 @@ const els = {
   networkOfflineCount: document.querySelector("#networkOfflineCount"),
   networkProbeStaleCount: document.querySelector("#networkProbeStaleCount"),
   networkLinksList: document.querySelector("#networkLinksList"),
+  networkDiscoveryBanner: document.querySelector("#networkDiscoveryBanner"),
   networkDetailPanel: document.querySelector("#networkDetailPanel"),
   networkProviderToggle: document.querySelector("#networkProviderToggle"),
   networkConnectivityView: document.querySelector("#networkConnectivityView"),
@@ -120,14 +194,11 @@ const els = {
   unifiSummary: document.querySelector("#unifiSummary"),
   unifiContent: document.querySelector("#unifiContent"),
   refreshUnifiButton: document.querySelector("#refreshUnifiButton"),
-  linkProbeInstallCommand: document.querySelector("#linkProbeInstallCommand"),
-  copyLinkProbeInstallCommand: document.querySelector("#copyLinkProbeInstallCommand"),
-  mikrotikProbeInstallCommand: document.querySelector("#mikrotikProbeInstallCommand"),
-  copyMikrotikProbeInstallCommand: document.querySelector("#copyMikrotikProbeInstallCommand"),
+  networkProbeInstallCommand: document.querySelector("#networkProbeInstallCommand"),
+  copyNetworkProbeInstallCommand: document.querySelector("#copyNetworkProbeInstallCommand"),
   installGuideDialog: document.querySelector("#installGuideDialog"),
   guideServerProbeCommand: document.querySelector("#guideServerProbeCommand"),
-  guideLinkProbeCommand: document.querySelector("#guideLinkProbeCommand"),
-  guideMikrotikProbeCommand: document.querySelector("#guideMikrotikProbeCommand"),
+  guideNetworkProbeCommand: document.querySelector("#guideNetworkProbeCommand"),
   openCommandGeneratorButton: document.querySelector("#openCommandGeneratorButton"),
   commandGeneratorDialog: document.querySelector("#commandGeneratorDialog"),
   closeCommandGeneratorDialog: document.querySelector("#closeCommandGeneratorDialog"),
@@ -139,21 +210,6 @@ const els = {
   commandServerProbeName: document.querySelector("#commandServerProbeName"),
   commandServerTarget: document.querySelector("#commandServerTarget"),
   commandServerMode: document.querySelector("#commandServerMode"),
-  commandLinkAgentId: document.querySelector("#commandLinkAgentId"),
-  commandLinkName: document.querySelector("#commandLinkName"),
-  commandLinkTargets: document.querySelector("#commandLinkTargets"),
-  commandLinkInterface: document.querySelector("#commandLinkInterface"),
-  commandLinkSourceIp: document.querySelector("#commandLinkSourceIp"),
-  commandLinkInterval: document.querySelector("#commandLinkInterval"),
-  commandLinkPingCount: document.querySelector("#commandLinkPingCount"),
-  commandLinkThreshold: document.querySelector("#commandLinkThreshold"),
-  commandLinkPingTimeout: document.querySelector("#commandLinkPingTimeout"),
-  commandMikrotikAgentId: document.querySelector("#commandMikrotikAgentId"),
-  commandMikrotikDeviceName: document.querySelector("#commandMikrotikDeviceName"),
-  commandMikrotikGroupName: document.querySelector("#commandMikrotikGroupName"),
-  commandMikrotikInterval: document.querySelector("#commandMikrotikInterval"),
-  addCommandMikrotikUplink: document.querySelector("#addCommandMikrotikUplink"),
-  commandMikrotikUplinkList: document.querySelector("#commandMikrotikUplinkList"),
   networkDeviceDialog: document.querySelector("#networkDeviceDialog"),
   networkDeviceForm: document.querySelector("#networkDeviceForm"),
   networkDeviceDialogTitle: document.querySelector("#networkDeviceDialogTitle"),
@@ -164,7 +220,13 @@ const els = {
   networkDeviceManagementIp: document.querySelector("#networkDeviceManagementIp"),
   networkDeviceGroup: document.querySelector("#networkDeviceGroup"),
   networkDeviceProbe: document.querySelector("#networkDeviceProbe"),
+  networkDeviceSnmpEnabled: document.querySelector("#networkDeviceSnmpEnabled"),
+  networkDeviceSnmpCommunity: document.querySelector("#networkDeviceSnmpCommunity"),
+  networkDeviceSnmpPort: document.querySelector("#networkDeviceSnmpPort"),
+  networkDeviceNetworkProbe: document.querySelector("#networkDeviceNetworkProbe"),
   networkDeviceNotes: document.querySelector("#networkDeviceNotes"),
+  networkDeviceInterfacesSection: document.querySelector("#networkDeviceInterfacesSection"),
+  networkDeviceInterfaceChecklist: document.querySelector("#networkDeviceInterfaceChecklist"),
   networkLinkDialog: document.querySelector("#networkLinkDialog"),
   networkLinkForm: document.querySelector("#networkLinkForm"),
   networkLinkDialogTitle: document.querySelector("#networkLinkDialogTitle"),
@@ -172,6 +234,9 @@ const els = {
   networkLinkName: document.querySelector("#networkLinkName"),
   networkLinkProvider: document.querySelector("#networkLinkProvider"),
   networkLinkDevice: document.querySelector("#networkLinkDevice"),
+  networkLinkSnmpIfPickerLabel: document.querySelector("#networkLinkSnmpIfPickerLabel"),
+  networkLinkSnmpIfPicker: document.querySelector("#networkLinkSnmpIfPicker"),
+  networkLinkSnmpIfIndex: document.querySelector("#networkLinkSnmpIfIndex"),
   networkLinkType: document.querySelector("#networkLinkType"),
   networkLinkTarget: document.querySelector("#networkLinkTarget"),
   addNetworkTarget: document.querySelector("#addNetworkTarget"),
@@ -200,6 +265,8 @@ const els = {
   groupFilter: document.querySelector("#groupFilter"),
   activeFilterCount: document.querySelector("#activeFilterCount"),
   clearFilters: document.querySelector("#clearFilters"),
+  applyFilters: document.querySelector("#applyFilters"),
+  filterMenu: document.querySelector("#filterMenu"),
   companyNav: document.querySelector("#companyNav"),
   groupsList: document.querySelector("#groupsList"),
   groupCount: document.querySelector("#groupCount"),
@@ -270,6 +337,8 @@ const els = {
   groupName: document.querySelector("#groupName"),
   groupDescription: document.querySelector("#groupDescription"),
   groupContractInputs: document.querySelectorAll('input[name="groupContract"]'),
+  groupContractsList: document.querySelector("#groupContractsList"),
+  addGroupContract: document.querySelector("#addGroupContract"),
   groupLogoInput: document.querySelector("#groupLogoInput"),
   groupLogoPreview: document.querySelector("#groupLogoPreview"),
   groupLogoPreviewName: document.querySelector("#groupLogoPreviewName"),
@@ -323,9 +392,15 @@ const els = {
   backupsProfilePanel: document.querySelector("#backupsProfilePanel"),
   backupsSyncMeta: document.querySelector("#backupsSyncMeta"),
   refreshBackupsButton: document.querySelector("#refreshBackupsButton"),
+  proxmoxBackupsSyncMeta: document.querySelector("#proxmoxBackupsSyncMeta"),
+  refreshProxmoxBackupsButton: document.querySelector("#refreshProxmoxBackupsButton"),
   backupErrorsDialog: document.querySelector("#backupErrorsDialog"),
   backupErrorsList: document.querySelector("#backupErrorsList"),
   closeBackupErrorsDialog: document.querySelector("#closeBackupErrorsDialog"),
+  proxmoxIssuesDialog: document.querySelector("#proxmoxIssuesDialog"),
+  proxmoxIssuesTitle: document.querySelector("#proxmoxIssuesTitle"),
+  proxmoxIssuesList: document.querySelector("#proxmoxIssuesList"),
+  closeProxmoxIssuesDialog: document.querySelector("#closeProxmoxIssuesDialog"),
   offlineServersDialog: document.querySelector("#offlineServersDialog"),
   offlineServersList: document.querySelector("#offlineServersList"),
   closeOfflineServersDialog: document.querySelector("#closeOfflineServersDialog")
@@ -742,6 +817,21 @@ function formatDate(value) {
   }).format(new Date(value));
 }
 
+function formatDateOnly(value) {
+  const [year, month, day] = String(value || "").split("-");
+  return year && month && day ? `${day}/${month}/${year}` : "-";
+}
+
+function formatDateShort(value) {
+  if (!value) return "-";
+  return new Intl.DateTimeFormat("pt-BR", {
+    day: "2-digit",
+    month: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit"
+  }).format(new Date(value));
+}
+
 function formatDurationSince(value) {
   if (!value) return "-";
   const ms = Math.max(0, Date.now() - new Date(value).getTime());
@@ -750,6 +840,22 @@ function formatDurationSince(value) {
   const minutes = Math.floor((totalSeconds % 3600) / 60);
   const seconds = totalSeconds % 60;
   return [hours, minutes, seconds].map((item) => String(item).padStart(2, "0")).join(":");
+}
+
+// Span com o numero que precisa "andar" a cada segundo. Marcado com
+// data-since para que o tick periodico atualize so o textContent desse no
+// especifico, sem recriar o elemento (o que apagaria o :hover do mouse e
+// causava a piscada em toda a interface).
+function liveDurationSpan(sinceIso) {
+  if (!sinceIso) return "-";
+  return `<span class="live-duration" data-since="${escapeHtml(sinceIso)}">${formatDurationSince(sinceIso)}</span>`;
+}
+
+function tickLiveDurations() {
+  document.querySelectorAll(".live-duration[data-since]").forEach((el) => {
+    const next = formatDurationSince(el.dataset.since);
+    if (el.textContent !== next) el.textContent = next;
+  });
 }
 
 function formatDurationMs(value) {
@@ -775,6 +881,55 @@ function formatBytes(value) {
     unitIndex += 1;
   }
   return `${size >= 10 || unitIndex === 0 ? Math.round(size) : size.toFixed(1)} ${units[unitIndex]}`;
+}
+
+function formatSignedBytes(value) {
+  const bytes = Number(value);
+  if (!Number.isFinite(bytes) || bytes === 0) return "0 B";
+  const sign = bytes > 0 ? "+" : "-";
+  return `${sign}${formatBytes(Math.abs(bytes))}`;
+}
+
+function dateDayKey(value) {
+  const date = value ? new Date(value) : new Date();
+  if (Number.isNaN(date.getTime())) return new Date().toISOString().slice(0, 10);
+  return date.toISOString().slice(0, 10);
+}
+
+function formatDayLabel(day) {
+  if (!day) return "";
+  const date = new Date(`${day}T12:00:00Z`);
+  if (Number.isNaN(date.getTime())) return day;
+  return new Intl.DateTimeFormat("pt-BR", { day: "2-digit", month: "2-digit" }).format(date);
+}
+
+function datastoreHistoryFor(datastoreName, history = []) {
+  return (Array.isArray(history) ? history : [])
+    .filter((entry) => String(entry.datastore || "") === String(datastoreName || ""))
+    .filter((entry) => entry.day && Number.isFinite(Number(entry.usedBytes)))
+    .sort((left, right) => String(left.day).localeCompare(String(right.day)));
+}
+
+function datastoreStorageInsights(datastore, history = [], fetchedAt = null) {
+  const currentUsed = Number(datastore?.usedBytes) || 0;
+  const today = dateDayKey(fetchedAt || Date.now());
+  const entries = datastoreHistoryFor(datastore?.datastore, history);
+  const previousEntry = [...entries].reverse().find((entry) => String(entry.day) < today);
+  const delta = previousEntry ? currentUsed - Number(previousEntry.usedBytes || 0) : null;
+  const recentDeltas = [];
+  for (let index = 1; index < entries.length; index += 1) {
+    const previous = entries[index - 1];
+    const current = entries[index];
+    recentDeltas.push({
+      day: current.day,
+      delta: Number(current.usedBytes || 0) - Number(previous.usedBytes || 0)
+    });
+  }
+  return {
+    previousEntry,
+    delta,
+    recentDeltas: recentDeltas.slice(-5)
+  };
 }
 
 function formatPercent(value) {
@@ -833,6 +988,12 @@ function formatNetworkSpeed(value) {
   const mbps = Number(value);
   if (!Number.isFinite(mbps) || mbps <= 0) return "-";
   return mbps >= 1000 ? `${(mbps / 1000).toFixed(mbps % 1000 === 0 ? 0 : 1)} Gbps` : `${Math.round(mbps)} Mbps`;
+}
+
+function formatBps(bps) {
+  const value = Number(bps);
+  if (!Number.isFinite(value) || value < 0) return "-";
+  return formatNetworkSpeed(value / 1_000_000);
 }
 
 function interfacePrimaryAddress(item) {
@@ -900,6 +1061,10 @@ function setConnection(status) {
 }
 
 function applySnapshot(payload) {
+  const fingerprint = snapshotFingerprint(payload);
+  const needsRender = fingerprint !== _lastSnapshotFingerprint;
+  _lastSnapshotFingerprint = fingerprint;
+
   state.summary = payload.summary || {};
   state.servers = payload.servers || [];
   state.groups = payload.groups || [];
@@ -907,6 +1072,7 @@ function applySnapshot(payload) {
   state.networkDevices = payload.networkDevices || [];
   state.networkLinks = payload.networkLinks || [];
   state.networkEvents = payload.networkEvents || [];
+  state.networkDiscoverySuggestions = payload.networkDiscoverySuggestions || [];
   state.users = payload.users || [];
   state.currentUser = payload.currentUser || state.currentUser;
   state.settings = payload.settings || {};
@@ -941,6 +1107,7 @@ function applySnapshot(payload) {
   if (!state.selectedNetworkGroupId && !state.selectedNetworkLinkId && state.networkLinks.length) {
     state.selectedNetworkLinkId = sortedByAlpha(state.networkLinks, networkLinkSortLabel)[0].id;
   }
+  if (!needsRender) return;
   renderGroupOptions();
   renderProbeOptions();
   render();
@@ -1028,6 +1195,15 @@ function updateMetricsVisibility() {
   if (els.executiveDashboard) els.executiveDashboard.hidden = viewName !== "dashboard";
 }
 
+function syncFilterPanelControls(filters) {
+  document.querySelectorAll(".segment").forEach((item) => {
+    item.classList.toggle("active", item.dataset.status === filters.status);
+  });
+  if (els.searchInput) els.searchInput.value = filters.query;
+  if (els.environmentFilter) els.environmentFilter.value = filters.environment;
+  if (els.groupFilter) els.groupFilter.value = filters.groupId;
+}
+
 function updateActiveFilterCount() {
   if (!els.activeFilterCount) return;
   const active = [
@@ -1039,15 +1215,53 @@ function updateActiveFilterCount() {
   els.activeFilterCount.textContent = active ? `${active} ${active === 1 ? "ativo" : "ativos"}` : "Todos";
 }
 
+// Campos que mudam a cada checagem mesmo quando nada de visivel aconteceu
+// (timestamps de "ultima vez que verificou"). Ignorados na comparacao para
+// nao disparar um re-render completo da tela a cada ping de rotina — esses
+// valores ja sao exibidos via liveDurationSpan/tickLiveDurations, que nao
+// precisa de re-render.
+const SERVER_VOLATILE_FIELDS = new Set([
+  "lastCheckedAt",
+  "probeLastSeenAt",
+  "lastProbeSeenAt",
+  "probeHostMetricsUpdatedAt",
+  "probeFallbackCheckedAt",
+  "updatedAt",
+  "consecutiveFailures"
+]);
+
+function serverMeaningfullyChanged(previous, next) {
+  if (!previous) return true;
+  const keys = new Set([...Object.keys(previous), ...Object.keys(next)]);
+  for (const key of keys) {
+    if (SERVER_VOLATILE_FIELDS.has(key) || key === "probeHostMetrics") continue;
+    if (JSON.stringify(previous[key]) !== JSON.stringify(next[key])) return true;
+  }
+  // Metricas de host (CPU/memoria/disco) so importam re-render se a tela de
+  // servidores estiver mesmo visivel e for exatamente o servidor aberto —
+  // state.selectedServerId pode ter um valor residual de outra navegacao.
+  if (
+    activeViewName() === "servers" &&
+    state.selectedServerId === next.id &&
+    JSON.stringify(previous.probeHostMetrics) !== JSON.stringify(next.probeHostMetrics)
+  ) {
+    return true;
+  }
+  return false;
+}
+
 function upsertServer(server) {
   if (server.deletedAt) {
     state.servers = state.servers.filter((item) => item.id !== server.id);
     if (state.selectedServerId === server.id) state.selectedServerId = sortedByAlpha(state.servers, serverSortLabel)[0]?.id || null;
-    return;
+    return true;
   }
   const index = state.servers.findIndex((item) => item.id === server.id);
+  const previous = index >= 0 ? state.servers[index] : null;
+  const changed = serverMeaningfullyChanged(previous, server);
   if (index >= 0) state.servers[index] = server;
   else state.servers.unshift(server);
+  return changed;
 }
 
 function upsertGroup(group) {
@@ -1079,12 +1293,15 @@ function handleSocketMessage(payload) {
 
   if (payload.summary) state.summary = payload.summary;
 
+  let needsRender = false;
+
   if (payload.server) {
-    upsertServer(payload.server);
+    needsRender = upsertServer(payload.server) || needsRender;
   }
 
   if (payload.group) {
     upsertGroup(payload.group);
+    needsRender = true;
   }
 
   if (payload.event) {
@@ -1092,13 +1309,18 @@ function handleSocketMessage(payload) {
     if ((payload.event.kind || "status_changed") === "server_offline") {
       showIncidentNotification(payload.event);
     }
+    needsRender = true;
   }
 
   if (payload.alert) {
     state.alerts = [payload.alert, ...state.alerts.filter((item) => item.id !== payload.alert.id)].slice(0, 50);
+    needsRender = true;
   }
 
-  scheduleRender();
+  // "server_checked" de rotina (nada mudou) so atualiza o state.summary e
+  // sai sem re-render — evita reconstruir a tela inteira a cada ping normal
+  // de cada servidor, que era a causa da piscada ao passar o mouse.
+  if (needsRender) scheduleRender();
 }
 
 function connectSocket() {
@@ -1131,14 +1353,16 @@ function renderGroupOptions() {
     .join("");
 
   if (els.groupFilter) {
-    const current = els.groupFilter.value || state.filters.groupId;
+    const source = els.filterMenu?.open ? state.filterDraft : state.filters;
+    const current = source.groupId;
     els.groupFilter.innerHTML = `
       <option value="all">Todas empresas</option>
       ${canSeeUngrouped() ? `<option value="none">Sem empresa</option>` : ""}
       ${groupOptions}
     `;
-    els.groupFilter.value = [...els.groupFilter.options].some((option) => option.value === current) ? current : "all";
-    state.filters.groupId = els.groupFilter.value;
+    const resolved = [...els.groupFilter.options].some((option) => option.value === current) ? current : "all";
+    els.groupFilter.value = resolved;
+    source.groupId = resolved;
   }
 
   if (els.serverGroup) {
@@ -1293,9 +1517,13 @@ function toggleVirtualizerChildrenOptions() {
 }
 
 function renderProbeOptions() {
+  renderNetworkProbeOptions();
   if (!els.serverProbeId) return;
   const current = els.serverProbeId.value;
-  if (!state.probes.length) {
+  // Servidores e links por ping usam probes de host — probes de rede (SNMP)
+  // ficam de fora dessas listas, tem um select proprio (renderNetworkProbeOptions).
+  const hostProbes = state.probes.filter((probe) => (probe.probeType || "host") !== "network");
+  if (!hostProbes.length) {
     els.serverProbeId.innerHTML = `<option value="">Nenhum probe instalado encontrado</option>`;
     els.serverProbeId.disabled = true;
     for (const select of [els.networkDeviceProbe, els.networkLinkProbe]) {
@@ -1310,7 +1538,7 @@ function renderProbeOptions() {
   }
 
   els.serverProbeId.disabled = false;
-  const probes = sortedByAlpha(state.probes, probeSortLabel);
+  const probes = sortedByAlpha(hostProbes, probeSortLabel);
   const probeOptions = probes
     .map((probe) => {
       const address = probe.primaryAddress || probe.addresses?.[0] || probe.lastAddress || "";
@@ -1334,6 +1562,26 @@ function renderProbeOptions() {
       ? `${selectedAddress ? `IP detectado: ${selectedAddress}. ` : ""}Ultimo contato: ${formatDate(selected.lastSeenAt)}.`
       : "Probe pronto para receber alvos.";
   }
+}
+
+function renderNetworkProbeOptions() {
+  if (!els.networkDeviceNetworkProbe) return;
+  const previous = els.networkDeviceNetworkProbe.value;
+  const networkProbes = sortedByAlpha(
+    state.probes.filter((probe) => (probe.probeType || "host") === "network"),
+    probeSortLabel
+  );
+  els.networkDeviceNetworkProbe.innerHTML = `
+    <option value="">Nenhum</option>
+    ${networkProbes
+      .map((probe) => {
+        const address = probe.primaryAddress || probe.addresses?.[0] || probe.lastAddress || "";
+        const label = `${probe.name || probe.id} (${address || probe.id})`;
+        return `<option value="${escapeHtml(probe.id)}">${escapeHtml(label)}</option>`;
+      })
+      .join("")}
+  `;
+  els.networkDeviceNetworkProbe.value = networkProbes.some((probe) => probe.id === previous) ? previous : "";
 }
 
 function selectedProbe() {
@@ -1394,7 +1642,9 @@ function renderCompanyNav() {
 
   const scopedServers = state.servers.filter((server) => groupIdMatches(state.filters.groupId, server.groupId));
   const activeServers = scopedServers.filter((server) => server.isActive);
-  const scopedLinks = (state.networkLinks || []).filter((link) => link.isActive !== false && groupIdMatches(state.filters.groupId, link.groupId));
+  const scopedLinks = (state.networkLinks || []).filter(
+    (link) => link.isActive !== false && link.featured !== false && groupIdMatches(state.filters.groupId, link.groupId)
+  );
   const currentLabel = groupScopeLabel();
   const currentOffline = activeServers.filter((server) => displayStatus(server) === "offline").length;
   const currentAttention = activeServers.filter((server) => ["offline", "probe_stale", "dependency_down"].includes(displayStatus(server))).length;
@@ -1638,7 +1888,338 @@ function isRecoveryEvent(event) {
   );
 }
 
+function updateDashboardModeControls() {
+  if (!els.dashboardModeToggle) return;
+  els.dashboardModeToggle.querySelectorAll("[data-dashboard-mode]").forEach((button) => {
+    button.classList.toggle("active", button.dataset.dashboardMode === state.dashboardMode);
+    button.setAttribute("aria-pressed", button.dataset.dashboardMode === state.dashboardMode ? "true" : "false");
+  });
+}
+
+function sumBackupStatus(statuses) {
+  return statuses.reduce(
+    (acc, status = {}) => {
+      acc.success += Number(status.success || 0);
+      acc.warning += Number(status.warning || 0);
+      acc.error += Number(status.error || 0);
+      acc.nomon += Number(status.nomon || 0);
+      acc.info += Number(status.info || 0);
+      acc.total += Number(status.total || 0);
+      return acc;
+    },
+    { success: 0, warning: 0, error: 0, nomon: 0, info: 0, total: 0 }
+  );
+}
+
+function dashboardBackupStatsForGroup(groupId) {
+  const cloudClients = Array.isArray(state.cloudBackup?.clients) ? state.cloudBackup.clients : [];
+  const cloud = sumBackupStatus(
+    cloudClients
+      .filter((client) => String(client.groupId || "") === String(groupId || ""))
+      .map((client) => client.status || {})
+  );
+  const pbsItems = Array.isArray(state.proxmoxBackup?.items) ? state.proxmoxBackup.items : [];
+  const pbs = pbsItems
+    .filter((item) => String(item.groupId || "") === String(groupId || ""))
+    .reduce(
+      (acc, item) => {
+        // Atencao (perto do limite de 26h) ainda conta como sucesso monitorado
+        // aqui — so falha de verificacao ou atraso real (>26h) tira do sucesso.
+        if (item.status === "success" || item.status === "warning") acc.success += 1;
+        if (item.status === "warning") acc.warning += 1;
+        else if (item.status === "error" || item.status === "late" || item.status === "stale") acc.error += 1;
+        acc.total += 1;
+        return acc;
+      },
+      { success: 0, warning: 0, error: 0, total: 0 }
+    );
+  return {
+    success: cloud.success + pbs.success,
+    warning: cloud.warning + pbs.warning,
+    error: cloud.error + pbs.error,
+    monitored: backupClientMonitoredTotal(cloud) + pbs.total,
+    unmonitored: backupClientUnmonitoredTotal(cloud)
+  };
+}
+
+function dashboardUnifiStatsForGroup(groupId) {
+  const sites = Array.isArray(state.unifiNetwork?.sites) ? state.unifiNetwork.sites : [];
+  return sites
+    .filter((site) => String(site.groupId || "") === String(groupId || ""))
+    .reduce(
+      (acc, site) => {
+        acc.online += Number(site.counts?.online || 0);
+        acc.offline += Number(site.counts?.offline || 0);
+        acc.attention += Number(site.counts?.attention || 0) + Number(site.counts?.unknown || 0);
+        acc.total += Number(site.deviceCount || 0);
+        return acc;
+      },
+      { online: 0, offline: 0, attention: 0, total: 0 }
+    );
+}
+
+function dashboardTimeValue(value) {
+  if (!value) return 0;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? 0 : date.getTime();
+}
+
+// Janela minima entre quedas do mesmo servidor para contarem como alertas
+// separados. Evita que um servidor oscilando gere dezenas de "alertas" no
+// contador de 24h — soh conta de novo apos passar esse intervalo sem alerta.
+const ALERTS_24H_DEDUPE_WINDOW_MS = 10 * 60_000;
+
+function dashboardAlerts24hForGroup(groupId) {
+  const limit = Date.now() - 24 * 60 * 60 * 1000;
+  const relevant = state.alerts.filter((alert) => {
+    const createdAt = dashboardTimeValue(alert.createdAt || alert.timestamp || alert.updatedAt);
+    return createdAt >= limit && alertGroupId(alert) === groupId;
+  });
+  const timesByServer = new Map();
+  for (const alert of relevant) {
+    const createdAt = dashboardTimeValue(alert.createdAt || alert.timestamp || alert.updatedAt);
+    const list = timesByServer.get(alert.serverId) || [];
+    list.push(createdAt);
+    timesByServer.set(alert.serverId, list);
+  }
+  let total = 0;
+  for (const times of timesByServer.values()) {
+    times.sort((left, right) => left - right);
+    let lastCounted = -Infinity;
+    for (const time of times) {
+      if (time - lastCounted >= ALERTS_24H_DEDUPE_WINDOW_MS) {
+        total += 1;
+        lastCounted = time;
+      }
+    }
+  }
+  return total;
+}
+
+function latestDashboardActivityForGroup(groupId, servers, links) {
+  const serverTimes = servers.flatMap((server) => [
+    dashboardTimeValue(server.lastCheckedAt),
+    dashboardTimeValue(server.statusChangedAt),
+    dashboardTimeValue(server.lastProbeSeenAt),
+    dashboardTimeValue(server.probeLastSeenAt)
+  ]);
+  const linkTimes = links.flatMap((link) => [
+    dashboardTimeValue(link.lastCheckedAt),
+    dashboardTimeValue(link.updatedAt),
+    dashboardTimeValue(link.statusChangedAt)
+  ]);
+  const backupTimes = [
+    ...(Array.isArray(state.cloudBackup?.clients)
+      ? state.cloudBackup.clients
+          .filter((client) => String(client.groupId || "") === String(groupId || ""))
+          .flatMap((client) => (client.backupSets || []).map((set) => dashboardTimeValue(set.lastBackupJobDate || set.lastSuccessAt)))
+      : []),
+    ...(Array.isArray(state.proxmoxBackup?.items)
+      ? state.proxmoxBackup.items
+          .filter((item) => String(item.groupId || "") === String(groupId || ""))
+          .map((item) => dashboardTimeValue(item.lastSnapshotAt))
+      : [])
+  ];
+  return Math.max(0, ...serverTimes, ...linkTimes, ...backupTimes);
+}
+
+function dashboardCompanyRows() {
+  const groups = sortedByAlpha(state.groups, groupSortLabel).map((group) => ({
+    id: group.id,
+    name: group.name,
+    synthetic: false
+  }));
+
+  return groups
+    .map((group) => {
+      const groupId = group.id;
+      const servers = state.servers.filter((server) => server.groupId === group.id);
+      const activeServers = servers.filter((server) => server.isActive);
+      const serverCounts = statusCounts(activeServers);
+      const links = (state.networkLinks || []).filter(
+        (link) => link.isActive !== false && link.featured !== false && link.groupId === group.id
+      );
+      const linkCounts = links.reduce(
+        (acc, link) => {
+          const status = link.displayStatus || link.currentStatus || "unknown";
+          acc[status] = (acc[status] || 0) + 1;
+          return acc;
+        },
+        { online: 0, degraded: 0, offline: 0, probe_unreachable: 0, unknown: 0, paused: 0 }
+      );
+      const unifi = dashboardUnifiStatsForGroup(groupId);
+      const backups = dashboardBackupStatsForGroup(groupId);
+      const openAlerts = state.alerts.filter((alert) => !alert.read && alertGroupId(alert) === group.id).length;
+      const alerts24h = dashboardAlerts24hForGroup(group.id);
+      const critical =
+        Number(serverCounts.offline || 0) +
+        Number(linkCounts.offline || 0) +
+        Number(linkCounts.probe_unreachable || 0) +
+        Number(backups.error || 0) +
+        Number(unifi.offline || 0) +
+        Number(openAlerts || 0);
+      // Avisos de backup contam como sucesso nesta dashboard (nao entram em "atencao").
+      const attention =
+        Number(serverCounts.probe_stale || 0) +
+        Number(serverCounts.dependency_down || 0) +
+        Number(linkCounts.degraded || 0) +
+        Number(unifi.attention || 0);
+      return {
+        ...group,
+        servers,
+        activeServers,
+        serverCounts,
+        links,
+        linkCounts,
+        unifi,
+        backups,
+        openAlerts,
+        alerts24h,
+        critical,
+        attention,
+        latestActivity: latestDashboardActivityForGroup(groupId, servers, links)
+      };
+    })
+    // So aparece se houver servidor, link ou backup efetivamente monitorado
+    // (backup marcado como "sem monitor" sozinho nao basta para listar a empresa).
+    .filter((row) => row.activeServers.length || row.links.length || row.backups.monitored)
+    .sort((left, right) => compareAlpha(left.name, right.name));
+}
+
+// Avisos de backup contam como sucesso nesta dashboard (badge, ordenacao e tom da linha).
+function dashboardBackupBadge(backups) {
+  if (!backups.monitored && !backups.unmonitored) return `<span class="noc-muted">-</span>`;
+  if (backups.error) return `<span class="noc-status danger">Falha</span>`;
+  if (!backups.monitored && backups.unmonitored) return `<span class="noc-status muted">Sem monitor</span>`;
+  return `<span class="noc-status success">OK</span>`;
+}
+
+function dashboardBackupSortRank(backups) {
+  if (backups.error) return 3;
+  if (!backups.monitored && backups.unmonitored) return 1;
+  if (!backups.monitored && !backups.unmonitored) return -1;
+  return 0;
+}
+
+const NOC_SORT_COLUMNS = {
+  name: (row) => row.name || "",
+  servers: (row) => Number(row.serverCounts.offline || 0),
+  links: (row) => Number((row.linkCounts.offline || 0) + (row.linkCounts.degraded || 0) + (row.linkCounts.probe_unreachable || 0)),
+  unifi: (row) => Number(row.unifi.offline || 0),
+  backups: (row) => dashboardBackupSortRank(row.backups),
+  alerts24h: (row) => Number(row.alerts24h || 0)
+};
+
+function sortDashboardRows(rows) {
+  const column = _nocSort.column;
+  if (!column || !NOC_SORT_COLUMNS[column]) return rows;
+  const getValue = NOC_SORT_COLUMNS[column];
+  const direction = _nocSort.direction === "desc" ? -1 : 1;
+  return [...rows].sort((left, right) => {
+    const leftValue = getValue(left);
+    const rightValue = getValue(right);
+    const compared =
+      typeof leftValue === "string" ? compareAlpha(leftValue, rightValue) : leftValue - rightValue;
+    return compared * direction;
+  });
+}
+
+function nocSortIndicator(column) {
+  if (_nocSort.column !== column) return "";
+  return _nocSort.direction === "desc" ? " ▼" : " ▲";
+}
+
+function renderNocDashboard() {
+  if (!els.simpleDashboardContent) return;
+  const scrollPositions = captureSimpleDashboardScroll();
+  const rows = dashboardCompanyRows();
+  const activeServers = state.servers.filter((server) => server.isActive);
+  const serverCounts = statusCounts(activeServers);
+  const links = (state.networkLinks || []).filter((link) => link.isActive !== false && link.featured !== false);
+  const linkOnline = links.filter((link) => (link.displayStatus || link.currentStatus) === "online").length;
+  const linkProblem = links.filter((link) => ["offline", "degraded", "probe_unreachable"].includes(link.displayStatus || link.currentStatus)).length;
+  const backupTotals = rows.reduce(
+    (acc, row) => {
+      acc.success += row.backups.success;
+      acc.monitored += row.backups.monitored;
+      acc.error += row.backups.error;
+      return acc;
+    },
+    { success: 0, monitored: 0, error: 0 }
+  );
+  const criticalRows = rows.filter((row) => row.critical);
+  if (els.dashboardScopeTitle) els.dashboardScopeTitle.textContent = "Visao Geral - Todos os Clientes";
+  if (els.dashboardScopeMeta) {
+    els.dashboardScopeMeta.textContent = `${rows.length} empresas acompanhadas, ${criticalRows.length} com prioridade operacional.`;
+  }
+
+  els.simpleDashboardContent.innerHTML = `
+    <section class="noc-dashboard" aria-label="Visao executiva por cliente">
+      <div class="noc-kpi-grid" aria-label="Indicadores principais">
+        <article><span>Empresas</span><strong>${rows.length}</strong><small>${criticalRows.length} com atencao</small></article>
+        <article><span>Servidores</span><strong><b>${serverCounts.online}</b>/${activeServers.length}</strong><small>online agora</small></article>
+        <article><span>Links</span><strong><b>${linkOnline}</b>/${links.length}</strong><small>${linkProblem} com ocorrencia</small></article>
+        <article class="${criticalRows.length ? "danger" : "success"}"><span>Criticos</span><strong>${criticalRows.length}</strong><small>clientes afetados</small></article>
+        <article><span>Backups</span><strong><b>${backupTotals.success}</b>/${backupTotals.monitored || 0}</strong><small>sucesso monitorado</small></article>
+      </div>
+      <section class="noc-table-panel">
+        <div class="noc-table-header">
+          <span class="noc-sortable ${_nocSort.column === "name" ? "active" : ""}" data-noc-sort="name">Empresa${nocSortIndicator("name")}</span>
+          <span class="noc-sortable ${_nocSort.column === "servers" ? "active" : ""}" data-noc-sort="servers">Servidores${nocSortIndicator("servers")}</span>
+          <span class="noc-sortable ${_nocSort.column === "links" ? "active" : ""}" data-noc-sort="links">Links${nocSortIndicator("links")}</span>
+          <span class="noc-sortable ${_nocSort.column === "unifi" ? "active" : ""}" data-noc-sort="unifi">UniFi${nocSortIndicator("unifi")}</span>
+          <span class="noc-sortable ${_nocSort.column === "backups" ? "active" : ""}" data-noc-sort="backups">Backups${nocSortIndicator("backups")}</span>
+          <span class="noc-sortable ${_nocSort.column === "alerts24h" ? "active" : ""}" data-noc-sort="alerts24h">Alertas 24h${nocSortIndicator("alerts24h")}</span>
+        </div>
+        <div class="noc-table-body simple-scroll-list">
+          ${
+            rows.length
+              ? sortDashboardRows(rows)
+                  .map((row) => {
+                    const tone = row.critical ? "danger" : row.attention ? "warning" : "success";
+                    const serverMeta = row.activeServers.length ? `${row.serverCounts.online}/${row.activeServers.length}` : "-";
+                    const linkMeta = row.links.length ? `${row.linkCounts.online || 0}/${row.links.length}` : "-";
+                    const unifiMeta = row.unifi.total ? `${row.unifi.online}/${row.unifi.total}` : "-";
+                    return `
+                      <button class="noc-company-row ${tone}" type="button" data-dashboard-company-row="${escapeHtml(row.id)}">
+                        <span class="noc-company-name">
+                          <i class="noc-dot ${tone}" aria-hidden="true"></i>
+                          <strong>${escapeHtml(row.name)}</strong>
+                          <small>${row.openAlerts ? `${row.openAlerts} alerta${row.openAlerts === 1 ? "" : "s"}` : `${row.activeServers.length} servidor${row.activeServers.length === 1 ? "" : "es"}`}</small>
+                        </span>
+                        <span class="${row.serverCounts.offline ? "noc-number danger" : "noc-number"}">${serverMeta}</span>
+                        <span class="${row.linkCounts.offline || row.linkCounts.degraded || row.linkCounts.probe_unreachable ? "noc-number warning" : "noc-number"}">${linkMeta}</span>
+                        <span class="${row.unifi.offline ? "noc-number danger" : row.unifi.attention ? "noc-number warning" : "noc-number"}">${unifiMeta}</span>
+                        <span>${dashboardBackupBadge(row.backups)}</span>
+                        <span class="${row.alerts24h ? "noc-number danger" : "noc-number"}">${row.alerts24h}</span>
+                      </button>
+                    `;
+                  })
+                  .join("")
+              : `<div class="simple-empty">Nenhuma empresa com ativos monitorados.</div>`
+          }
+        </div>
+      </section>
+    </section>
+  `;
+  restoreSimpleDashboardScroll(scrollPositions);
+}
+
 function renderSimpleDashboard() {
+  updateDashboardModeControls();
+  if (state.dashboardMode === "simple") {
+    renderNocDashboard();
+    return;
+  }
+  const previousGroupId = state.filters.groupId;
+  state.filters.groupId = "all";
+  if (els.dashboardScopeTitle) els.dashboardScopeTitle.textContent = "Dashboard completa";
+  if (els.dashboardScopeMeta) els.dashboardScopeMeta.textContent = "Graficos e listas operacionais detalhadas de todos os clientes.";
+  renderCompleteDashboard();
+  state.filters.groupId = previousGroupId;
+}
+
+function renderCompleteDashboard() {
   if (!els.simpleDashboardContent) return;
   const scrollPositions = captureSimpleDashboardScroll();
   const canServers = canSeeSection("servers");
@@ -1668,7 +2249,9 @@ function renderSimpleDashboard() {
     })
     .slice(0, 4);
   const staleProbes = state.probes.filter((probe) => probe.status === "stale");
-  const networkLinks = (state.networkLinks || []).filter((link) => link.isActive !== false && groupIdMatches(state.filters.groupId, link.groupId));
+  const networkLinks = (state.networkLinks || []).filter(
+    (link) => link.isActive !== false && link.featured !== false && groupIdMatches(state.filters.groupId, link.groupId)
+  );
   const networkCounts = networkLinks.reduce(
     (acc, link) => {
       const status = link.displayStatus || link.currentStatus || "unknown";
@@ -2210,9 +2793,9 @@ function renderServerRow(server, options = {}) {
       : server.dependencyStatus === "orphan"
       ? `<span>Dependencia sem host pai</span>`
       : server.isActive && server.checkSource === "probe" && server.probeStatus === "stale"
-      ? `<span>Probe sem contato ha ${formatDurationSince(server.probeLastSeenAt || server.lastProbeSeenAt)}</span>`
+      ? `<span>Probe sem contato ha ${liveDurationSpan(server.probeLastSeenAt || server.lastProbeSeenAt)}</span>`
       : server.isActive && server.currentStatus === "offline"
-      ? `<span>Offline ha ${formatDurationSince(server.statusChangedAt)}</span>`
+      ? `<span>Offline ha ${liveDurationSpan(server.statusChangedAt)}</span>`
       : "";
   const probeBadge =
     server.checkSource === "probe" && visibleStatus !== "probe_stale"
@@ -2390,14 +2973,21 @@ function renderServers() {
 
 function serverGroupById(groupId) {
   const knownGroupIds = new Set(state.groups.map((group) => group.id));
-  const servers = groupId === "none"
-    ? state.servers.filter((server) => !server.groupId || !knownGroupIds.has(server.groupId))
-    : state.servers.filter((server) => server.groupId === groupId);
-  if (!servers.length) return null;
+  if (groupId === "none") {
+    const servers = state.servers.filter((server) => !server.groupId || !knownGroupIds.has(server.groupId));
+    return {
+      id: "none",
+      name: "Sem empresa",
+      logoDataUrl: "",
+      servers: sortedByAlpha(servers, serverSortLabel)
+    };
+  }
+  if (!knownGroupIds.has(groupId)) return null;
+  const servers = state.servers.filter((server) => server.groupId === groupId);
   return {
     id: groupId,
-    name: groupId === "none" ? "Sem empresa" : groupLabel(groupId),
-    logoDataUrl: groupId === "none" ? "" : groupLogo(groupId),
+    name: groupLabel(groupId),
+    logoDataUrl: groupLogo(groupId),
     servers: sortedByAlpha(servers, serverSortLabel)
   };
 }
@@ -2419,7 +3009,9 @@ function renderServerGroupDetail(group, target = els.detailPanel) {
   const openAlerts = state.alerts.filter((alert) => !alert.read && serverIds.has(alert.serverId));
   const recentEvents = state.events.filter((event) => serverIds.has(event.serverId)).slice(0, 5);
   const groupLinks = sortedByAlpha(
-    (state.networkLinks || []).filter((link) => link.isActive !== false && groupIdMatches(group.id, link.groupId)),
+    (state.networkLinks || []).filter(
+      (link) => link.isActive !== false && link.featured !== false && groupIdMatches(group.id, link.groupId)
+    ),
     networkLinkSortLabel
   );
   const networkCounts = groupLinks.reduce(
@@ -2717,9 +3309,9 @@ function renderDetail() {
     !server.isActive
       ? `<div class="detail-stat"><span>Monitoramento</span><strong>Pausado</strong></div>`
       : visibleStatus === "probe_stale"
-      ? `<div class="detail-stat"><span>Probe sem contato ha</span><strong>${formatDurationSince(server.probeLastSeenAt || server.lastProbeSeenAt)}</strong></div>`
+      ? `<div class="detail-stat"><span>Probe sem contato ha</span><strong>${liveDurationSpan(server.probeLastSeenAt || server.lastProbeSeenAt)}</strong></div>`
       : visibleStatus === "offline"
-      ? `<div class="detail-stat"><span>Indisponivel ha</span><strong>${formatDurationSince(server.statusChangedAt)}</strong></div>`
+      ? `<div class="detail-stat"><span>Indisponivel ha</span><strong>${liveDurationSpan(server.statusChangedAt)}</strong></div>`
       : `<div class="detail-stat"><span>Status desde</span><strong>${formatDate(server.statusChangedAt)}</strong></div>`;
   const pausedNotice = server.isActive
     ? ""
@@ -2859,6 +3451,7 @@ function renderDetail() {
 
     ${dangerZone}
   `;
+  if (server.checkSource === "probe" && server.probeId) loadPeakCpuHourWarning(server.probeId);
 }
 
 function sortedServersForDirectory() {
@@ -2942,9 +3535,9 @@ function renderServerProfile() {
   const statusTimeLabel = !server.isActive
     ? "Monitoramento pausado"
     : visibleStatus === "offline"
-    ? `Offline ha ${formatDurationSince(server.statusChangedAt)}`
+    ? `Offline ha ${liveDurationSpan(server.statusChangedAt)}`
     : visibleStatus === "probe_stale"
-    ? `Probe sem contato ha ${formatDurationSince(server.probeLastSeenAt || server.lastProbeSeenAt)}`
+    ? `Probe sem contato ha ${liveDurationSpan(server.probeLastSeenAt || server.lastProbeSeenAt)}`
     : `Status desde ${formatDate(server.statusChangedAt)}`;
   const tags = (server.tags || []).map((tag) => `<span class="tag">${escapeHtml(tag)}</span>`).join("");
   const adminActions = isAdmin()
@@ -3053,6 +3646,15 @@ function renderServerProfile() {
           <div class="detail-stat metric-stat"><span>Disco</span><strong>${formatPercent(disk.usedPercent)}</strong>${metricBar(disk.usedPercent)}<small>${escapeHtml(disk.mount || "-")} · ${formatBytes(disk.usedBytes)} / ${formatBytes(disk.totalBytes)}</small></div>
           <div class="detail-stat"><span>Interface principal</span><strong>${escapeHtml(interfacePrimaryAddress(primaryInterface) || "-")}</strong><small>${escapeHtml(primaryInterface?.name || "-")} · ${formatNetworkSpeed(primaryInterface?.speedMbps)}</small></div>
         </div>
+        ${server.checkSource === "probe" && server.probeId ? `
+          <div class="metrics-history-section" data-history-probe-id="${escapeHtml(server.probeId)}">
+            <button class="metrics-history-toggle ghost-button compact" type="button" data-action="toggle-metrics-history">
+              Historico de metricas
+            </button>
+            <div class="metrics-history-body" hidden></div>
+          </div>
+          ${renderServerWarningsSection(server)}
+        ` : ""}
         ${metrics ? renderNetworkInterfaces(metrics) : `<div class="empty-list compact-empty">Aguardando metricas do Probe Collector atualizado.</div>`}
         ${renderExtendedServerMetrics(metrics)}
       </article>
@@ -3068,6 +3670,8 @@ function renderServerProfile() {
       </article>
     </section>
   `;
+  restoreMetricsHistory();
+  if (server.checkSource === "probe" && server.probeId) loadPeakCpuHourWarning(server.probeId);
 }
 
 function renderHistoryFilters() {
@@ -3101,7 +3705,11 @@ function renderTimelineItem(event) {
       : event.currentStatus
       ? statusLabel(event.currentStatus)
       : eventCategoryLabel(category);
-  const duration = event.durationMs ? `<small>Duracao da indisponibilidade: ${formatDurationMs(event.durationMs)}</small>` : "";
+  const duration = event.durationMs
+    ? `<small class="timeline-duration">Perdeu contato as ${formatDate(event.outageStartedAt)} · retomou as ${formatDate(
+        event.createdAt
+      )} · <strong>${formatDurationMs(event.durationMs)} sem contato</strong></small>`
+    : "";
   const actor = event.actorName ? `<small>Responsavel: ${escapeHtml(event.actorName)}</small>` : "";
   return `
     <article class="timeline-item ${category}">
@@ -3118,13 +3726,78 @@ function renderTimelineItem(event) {
   `;
 }
 
+// Janela usada para empilhar eventos tecnicos consecutivos do mesmo servidor
+// (ex.: servidor oscilando entre "sem contato" e "online" varias vezes
+// seguidas). Enquanto o intervalo entre um evento e o proximo for menor que
+// isso, eles entram no mesmo grupo em vez de poluir a timeline individualmente.
+const TIMELINE_GROUP_WINDOW_MS = 10 * 60_000;
+
+// events ja vem ordenado do mais novo para o mais antigo.
+function groupTimelineEvents(events) {
+  const groups = [];
+  for (const event of events) {
+    const category = event.category || "technical";
+    const last = groups[groups.length - 1];
+    const canChain =
+      last &&
+      category === "technical" &&
+      last.category === "technical" &&
+      last.serverId === event.serverId &&
+      eventTimestamp(last.events[last.events.length - 1]) - eventTimestamp(event) <= TIMELINE_GROUP_WINDOW_MS;
+    if (canChain) {
+      last.events.push(event);
+      continue;
+    }
+    groups.push({ serverId: event.serverId, serverName: event.serverName, category, events: [event] });
+  }
+  return groups;
+}
+
+function renderTimelineGroup(group) {
+  if (group.events.length === 1) return renderTimelineItem(group.events[0]);
+  const events = group.events;
+  const newest = events[0];
+  const oldest = events[events.length - 1];
+  const offlineCount = events.filter(isFailureEvent).length;
+  const recoveredCount = events.filter(isRecoveryEvent).length;
+  const groupId = `tl-group-${newest.id}`;
+  return `
+    <article class="timeline-item technical timeline-group">
+      <span class="timeline-marker ${newest.currentStatus || newest.kind}"></span>
+      <div>
+        <strong>${escapeHtml(group.serverName || "Servidor")} · Oscilando</strong>
+        <div class="detail-meta">${events.length} eventos entre ${formatDate(oldest.createdAt)} e ${formatDate(newest.createdAt)}</div>
+        <small class="timeline-group-summary">${offlineCount} ${offlineCount === 1 ? "queda" : "quedas"} · ${recoveredCount} ${recoveredCount === 1 ? "recuperacao" : "recuperacoes"} · ultimo evento: ${escapeHtml(newest.message || eventKindLabel(newest))}</small>
+        <button class="ghost-button compact timeline-group-toggle" type="button" data-timeline-group-toggle="${escapeHtml(groupId)}">Ver ${events.length} eventos</button>
+        <div class="timeline-group-body" id="${escapeHtml(groupId)}" hidden>
+          ${events.map(renderTimelineItem).join("")}
+        </div>
+      </div>
+      <small>${formatDate(newest.createdAt)}</small>
+    </article>
+  `;
+}
+
 function renderTimeline() {
   renderHistoryFilters();
   const events = filteredEvents();
   els.eventCount.textContent = `${events.length} ${events.length === 1 ? "evento" : "eventos"}`;
-  els.timeline.innerHTML = events.length
-    ? events.map(renderTimelineItem).join("")
+  const groups = groupTimelineEvents(events);
+  els.timeline.innerHTML = groups.length
+    ? groups.map(renderTimelineGroup).join("")
     : `<div class="empty-list">A timeline aparecera quando um status mudar.</div>`;
+}
+
+function alertStatusTone(alert) {
+  if (alert.type === "down") return "offline";
+  if (alert.type === "contract_expiring") return "warning";
+  return "online";
+}
+
+function alertStatusLabel(alert) {
+  if (alert.type === "down") return "Offline";
+  if (alert.type === "contract_expiring") return "Contrato";
+  return "Recuperado";
 }
 
 function renderAlerts() {
@@ -3135,13 +3808,24 @@ function renderAlerts() {
   }
   els.alertsList.innerHTML = alerts.length
     ? alerts
-        .map(
-          (alert) => `
+        .map((alert) => {
+          const server = serverById(alert.serverId);
+          const stillDown = alert.type === "down" && server && server.currentStatus !== "online";
+          const durationLine =
+            alert.type === "recovery" && alert.durationMs
+              ? `<small class="alert-duration">Ficou <strong>${formatDurationMs(alert.durationMs)}</strong> sem contato${
+                  alert.outageStartedAt ? ` (desde ${formatDate(alert.outageStartedAt)})` : ""
+                }</small>`
+              : stillDown
+              ? `<small class="alert-duration">Offline ha <strong>${liveDurationSpan(alert.createdAt)}</strong></small>`
+              : "";
+          return `
             <article class="alert-card ${alert.severity || "info"} ${alert.type !== "down" ? "alert-recovered" : ""} ${alert.read ? "read" : "unread"}">
               <div>
-                <strong>${escapeHtml(alert.serverName)}</strong>
+                <strong>${escapeHtml(alertServerName(alert))}</strong>
                 <div>${escapeHtml(alert.message)}</div>
                 <small>${formatDate(alert.createdAt)} · ${alert.read ? "reconhecido" : "novo"} · ${severityLabel(alert.severity)}</small>
+                ${durationLine}
                 ${
                   alert.acknowledgedAt
                     ? `<small>Reconhecido por ${escapeHtml(alert.acknowledgedBy || "-")} em ${formatDate(alert.acknowledgedAt)}${alert.acknowledgmentNote ? ` · ${escapeHtml(alert.acknowledgmentNote)}` : ""}</small>`
@@ -3149,14 +3833,14 @@ function renderAlerts() {
                 }
               </div>
               <div class="alert-actions">
-                <span class="status-badge ${alert.type === "down" ? "offline" : "online"}">
-                  ${alert.type === "down" ? "Offline" : "Recuperado"}
+                <span class="status-badge ${alertStatusTone(alert)}">
+                  ${alertStatusLabel(alert)}
                 </span>
                 ${alert.read ? "" : `<button class="ghost-button compact" type="button" data-alert-action="ack" data-alert-id="${alert.id}">Reconhecer</button>`}
               </div>
             </article>
-          `
-        )
+          `;
+        })
         .join("")
     : `<div class="empty-list">Nenhum alerta encontrado para os filtros atuais.</div>`;
   renderNotificationPopup();
@@ -3173,7 +3857,7 @@ async function refreshAlerts() {
 }
 
 function alertServerName(alert) {
-  return alert.serverName || serverById(alert.serverId)?.name || "Alerta";
+  return alert.serverName || serverById(alert.serverId)?.name || alert.groupName || "Alerta";
 }
 
 function alertCompanyName(alert) {
@@ -3200,13 +3884,13 @@ function renderNotificationPopup() {
         .map(
           (alert) => `
             <button class="notification-item ${alert.read ? "read" : "unread"}" type="button" data-notification-alert-id="${escapeHtml(alert.id)}">
-              <span class="status-dot ${alert.type === "down" ? "offline" : "online"}"></span>
+              <span class="status-dot ${alertStatusTone(alert)}"></span>
               <span class="notification-item-body">
                 <strong>${escapeHtml(alertServerName(alert))}</strong>
                 <small>${escapeHtml(alert.message || severityLabel(alert.severity))}</small>
                 <em>${escapeHtml(alertCompanyName(alert))} · ${formatDate(alert.createdAt)}</em>
               </span>
-              <span class="status-badge ${alert.type === "down" ? "offline" : "online"}">${alert.read ? "lido" : "novo"}</span>
+              <span class="status-badge ${alertStatusTone(alert)}">${alert.read ? "lido" : "novo"}</span>
             </button>
           `
         )
@@ -3255,7 +3939,7 @@ async function clearAllAlertsHistory() {
 }
 
 function alertGroupId(alert) {
-  return serverById(alert.serverId)?.groupId || "none";
+  return alert.groupId || serverById(alert.serverId)?.groupId || "none";
 }
 
 function filteredAlerts() {
@@ -3708,6 +4392,13 @@ function renderProxmoxBackups() {
     scrollPositions[element.dataset.proxmoxScrollId] = element.scrollTop;
   });
   const data = state.proxmoxBackup || { configured: false, items: [], error: null };
+  if (els.proxmoxBackupsSyncMeta) {
+    els.proxmoxBackupsSyncMeta.textContent = data.fetchedAt
+      ? `Ultima atualizacao: ${formatDate(data.fetchedAt)}`
+      : data.configured
+      ? "Dados recebidos, aguardando horario da sincronizacao"
+      : "Integracao ainda nao configurada";
+  }
   if (!data.configured) {
     if (summaryEl) summaryEl.textContent = "Nao configurado";
     container.innerHTML = `<div class="simple-empty">Configure o Proxmox Backup Server (PROXMOX_PBS_BASE_URL) para ver os dados aqui.</div>`;
@@ -3718,7 +4409,11 @@ function renderProxmoxBackups() {
 
   const successCount = items.filter((item) => item.status === "success").length;
   const warningCount = items.filter((item) => item.status === "warning").length;
-  const errorCount = items.filter((item) => item.status === "error").length;
+  const errorItems = items.filter((item) => item.status === "error");
+  const lateItems = items.filter((item) => item.status === "late" || item.status === "stale");
+  const lateCount = lateItems.length;
+  const failCount = errorItems.length;
+  const successPct = Math.round((successCount / Math.max(1, successCount + failCount + lateCount)) * 100);
   const unmatchedGroupItems = items.filter((item) => !item.groupId);
   const unmatchedServerItems = items.filter((item) => item.groupId && !item.serverId);
 
@@ -3750,20 +4445,24 @@ function renderProxmoxBackups() {
     const needsServer = item.groupId && !item.serverId;
     return `
       <div class="proxmox-backup-row ${escapeHtml(item.status || "unknown")}">
-        <div class="proxmox-backup-identity">
-          <strong>${escapeHtml(label)}</strong>
-          <small>${escapeHtml(item.namespace)} · ${escapeHtml(item.backupType)} ${escapeHtml(item.backupId)} · ${size}</small>
+        <div class="proxmox-backup-row-top">
+          <div class="proxmox-backup-identity">
+            <strong>${escapeHtml(label)}</strong>
+            <small>${escapeHtml(item.namespace)} · ${escapeHtml(item.backupType)} ${escapeHtml(item.backupId)} · ${size}</small>
+          </div>
+          <span class="status-badge ${badgeClass}">${badgeLabel}</span>
         </div>
-        <span class="status-badge ${badgeClass}">${badgeLabel}</span>
-        <small class="proxmox-backup-date">${when}</small>
-        ${
-          needsServer
-            ? `<select class="compact-select" data-proxmox-link-server data-namespace="${escapeHtml(item.namespace)}" data-backup-id="${escapeHtml(item.backupId)}">
-                <option value="">Vincular servidor...</option>
-                ${serverOptionsFor(item.groupId)}
-              </select>`
-            : ""
-        }
+        <div class="proxmox-backup-row-bottom">
+          <small class="proxmox-backup-date">${when}</small>
+          ${
+            needsServer
+              ? `<select class="compact-select" data-proxmox-link-server data-namespace="${escapeHtml(item.namespace)}" data-backup-id="${escapeHtml(item.backupId)}">
+                  <option value="">Vincular servidor...</option>
+                  ${serverOptionsFor(item.groupId)}
+                </select>`
+              : ""
+          }
+        </div>
       </div>
     `;
   }
@@ -3855,24 +4554,54 @@ function renderProxmoxBackups() {
   const capacityCards = (data.datastores || [])
     .map((ds) => {
       const pct = ds.totalBytes ? Math.round((ds.usedBytes / ds.totalBytes) * 100) : 0;
+      const storageInsights = datastoreStorageInsights(ds, data.datastoreHistory, data.fetchedAt);
+      const currentPct = ds.totalBytes ? (Number(ds.usedBytes || 0) / Number(ds.totalBytes || 1)) * 100 : 0;
+      const previousPct = storageInsights.previousEntry?.totalBytes
+        ? (Number(storageInsights.previousEntry.usedBytes || 0) / Number(storageInsights.previousEntry.totalBytes || 1)) * 100
+        : null;
+      const percentDelta = previousPct === null ? null : Math.round((currentPct - previousPct) * 10) / 10;
+      const deltaClass =
+        storageInsights.delta === null || storageInsights.delta === 0 ? "neutral" : storageInsights.delta > 0 ? "increase" : "decrease";
+      const deltaLabel =
+        storageInsights.delta === null
+          ? "Historico inicia hoje"
+          : storageInsights.delta === 0
+          ? "Sem variacao"
+          : `${formatSignedBytes(storageInsights.delta)} desde ${formatDayLabel(storageInsights.previousEntry?.day)}`;
+      const percentDeltaText =
+        percentDelta === null
+          ? null
+          : `${percentDelta > 0 ? "+" : ""}${Number.isInteger(percentDelta) ? percentDelta : percentDelta.toFixed(1)}%`;
+      const storageDeltaLabel =
+        storageInsights.delta === null
+          ? "novo"
+          : `${formatSignedBytes(storageInsights.delta)}${percentDeltaText ? ` · ${percentDeltaText}` : ""}`;
       return `
         <div class="detail-stat metric-stat">
           <span>${escapeHtml(ds.datastore)}</span>
           <strong>${formatBytes(ds.usedBytes)} / ${formatBytes(ds.totalBytes)}</strong>
           ${metricBar(pct)}
-          <small>${pct}% usado · ${formatBytes(ds.availBytes)} livres</small>
+          <small class="pbs-storage-meta">
+            <span>${pct}% usado · ${formatBytes(ds.availBytes)} livres</span>
+            <span class="pbs-storage-trend ${deltaClass}" title="${escapeHtml(deltaLabel)}">${escapeHtml(storageDeltaLabel)}</span>
+          </small>
         </div>
       `;
     })
     .join("");
-
   container.innerHTML = `
     <div class="simple-kpi-row proxmox-kpi-row">
       <article class="success"><span>Sucesso</span><strong>${successCount}</strong><small>dentro da janela esperada</small></article>
       <article class="${warningCount ? "warning" : "success"}"><span>Atencao</span><strong>${warningCount}</strong><small>proximos do limite</small></article>
-      <article class="${errorCount ? "danger" : "success"}"><span>Erro</span><strong>${errorCount}</strong><small>atrasados ou com falha</small></article>
-      <article class="${unmatchedGroupItems.length ? "warning" : "success"}"><span>Sem empresa</span><strong>${unmatchedGroupItems.length}</strong><small>aguardando vinculo</small></article>
-      <article class="${unmatchedServerItems.length ? "warning" : "success"}"><span>Sem servidor</span><strong>${unmatchedServerItems.length}</strong><small>nao associados</small></article>
+      <button type="button" class="proxmox-kpi-card ${failCount ? "danger" : "success"}" data-proxmox-issue-open="error" ${failCount ? "" : "disabled"}>
+        <span>Erro</span><strong>${failCount}</strong><small>com falha ou sem backup</small>
+      </button>
+      <button type="button" class="proxmox-kpi-card ${lateCount ? "danger" : "success"}" data-proxmox-issue-open="late" ${lateCount ? "" : "disabled"}>
+        <span>Atrasados</span><strong>${lateCount}</strong><small>fora da janela esperada</small>
+      </button>
+      <article class="pbs-rate-card">
+        ${availabilityGaugeHtml(successPct, { title: "Taxa de sucesso", caption: "sucesso vs falha" })}
+      </article>
     </div>
     ${
       capacityCards
@@ -4163,6 +4892,54 @@ function openBackupErrorsDialog() {
   els.backupErrorsDialog.showModal();
 }
 
+function proxmoxBackupItemLabel(item) {
+  return item.serverName || item.comment || `${item.backupType} ${item.backupId}`;
+}
+
+function openProxmoxIssuesDialog(type) {
+  if (!els.proxmoxIssuesDialog || !els.proxmoxIssuesList) return;
+  const items = Array.isArray(state.proxmoxBackup?.items) ? state.proxmoxBackup.items : [];
+  const isLate = type === "late";
+  const issues = items
+    .filter((item) => (isLate ? item.status === "late" || item.status === "stale" : item.status === "error"))
+    .sort(
+      (left, right) =>
+        compareAlpha(left.groupName || "Sem empresa vinculada", right.groupName || "Sem empresa vinculada") ||
+        compareAlpha(proxmoxBackupItemLabel(left), proxmoxBackupItemLabel(right))
+    );
+
+  if (els.proxmoxIssuesTitle) {
+    els.proxmoxIssuesTitle.textContent = isLate ? "Backups atrasados" : "Backups com erro";
+  }
+
+  els.proxmoxIssuesList.innerHTML = issues.length
+    ? issues
+        .map((item) => {
+          const statusClass = isLate ? "probe_stale" : "offline";
+          const statusLabel = isLate ? "Atrasado" : "Erro";
+          const dateLabel = item.lastSnapshotAt ? formatDate(item.lastSnapshotAt) : "sem snapshot";
+          const company = item.groupName || "Sem empresa vinculada";
+          const server = item.serverName || item.comment || "Servidor nao vinculado";
+          return `
+            <div class="dialog-list-row proxmox-dialog-row">
+              <div>
+                <strong>${escapeHtml(proxmoxBackupItemLabel(item))}</strong>
+                <small>${escapeHtml(company)} &middot; ${escapeHtml(server)}</small>
+                <small>${escapeHtml(item.namespace)} &middot; ${escapeHtml(item.backupType)} ${escapeHtml(item.backupId)} &middot; ${formatBytes(item.sizeBytes)}</small>
+              </div>
+              <div class="dialog-list-meta">
+                <span class="status-badge ${statusClass}">${statusLabel}</span>
+                <small>Ultimo backup: ${dateLabel}</small>
+              </div>
+            </div>
+          `;
+        })
+        .join("")
+    : `<div class="empty-list">Nenhum backup ${isLate ? "atrasado" : "com erro"} no momento.</div>`;
+
+  els.proxmoxIssuesDialog.showModal();
+}
+
 function openOfflineServersDialog() {
   if (!els.offlineServersDialog || !els.offlineServersList) return;
   const activeServers = state.servers.filter((server) => server.isActive);
@@ -4196,6 +4973,40 @@ function openOfflineServersDialog() {
   els.offlineServersDialog.showModal();
 }
 
+function daysUntilDate(dateStr) {
+  const end = new Date(`${dateStr}T00:00:00`).getTime();
+  if (!Number.isFinite(end)) return null;
+  const today = new Date();
+  const todayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime();
+  return Math.round((end - todayStart) / 86400000);
+}
+
+// Pior caso entre os contratos com data da empresa (menor numero de dias
+// restantes) — usado pra mostrar uma unica tag de aviso no cartao.
+function groupContractExpiryStatus(group) {
+  const contracts = Array.isArray(group.serviceContracts) ? group.serviceContracts : [];
+  let worst = null;
+  for (const contract of contracts) {
+    const daysLeft = daysUntilDate(contract.endDate);
+    if (daysLeft === null) continue;
+    if (!worst || daysLeft < worst.daysLeft) worst = { daysLeft, contract };
+  }
+  return worst;
+}
+
+function groupContractExpiryTag(group) {
+  const status = groupContractExpiryStatus(group);
+  if (!status || status.daysLeft > 10) return "";
+  const tone = status.daysLeft < 0 ? "expired" : "expiring";
+  const label =
+    status.daysLeft < 0
+      ? `Contrato venceu ha ${Math.abs(status.daysLeft)} dia(s)`
+      : status.daysLeft === 0
+      ? "Contrato vence hoje"
+      : `Contrato vence em ${status.daysLeft} dia(s)`;
+  return `<span class="company-contract-tag ${tone}" title="${escapeHtml(status.contract.label)} · ${escapeHtml(formatDateOnly(status.contract.endDate))}">${escapeHtml(label)}</span>`;
+}
+
 function renderGroups() {
   if (!els.groupsList) return;
   els.groupCount.textContent = `${state.groups.length} ${state.groups.length === 1 ? "empresa" : "empresas"}`;
@@ -4210,7 +5021,7 @@ function renderGroups() {
   els.groupsList.innerHTML = sortedByAlpha(state.groups, groupSortLabel)
     .map((group) => {
       const servers = state.servers.filter((server) => server.groupId === group.id);
-      const links = state.networkLinks.filter((link) => link.groupId === group.id);
+      const links = state.networkLinks.filter((link) => link.groupId === group.id && link.featured !== false);
       const devices = state.networkDevices.filter((device) => device.groupId === group.id);
       const activeServers = servers.filter((server) => server.isActive);
       const offline = activeServers.filter((server) => server.currentStatus === "offline").length;
@@ -4233,6 +5044,7 @@ function renderGroups() {
                       .join("")
                   : `<span class="company-contract-tag empty">Sem contratos marcados</span>`
               }
+              ${groupContractExpiryTag(group)}
             </div>
           </div>
           <div class="group-stats">
@@ -4245,6 +5057,7 @@ function renderGroups() {
           ${
             isAdmin()
               ? `<div class="group-actions">
+                  <button class="ghost-button compact" type="button" data-group-action="report" data-id="${group.id}">Relatorio</button>
                   <button class="ghost-button compact" type="button" data-group-action="edit" data-id="${group.id}">Editar</button>
                   <button class="danger-button compact" type="button" data-group-action="delete" data-id="${group.id}">Excluir</button>
                 </div>`
@@ -4560,76 +5373,9 @@ function probeInstallCommandFor(probe, options = {}) {
   return `curl -fsSL -H "X-ServerWatch-Probe-Token: ${token}" ${serverUrl}/downloads/probe/linux-installer | ${runner} -s -- ${mode}--server-url ${serverUrl} --probe-id ${shellQuote(probeId)} --token ${shellQuote(token)} --name ${shellQuote(probeName)}`;
 }
 
-function commandValue(value, fallback = "") {
-  const text = String(value ?? "").trim();
-  return text || fallback;
-}
-
-function optionalCommandLine(flag, value, options = {}) {
-  const text = commandValue(value);
-  if (!text) return null;
-  return `  ${flag} ${options.raw ? text : shellQuote(text)}`;
-}
-
-function routerosParamValue(value) {
-  return commandValue(value).replace(/[|;]/g, " ").replace(/\s+/g, " ").trim();
-}
-
-function normalizePrefixValue(value, fallback = "30") {
-  const text = commandValue(value, fallback).replace("/", "");
-  const number = Number.parseInt(text, 10);
-  if (!Number.isFinite(number) || number < 1 || number > 32) return fallback;
-  return String(number);
-}
-
-function linkProbeInstallCommand(options = {}) {
+function networkProbeInstallCommand() {
   const token = probeToken();
-  if (!token) return "";
-  const targets = commandValue(options.targets, "1.1.1.1,8.8.8.8,9.9.9.9");
-  const lines = [
-    `curl -fsSL -H "X-ServerWatch-Probe-Token: ${token}" ${PROBE_PUBLIC_ORIGIN}/downloads/linkprobe/linux-installer | sudo bash -s --`,
-    `  --server-url ${PROBE_PUBLIC_ORIGIN}`,
-    `  --agent-id ${shellQuote(commandValue(options.agentId, "link1-empresa"))}`,
-    `  --link-name ${shellQuote(commandValue(options.linkName, "Link 1 - Empresa"))}`,
-    `  --targets ${shellQuote(targets)}`,
-    `  --token ${shellQuote(token)}`,
-    optionalCommandLine("--interface", options.interfaceName),
-    optionalCommandLine("--source-ip", options.sourceIp),
-    optionalCommandLine("--interval", options.interval || "10", { raw: true }),
-    optionalCommandLine("--ping-count", options.pingCount || "4", { raw: true }),
-    optionalCommandLine("--threshold", options.threshold || "0.5", { raw: true }),
-    optionalCommandLine("--ping-timeout", options.pingTimeout || "2", { raw: true })
-  ].filter(Boolean);
-  return lines.join(" \\\n");
-}
-
-function mikrotikProbeInstallCommand(options = {}) {
-  const token = probeToken();
-  if (!token) return "";
-  const uplinks = (options.uplinks?.length ? options.uplinks : [
-    { name: "Link 1 - Operadora A", interfaceName: "ether1-WAN", gateway: "192.0.2.1", prefix: "30", target: "4.2.2.2" },
-    { name: "Link 2 - Operadora B", interfaceName: "ether2-WAN", gateway: "198.51.100.1", prefix: "30", target: "149.112.112.112" }
-  ])
-    .slice(0, 10)
-    .map((uplink, index) => {
-      const name = routerosParamValue(uplink.name || `Link ${index + 1}`);
-      const interfaceName = routerosParamValue(uplink.interfaceName || `ether${index + 1}-WAN`);
-      const gateway = routerosParamValue(uplink.gateway || "192.0.2.1");
-      const prefix = normalizePrefixValue(uplink.prefix, "30");
-      const target = routerosParamValue(uplink.target || (index === 0 ? "4.2.2.2" : "149.112.112.112"));
-      return [name, interfaceName, gateway, prefix, target].join("|");
-    })
-    .join(";");
-  const params = new URLSearchParams({
-    serverUrl: PROBE_PUBLIC_ORIGIN,
-    agentId: commandValue(options.agentId, "rb-empresa-01"),
-    deviceName: commandValue(options.deviceName, "RB Empresa 01"),
-    groupName: commandValue(options.groupName, ""),
-    interval: commandValue(options.interval, "10"),
-    uplinks
-  });
-  const scriptUrl = `${PROBE_PUBLIC_ORIGIN}/downloads/mikrotik/uplink-probe.rsc?${params.toString()}`;
-  return `/tool fetch url=${shellQuote(scriptUrl)} http-header-field=${shellQuote(`X-ServerWatch-Probe-Token: ${token}`)} dst-path=serverwatch-mikrotik-uplink-probe.rsc; /import serverwatch-mikrotik-uplink-probe.rsc`;
+  return `curl -fsSL -H "X-ServerWatch-Probe-Token: ${token}" ${PROBE_PUBLIC_ORIGIN}/downloads/network-probe/linux-installer | sudo bash -s -- --server-url ${PROBE_PUBLIC_ORIGIN} --probe-id ${shellQuote("cliente-acme-sp-rede")} --token ${shellQuote(token)} --name ${shellQuote("Rede - Cliente ACME")}`;
 }
 
 function selectedProbeForCommand() {
@@ -4637,11 +5383,11 @@ function selectedProbeForCommand() {
 }
 
 function commandGeneratorMode() {
-  return ["link", "mikrotik"].includes(state.commandGeneratorMode) ? state.commandGeneratorMode : "server";
+  return "server";
 }
 
 function setCommandGeneratorMode(mode) {
-  state.commandGeneratorMode = ["link", "mikrotik"].includes(mode) ? mode : "server";
+  state.commandGeneratorMode = "server";
   const activeMode = commandGeneratorMode();
   document.querySelectorAll("[data-command-generator-mode]").forEach((button) => {
     const selected = button.dataset.commandGeneratorMode === activeMode;
@@ -4660,103 +5406,9 @@ function setCommandGeneratorDefaults() {
   if (els.commandServerProbeName) els.commandServerProbeName.value = selectedProbe?.name || selectedProbe?.hostName || "SRV-CLIENTE-01";
   if (els.commandServerTarget) els.commandServerTarget.value = state.probeInstallTarget || "linux";
   if (els.commandServerMode) els.commandServerMode.value = selectedProbe ? "repair" : "install";
-  if (els.commandLinkAgentId) els.commandLinkAgentId.value = "cliente-link1-operadora";
-  if (els.commandLinkName) els.commandLinkName.value = "Link 1 - Operadora";
-  if (els.commandLinkTargets) els.commandLinkTargets.value = "4.2.2.2,149.112.112.112";
-  if (els.commandLinkInterface) els.commandLinkInterface.value = "";
-  if (els.commandLinkSourceIp) els.commandLinkSourceIp.value = "";
-  if (els.commandLinkInterval) els.commandLinkInterval.value = "10";
-  if (els.commandLinkPingCount) els.commandLinkPingCount.value = "4";
-  if (els.commandLinkThreshold) els.commandLinkThreshold.value = "0.5";
-  if (els.commandLinkPingTimeout) els.commandLinkPingTimeout.value = "2";
-  if (els.commandMikrotikAgentId) els.commandMikrotikAgentId.value = "rb-empresa-borda";
-  if (els.commandMikrotikDeviceName) els.commandMikrotikDeviceName.value = "RB Empresa Borda";
-  if (els.commandMikrotikGroupName) els.commandMikrotikGroupName.value = "";
-  if (els.commandMikrotikInterval) els.commandMikrotikInterval.value = "10";
-  renderCommandMikrotikUplinks();
-}
-
-function collectCommandMikrotikUplinks() {
-  if (!els.commandMikrotikUplinkList) return state.commandGeneratorMikrotikUplinks;
-  state.commandGeneratorMikrotikUplinks = Array.from(els.commandMikrotikUplinkList.querySelectorAll("[data-command-uplink-row]"))
-    .map((row) => ({
-      name: row.querySelector("[data-command-uplink-name]")?.value || "",
-      interfaceName: row.querySelector("[data-command-uplink-interface]")?.value || "",
-      gateway: row.querySelector("[data-command-uplink-gateway]")?.value || "",
-      prefix: row.querySelector("[data-command-uplink-prefix]")?.value || "",
-      target: row.querySelector("[data-command-uplink-target]")?.value || ""
-    }))
-    .slice(0, 10);
-  if (!state.commandGeneratorMikrotikUplinks.length) {
-    state.commandGeneratorMikrotikUplinks = [{ name: "", interfaceName: "", gateway: "", prefix: "30", target: "" }];
-  }
-  return state.commandGeneratorMikrotikUplinks;
-}
-
-function renderCommandMikrotikUplinks() {
-  if (!els.commandMikrotikUplinkList) return;
-  const uplinks = state.commandGeneratorMikrotikUplinks.slice(0, 10);
-  els.commandMikrotikUplinkList.innerHTML = uplinks
-    .map((uplink, index) => {
-      const removable = uplinks.length > 1;
-      return `
-        <div class="command-uplink-row" data-command-uplink-row>
-          <label>
-            Nome
-            <input data-command-uplink-name value="${escapeHtml(uplink.name)}" placeholder="Link ${index + 1} - Operadora" />
-          </label>
-          <label>
-            Interface
-            <input data-command-uplink-interface value="${escapeHtml(uplink.interfaceName)}" placeholder="ether${index + 1}-WAN" />
-          </label>
-          <label>
-            Gateway
-            <input data-command-uplink-gateway value="${escapeHtml(uplink.gateway)}" placeholder="LINK-WAN ou 192.0.2.1" />
-          </label>
-          <label>
-            Mascara
-            <input data-command-uplink-prefix value="${escapeHtml(uplink.prefix)}" placeholder="/30" />
-          </label>
-          <label>
-            Alvo
-            <input data-command-uplink-target value="${escapeHtml(uplink.target)}" placeholder="4.2.2.2" />
-          </label>
-          <button class="ghost-button compact" type="button" data-remove-command-uplink="${index}" ${removable ? "" : "disabled"}>-</button>
-        </div>
-      `;
-    })
-    .join("");
-  if (els.addCommandMikrotikUplink) {
-    els.addCommandMikrotikUplink.disabled = uplinks.length >= 10;
-    els.addCommandMikrotikUplink.title = uplinks.length >= 10 ? "Limite de 10 uplinks atingido" : "Adicionar uplink";
-  }
-  updateGeneratedCommand();
 }
 
 function generatedCommand() {
-  const mode = commandGeneratorMode();
-  if (mode === "link") {
-    return linkProbeInstallCommand({
-      agentId: els.commandLinkAgentId?.value,
-      linkName: els.commandLinkName?.value,
-      targets: els.commandLinkTargets?.value,
-      interfaceName: els.commandLinkInterface?.value,
-      sourceIp: els.commandLinkSourceIp?.value,
-      interval: els.commandLinkInterval?.value,
-      pingCount: els.commandLinkPingCount?.value,
-      threshold: els.commandLinkThreshold?.value,
-      pingTimeout: els.commandLinkPingTimeout?.value
-    });
-  }
-  if (mode === "mikrotik") {
-    return mikrotikProbeInstallCommand({
-      agentId: els.commandMikrotikAgentId?.value,
-      deviceName: els.commandMikrotikDeviceName?.value,
-      groupName: els.commandMikrotikGroupName?.value,
-      interval: els.commandMikrotikInterval?.value,
-      uplinks: collectCommandMikrotikUplinks()
-    });
-  }
   return probeInstallCommandFor(
     {
       id: els.commandServerProbeId?.value || "srv-cliente-01",
@@ -4804,6 +5456,118 @@ function probeCompanySummary(probe) {
   return `${labels.slice(0, 2).join(", ")} +${labels.length - 2}`;
 }
 
+const DISK_WARNING_THRESHOLD_PCT = 80;
+const SERVER_OFFLINE_WINDOW_MS = 30 * 24 * 60 * 60_000;
+const _peakCpuHourCache = new Map();
+
+// Avisos calculados na hora, a partir do que ja esta carregado em state —
+// nao marcam o servidor como critico, sao so pontos de atencao operacional.
+function computeServerWarnings(server) {
+  const warnings = [];
+
+  const partitions = Array.isArray(server.probeHostMetrics?.diskPartitions) ? server.probeHostMetrics.diskPartitions : [];
+  for (const partition of partitions) {
+    const pct = Number(partition.usedPercent);
+    if (!Number.isFinite(pct) || pct < DISK_WARNING_THRESHOLD_PCT) continue;
+    warnings.push({
+      level: pct >= 90 ? "danger" : "warning",
+      icon: "💾",
+      text: `Particao ${escapeHtml(partition.mount || partition.filesystem || "?")} em ${Math.round(pct)}% de uso`
+    });
+  }
+
+  const offlineSince = Date.now() - SERVER_OFFLINE_WINDOW_MS;
+  const offlineCount = state.events.filter(
+    (event) => event.serverId === server.id && event.kind === "server_offline" && dashboardTimeValue(event.createdAt) >= offlineSince
+  ).length;
+  if (offlineCount > 0) {
+    warnings.push({
+      level: offlineCount >= 5 ? "warning" : "info",
+      icon: "⚠",
+      text: `Ficou offline ${offlineCount} ${offlineCount === 1 ? "vez" : "vezes"} nos ultimos 30 dias`
+    });
+  }
+
+  const backupItem = (state.proxmoxBackup?.items || []).find((item) => item.serverId === server.id);
+  if (backupItem && (backupItem.status === "error" || backupItem.status === "warning")) {
+    warnings.push({
+      level: backupItem.status === "error" ? "danger" : "warning",
+      icon: "🗄",
+      text: backupItem.status === "error" ? "Backup com falha ou fora da janela esperada" : "Backup proximo do limite da janela esperada"
+    });
+  }
+
+  return warnings;
+}
+
+async function computePeakCpuHour(probeId) {
+  if (!probeId) return null;
+  if (_peakCpuHourCache.has(probeId)) return _peakCpuHourCache.get(probeId);
+  try {
+    const data = await api(`/api/metrics/history?probeId=${encodeURIComponent(probeId)}&type=short`);
+    const samples = (data.samples || []).filter((s) => Number.isFinite(s.cpu));
+    if (samples.length < 12) {
+      _peakCpuHourCache.set(probeId, null);
+      return null;
+    }
+    const buckets = Array.from({ length: 24 }, () => ({ sum: 0, count: 0 }));
+    for (const sample of samples) {
+      const hour = new Date(sample.t).getHours();
+      buckets[hour].sum += sample.cpu;
+      buckets[hour].count += 1;
+    }
+    let bestHour = null;
+    let bestAvg = -1;
+    buckets.forEach((bucket, hour) => {
+      if (!bucket.count) return;
+      const avg = bucket.sum / bucket.count;
+      if (avg > bestAvg) {
+        bestAvg = avg;
+        bestHour = hour;
+      }
+    });
+    const result = bestHour === null ? null : { hour: bestHour, avg: Math.round(bestAvg) };
+    _peakCpuHourCache.set(probeId, result);
+    return result;
+  } catch {
+    return null;
+  }
+}
+
+function renderServerWarningsSection(server) {
+  if (server.checkSource !== "probe" || !server.probeId) return "";
+  const warnings = computeServerWarnings(server);
+  return `
+    <div class="server-warnings-section" data-warnings-probe-id="${escapeHtml(server.probeId)}">
+      <div class="panel-title compact-title">
+        <h3>Quadro de avisos</h3>
+        <span>${warnings.length ? `${warnings.length} ${warnings.length === 1 ? "item" : "itens"}` : "Nada a reportar"}</span>
+      </div>
+      <div class="server-warnings-list">
+        ${warnings.map((w) => `<div class="server-warning-row ${w.level}"><span class="server-warning-icon">${w.icon}</span><span>${w.text}</span></div>`).join("")}
+        <div class="server-warning-row muted" data-warning-peak-cpu>
+          <span class="server-warning-icon">⏱</span>
+          <span>Calculando horario de pico de CPU...</span>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+async function loadPeakCpuHourWarning(probeId) {
+  const peak = await computePeakCpuHour(probeId);
+  const rows = document.querySelectorAll(`.server-warnings-section[data-warnings-probe-id="${CSS.escape(probeId)}"] [data-warning-peak-cpu]`);
+  rows.forEach((row) => {
+    if (!peak) {
+      row.remove();
+      return;
+    }
+    row.classList.remove("muted");
+    const hourLabel = `${String(peak.hour).padStart(2, "0")}:00`;
+    row.innerHTML = `<span class="server-warning-icon">⏱</span><span>Pico de uso de CPU costuma ocorrer por volta das ${hourLabel} (media ${peak.avg}%)</span>`;
+  });
+}
+
 function renderServerHostMetrics(server) {
   if (server.checkSource !== "probe") return "";
   const metrics = server.probeHostMetrics;
@@ -4837,7 +5601,210 @@ function renderServerHostMetrics(server) {
         <div class="detail-stat"><span>Uptime</span><strong>${formatUptime(system.uptimeSeconds)}</strong><small>${escapeHtml(server.probeHostName || system.type || "-")}</small></div>
         <div class="detail-stat"><span>Rede</span><strong>${escapeHtml(interfacePrimaryAddress(primaryInterface) || "-")}</strong><small>${escapeHtml(primaryInterface?.name || "-")} · ${formatNetworkSpeed(primaryInterface?.speedMbps)}</small></div>
       </div>
+      <div class="metrics-history-section" data-history-probe-id="${escapeHtml(server.probeId || "")}">
+        <button class="metrics-history-toggle ghost-button compact" type="button" data-action="toggle-metrics-history">
+          Historico de metricas
+        </button>
+        <div class="metrics-history-body" hidden></div>
+      </div>
+      ${renderServerWarningsSection(server)}
     </div>
+  `;
+}
+
+function metricsLineChart(samples, getValue, color, label, formatter) {
+  const W = 400, H = 56;
+  const vals = samples.map(getValue).filter((v) => v !== null && Number.isFinite(v));
+  if (vals.length < 2) return `<div class="metrics-chart-empty">Sem dados suficientes</div>`;
+  const min = 0;
+  const max = Math.max(...vals) || 1;
+  const xStep = W / (samples.length - 1);
+  const pts = samples
+    .map((s, i) => {
+      const v = getValue(s);
+      if (v === null || !Number.isFinite(v)) return null;
+      const x = Math.round(i * xStep);
+      const y = Math.round(H - ((v - min) / (max - min)) * H);
+      return `${x},${y}`;
+    })
+    .filter(Boolean)
+    .join(" ");
+  const last = vals[vals.length - 1];
+  const first = vals[0];
+  const delta = last - first;
+  const deltaStr = formatter(Math.abs(delta));
+  const trend = delta > 0 ? `+${deltaStr}` : delta < 0 ? `-${deltaStr}` : "estavel";
+  const trendClass = delta > 0 ? "trend-up" : delta < 0 ? "trend-down" : "trend-flat";
+  const areaClose = `${W},${H} 0,${H}`;
+  const times = samples.map((s) => s.t).join(",");
+  const values = samples
+    .map((s) => {
+      const v = getValue(s);
+      return v === null || !Number.isFinite(v) ? "" : formatter(v);
+    })
+    .join(",");
+  return `
+    <div class="metrics-chart-row">
+      <div class="metrics-chart-meta">
+        <span class="metrics-chart-label">${label}</span>
+        <span class="metrics-chart-current">${formatter(last)}</span>
+        <span class="metrics-chart-trend ${trendClass}">${trend}</span>
+      </div>
+      <div class="metrics-chart-wrap">
+        <svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" class="metrics-chart-svg" preserveAspectRatio="none"
+             data-chart-label="${escapeHtml(label)}" data-times="${times}" data-values="${escapeHtml(values)}">
+          <polygon points="${pts} ${areaClose}" fill="${color}" opacity="0.15"/>
+          <polyline points="${pts}" fill="none" stroke="${color}" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+          <line class="metrics-chart-guide-line" x1="0" y1="0" x2="0" y2="${H}" hidden></line>
+        </svg>
+      </div>
+    </div>
+  `;
+}
+
+let _metricsTooltipEl = null;
+
+function metricsChartPointAt(svg, clientX) {
+  const rect = svg.getBoundingClientRect();
+  if (!rect.width) return null;
+  const times = (svg.dataset.times || "").split(",").filter(Boolean).map(Number);
+  if (times.length < 2) return null;
+  const values = (svg.dataset.values || "").split(",");
+  const fraction = Math.min(1, Math.max(0, (clientX - rect.left) / rect.width));
+  const index = Math.min(times.length - 1, Math.round(fraction * (times.length - 1)));
+  return { time: times[index], value: values[index] || "-", fraction: index / (times.length - 1) };
+}
+
+function showMetricsChartTooltip(svg, clientX, clientY) {
+  const point = metricsChartPointAt(svg, clientX);
+  if (!point || !point.time) return;
+  if (!_metricsTooltipEl) {
+    _metricsTooltipEl = document.createElement("div");
+    _metricsTooltipEl.className = "metrics-chart-tooltip";
+    document.body.append(_metricsTooltipEl);
+  }
+  _metricsTooltipEl.innerHTML = `<strong>${escapeHtml(point.value)}</strong><span>${escapeHtml(formatDateShort(point.time))}</span>`;
+  _metricsTooltipEl.hidden = false;
+  const tipRect = _metricsTooltipEl.getBoundingClientRect();
+  const left = Math.min(window.innerWidth - tipRect.width - 8, clientX + 14);
+  const top = Math.max(8, clientY - tipRect.height - 14);
+  _metricsTooltipEl.style.left = `${left}px`;
+  _metricsTooltipEl.style.top = `${top}px`;
+
+  const guide = svg.querySelector(".metrics-chart-guide-line");
+  if (guide) {
+    const x = Math.round(point.fraction * 400);
+    guide.setAttribute("x1", x);
+    guide.setAttribute("x2", x);
+    guide.removeAttribute("hidden");
+  }
+}
+
+function hideMetricsChartTooltips() {
+  if (_metricsTooltipEl) _metricsTooltipEl.hidden = true;
+  document.querySelectorAll(".metrics-chart-guide-line").forEach((guide) => guide.setAttribute("hidden", ""));
+}
+
+const PARTITION_COLORS = ["#e05252", "#3fba74", "#4d9de0", "#e8a838", "#9b59b6", "#1abc9c", "#e67e22", "#16a085"];
+
+function renderPartitionCharts(filtered, isLong) {
+  const allMounts = [];
+  const seen = new Set();
+  for (const s of filtered) {
+    for (const p of (s.partitions || [])) {
+      if (!seen.has(p.m)) { seen.add(p.m); allMounts.push(p.m); }
+    }
+  }
+  if (!allMounts.length) {
+    return isLong
+      ? metricsLineChart(filtered, (s) => s.diskUsed, PARTITION_COLORS[0], "Disco principal", formatBytes)
+      : metricsLineChart(filtered, (s) => s.diskPct, PARTITION_COLORS[0], "Disco principal", formatPercent);
+  }
+  return allMounts.map((mount, idx) => {
+    const color = PARTITION_COLORS[idx % PARTITION_COLORS.length];
+    if (isLong) {
+      return metricsLineChart(filtered, (s) => (s.partitions || []).find((p) => p.m === mount)?.used ?? null, color, `Disco ${mount}`, formatBytes);
+    }
+    return metricsLineChart(filtered, (s) => (s.partitions || []).find((p) => p.m === mount)?.pct ?? null, color, `Disco ${mount}`, formatPercent);
+  }).join("");
+}
+
+function renderMetricsCharts(samples, type, rangeMs) {
+  const now = Date.now();
+  const filtered = samples.filter((s) => s.t >= now - rangeMs);
+  if (!filtered.length) {
+    return `<div class="metrics-chart-empty">Nenhum dado neste periodo ainda.</div>`;
+  }
+  if (type === "short") {
+    return [
+      metricsLineChart(filtered, (s) => s.cpu, "var(--accent)", "CPU", formatPercent),
+      metricsLineChart(filtered, (s) => s.mem, "#e8a838", "Memoria", formatPercent),
+      renderPartitionCharts(filtered, false)
+    ].join("");
+  }
+  // Amostras "long" registradas antes da extensao de retencao nao tem
+  // cpu/mem (so disco) — os graficos simplesmente ficam sem esses pontos
+  // ate a janela antiga expirar.
+  return [
+    metricsLineChart(filtered, (s) => s.cpu, "var(--accent)", "CPU", formatPercent),
+    metricsLineChart(filtered, (s) => s.mem, "#e8a838", "Memoria", formatPercent),
+    renderPartitionCharts(filtered, true)
+  ].join("");
+}
+
+async function loadMetricsHistory(probeId, type, rangeMs, container) {
+  _mh.chartsHtml = `<div class="metrics-chart-empty">Carregando...</div>`;
+  container.innerHTML = _mh.chartsHtml;
+  try {
+    const data = await api(`/api/metrics/history?probeId=${encodeURIComponent(probeId)}&type=${type}`);
+    _mh.chartsHtml = renderMetricsCharts(data.samples || [], type, rangeMs);
+    container.innerHTML = _mh.chartsHtml;
+  } catch (error) {
+    _mh.chartsHtml = `<div class="metrics-chart-empty">Falha ao carregar historico: ${escapeHtml(error.message)}</div>`;
+    container.innerHTML = _mh.chartsHtml;
+  }
+}
+
+function restoreMetricsHistory() {
+  if (!_mh.open || !_mh.probeId) return;
+  const section = els.serverProfilePanel?.querySelector(`.metrics-history-section[data-history-probe-id="${_mh.probeId}"]`);
+  if (!section) return;
+  const toggle = section.querySelector(".metrics-history-toggle");
+  const body = section.querySelector(".metrics-history-body");
+  if (!body) return;
+  body.hidden = false;
+  toggle?.classList.add("active");
+  body.innerHTML = buildMetricsHistoryBody(_mh.probeId, _mh.type, _mh.rangeMs);
+  const chartsArea = body.querySelector(".metrics-charts-area");
+  if (chartsArea && _mh.chartsHtml) chartsArea.innerHTML = _mh.chartsHtml;
+}
+
+function buildMetricsHistoryBody(probeId, type, rangeMs) {
+  const shortRanges = [
+    { label: "1h", ms: 60 * 60_000 },
+    { label: "6h", ms: 6 * 60 * 60_000 },
+    { label: "24h", ms: 24 * 60 * 60_000 },
+    { label: "72h", ms: 72 * 60 * 60_000 }
+  ];
+  const longRanges = [
+    { label: "7d", ms: 7 * 24 * 60 * 60_000 },
+    { label: "15d", ms: 15 * 24 * 60 * 60_000 },
+    { label: "30d", ms: 30 * 24 * 60 * 60_000 },
+    { label: "60d", ms: 60 * 24 * 60 * 60_000 }
+  ];
+  const curType = type;
+  const shortTab = `<button class="mh-type-tab${curType === "short" ? " active" : ""}" data-mh-type="short" data-mh-probe-id="${escapeHtml(probeId)}">CPU / Memoria / Disco · 72h</button>`;
+  const longTab = `<button class="mh-type-tab${curType === "long" ? " active" : ""}" data-mh-type="long" data-mh-probe-id="${escapeHtml(probeId)}">CPU / Memoria / Disco · 60 dias</button>`;
+  const ranges = curType === "short" ? shortRanges : longRanges;
+  const rangeTabs = ranges.map((r) =>
+    `<button class="mh-range-tab${r.ms === rangeMs ? " active" : ""}" data-mh-range="${r.ms}" data-mh-probe-id="${escapeHtml(probeId)}" data-mh-type="${curType}">${r.label}</button>`
+  ).join("");
+  return `
+    <div class="metrics-history-tabs">
+      <div class="mh-type-tabs">${shortTab}${longTab}</div>
+      <div class="mh-range-tabs">${rangeTabs}</div>
+    </div>
+    <div class="metrics-charts-area"></div>
   `;
 }
 
@@ -5028,6 +5995,49 @@ function renderProbeHostMetrics(probe) {
   `;
 }
 
+function renderProbeSpeedTest(probe) {
+  const hasResult = probe.speedTestDownloadMbps != null;
+  return `
+    <div class="probe-metrics">
+      <div class="panel-title compact-title">
+        <h3>Velocidade real (teste ativo)</h3>
+        <span>${probe.speedTestAt ? `Ultimo teste ${formatDate(probe.speedTestAt)}` : "Nenhum teste ainda"}</span>
+      </div>
+      <div class="probe-detail-grid">
+        <div class="detail-stat"><span>Download</span><strong>${hasResult ? `${probe.speedTestDownloadMbps} Mbps` : "-"}</strong></div>
+        <div class="detail-stat"><span>Upload</span><strong>${probe.speedTestUploadMbps != null ? `${probe.speedTestUploadMbps} Mbps` : "-"}</strong></div>
+      </div>
+      <button class="ghost-button compact" type="button" data-action="speed-test" data-probe-id="${escapeHtml(probe.id)}" ${probe.speedTestPending ? "disabled" : ""}>
+        ${probe.speedTestPending ? "Teste agendado..." : "Testar agora"}
+      </button>
+      <div class="probe-speedtest-history-body" data-speedtest-history-probe="${escapeHtml(probe.id)}">
+        <div class="metrics-chart-empty">Carregando...</div>
+      </div>
+    </div>
+  `;
+}
+
+// Grafico de capacidade real (teste ativo) ao longo do tempo — diferente do
+// grafico de trafego SNMP passivo, mostra o resultado de cada teste que
+// satura o link de proposito (ver runSpeedTest no network-collector.js).
+async function loadProbeSpeedTestHistory(probeId, container) {
+  if (!container) return;
+  try {
+    const data = await api(`/api/probes/${encodeURIComponent(probeId)}/speed-test-history`);
+    const samples = data.samples || [];
+    if (samples.length < 2) {
+      container.innerHTML = `<div class="metrics-chart-empty">Sem historico suficiente ainda.</div>`;
+      return;
+    }
+    container.innerHTML = [
+      metricsLineChart(samples, (s) => s.downloadMbps, "var(--accent)", "Download (teste ativo)", (v) => `${v} Mbps`),
+      metricsLineChart(samples, (s) => s.uploadMbps, "#e8a838", "Upload (teste ativo)", (v) => `${v} Mbps`)
+    ].join("");
+  } catch (error) {
+    container.innerHTML = `<div class="metrics-chart-empty">Falha ao carregar historico: ${escapeHtml(error.message)}</div>`;
+  }
+}
+
 function renderProbeDetail(probe) {
   if (!els.probeDetailPanel) return;
   if (!probe) {
@@ -5058,7 +6068,7 @@ function renderProbeDetail(probe) {
     ? `
       <div class="probe-update-notice">
         <strong>Atualizacao disponivel</strong>
-        <span>Este collector esta em ${escapeHtml(probe.version || "-")} e a versao atual e ${escapeHtml(probe.latestVersion || "-")}.${probe.updateSupported ? "" : " Atualizacao automatica disponivel apenas para Linux."}</span>
+        <span>Este collector esta em ${escapeHtml(probe.version || "-")} e a versao atual e ${escapeHtml(probe.latestVersion || "-")}.${probe.updateSupported ? "" : " Atualizacao automatica disponivel apenas para Linux e Windows."}</span>
       </div>
     `
     : "";
@@ -5094,7 +6104,7 @@ function renderProbeDetail(probe) {
       <strong>${escapeHtml(probeLastIssue(probe, linkedServers))}</strong>
     </div>
 
-    ${renderProbeHostMetrics(probe)}
+    ${probe.probeType === "network" ? renderProbeSpeedTest(probe) : renderProbeHostMetrics(probe)}
 
     <div class="probe-targets">
       <div class="panel-title compact-title">
@@ -5147,6 +6157,10 @@ function renderProbeDetail(probe) {
       <span>${canRemove ? "Remove um cadastro sem alvos ativos." : "Reatribua ou remova os servidores vinculados antes de excluir."}</span>
     </div>
   `;
+
+  if (probe.probeType === "network") {
+    loadProbeSpeedTestHistory(probe.id, els.probeDetailPanel.querySelector(".probe-speedtest-history-body"));
+  }
 }
 
 function renderProbes() {
@@ -5163,11 +6177,11 @@ function renderProbes() {
   if (els.guideServerProbeCommand) {
     els.guideServerProbeCommand.textContent = token ? probeInstallCommand() : "Token ainda nao disponivel.";
   }
-  if (els.guideLinkProbeCommand) {
-    els.guideLinkProbeCommand.textContent = token ? linkProbeInstallCommand() : "Token ainda nao disponivel.";
+  if (els.networkProbeInstallCommand) {
+    els.networkProbeInstallCommand.textContent = token ? networkProbeInstallCommand() : "Token ainda nao disponivel.";
   }
-  if (els.guideMikrotikProbeCommand) {
-    els.guideMikrotikProbeCommand.textContent = token ? mikrotikProbeInstallCommand() : "Token ainda nao disponivel.";
+  if (els.guideNetworkProbeCommand) {
+    els.guideNetworkProbeCommand.textContent = token ? networkProbeInstallCommand() : "Token ainda nao disponivel.";
   }
   if (els.commandGeneratorDialog?.open) updateGeneratedCommand();
   els.probeCount.textContent = `${state.probes.length} ${state.probes.length === 1 ? "probe conectado" : "probes conectados"}`;
@@ -5195,13 +6209,18 @@ function renderProbes() {
     return true;
   });
   const probes = sortedByAlpha(filteredProbes, probeSortLabel);
-  state.selectedProbeId = null;
+  // Preserva a selecao entre re-renders (snapshot em tempo real chega a cada
+  // poucos segundos) — sem isso, o painel de detalhe/acoes do probe fechava
+  // sozinho assim que qualquer outro probe reportava resultado.
+  if (state.selectedProbeId && !probes.some((probe) => probe.id === state.selectedProbeId)) {
+    state.selectedProbeId = null;
+  }
 
   els.probesList.innerHTML = probes.length
     ? probes
         .map(
           (probe) => `
-            <article class="probe-card ${probe.updateAvailable ? "outdated" : ""}" ${clickableCardAttrs(`Selecionar probe ${probe.name || probe.id}`)} data-probe-id="${escapeHtml(probe.id)}">
+            <article class="probe-card ${probe.updateAvailable ? "outdated" : ""} ${probe.id === state.selectedProbeId ? "selected" : ""}" ${clickableCardAttrs(`Selecionar probe ${probe.name || probe.id}`)} data-probe-id="${escapeHtml(probe.id)}">
               <div class="probe-card-main">
                 <div class="probe-card-title">
                   ${platformIcon(probe.platform)}
@@ -5225,8 +6244,9 @@ function renderProbes() {
         .join("")
     : `<div class="empty-list">${state.probeFilter === "stale" ? "Nenhum probe sem contato." : state.probeFilter === "online" ? "Nenhum probe online." : state.probeFilter === "outdated" ? "Nenhum probe desatualizado." : "Nenhum probe se conectou ainda."}</div>`;
   if (els.probeDetailPanel) {
-    els.probeDetailPanel.hidden = true;
-    els.probeDetailPanel.innerHTML = "";
+    const selected = state.probes.find((probe) => probe.id === state.selectedProbeId) || null;
+    els.probeDetailPanel.hidden = !selected;
+    renderProbeDetail(selected);
   }
 }
 
@@ -5296,7 +6316,11 @@ function normalizeNetworkTargetInput(target) {
   };
 }
 
-function renderNetworkTargetInputs(targets = [{ name: "", host: "" }]) {
+// isSnmpLink=true (link com interface SNMP escolhida) torna o IP de ping
+// opcional — sem essa flag, o atributo required ficava fixo no HTML e
+// bloqueava o submit do form (validacao nativa do browser) mesmo quando
+// submitNetworkLink ja teria liberado o envio sem IP pra links SNMP.
+function renderNetworkTargetInputs(targets = [{ name: "", host: "" }], isSnmpLink = false) {
   if (!els.networkLinkTarget) return;
   const normalized = (targets.length ? targets : [{ name: "", host: "" }]).map(normalizeNetworkTargetInput).slice(0, 10);
   els.networkLinkTarget.innerHTML = normalized
@@ -5307,8 +6331,8 @@ function renderNetworkTargetInputs(targets = [{ name: "", host: "" }]) {
           <input data-network-target-name value="${escapeHtml(target.name)}" placeholder="Vivo, BR Digital" />
         </label>
         <label>
-          IP monitorado
-          <input data-network-target-host value="${escapeHtml(target.host)}" required placeholder="187.91.174.154" />
+          IP monitorado${isSnmpLink ? " (opcional)" : ""}
+          <input data-network-target-host value="${escapeHtml(target.host)}" ${isSnmpLink ? "" : "required"} placeholder="187.91.174.154" />
         </label>
         <label>
           Mascara
@@ -5444,6 +6468,7 @@ function renderNetworkDetail(link) {
   const events = networkEventsForLink(link.id);
   const status = link.displayStatus || link.currentStatus || "unknown";
   const targetLabels = networkTargetsForLink(link).map(networkTargetLabel);
+  const isSnmpLink = link.monitorSource === "snmp";
   const isLinkProbe = link.monitorSource === "linkprobe" || Boolean(link.linkProbeAgentId);
   const isMikrotikProbe = link.monitorSource === "mikrotik" || Boolean(link.mikrotikAgentId);
   const collectorLabel = isMikrotikProbe ? "MikroTik RouterOS" : isLinkProbe ? "LinkProbe" : "Probe Collector";
@@ -5458,6 +6483,84 @@ function renderNetworkDetail(link) {
     : link.activeTargetHost
     ? activeDetectionLabel(link.activeDetection)
     : "-";
+  // Links coletados via SNMP nao tem alvo ativo de ping, IP publico, source
+  // IP ou agente de probe — mostrar esses campos so confunde (vinham todos
+  // em branco, ou pior, com o probe de host errado). Mostra em troca o que
+  // faz sentido pra SNMP: dispositivo/fabricante/interface e trafego in/out.
+  const connectivitySectionHtml = isSnmpLink
+    ? `
+      <article class="profile-section">
+        <div class="panel-title compact-title">
+          <h3>Conectividade</h3>
+          <span>${networkStatusLabel(status)}</span>
+        </div>
+        <div class="profile-stat-grid">
+          <div class="detail-stat"><span>Motivo do status</span><strong>${escapeHtml(networkStatusReasonLabel(link))}</strong></div>
+          <div class="detail-stat"><span>Interface</span><strong>${escapeHtml(link.snmpIfDescr || link.interfaceName || "-")}</strong></div>
+          <div class="detail-stat"><span>Dispositivo</span><strong>${escapeHtml(link.networkDeviceName || "-")}</strong></div>
+          <div class="detail-stat"><span>Fabricante</span><strong>${escapeHtml(networkVendorLabel(link.vendor))}</strong></div>
+        </div>
+      </article>
+    `
+    : `
+      <article class="profile-section">
+        <div class="panel-title compact-title">
+          <h3>Conectividade</h3>
+          <span>${networkStatusLabel(status)}</span>
+        </div>
+        <div class="profile-stat-grid">
+          <div class="detail-stat"><span>${escapeHtml(activeTargetTitle(link))}</span><strong>${escapeHtml(activeLabel)}</strong></div>
+          <div class="detail-stat"><span>Metodo do ativo</span><strong>${escapeHtml(activeMethod)}</strong></div>
+          <div class="detail-stat"><span>Motivo do status</span><strong>${escapeHtml(networkStatusReasonLabel(link))}</strong></div>
+          <div class="detail-stat"><span>Alvos externos</span><strong>${escapeHtml(targetLabels.join(", ") || "-")}</strong></div>
+        </div>
+      </article>
+
+      <article class="profile-section">
+        <div class="panel-title compact-title">
+          <h3>Identificacao</h3>
+          <span>${escapeHtml(collectorLabel)}</span>
+        </div>
+        <div class="profile-stat-grid">
+          <div class="detail-stat"><span>IP publico observado</span><strong>${escapeHtml(link.observedPublicIp || "-")}</strong></div>
+          <div class="detail-stat"><span>Rede WAN esperada</span><strong>${escapeHtml(link.expectedPublicIp ? `${link.expectedPublicIp}${link.expectedPublicPrefixLength ? `/${link.expectedPublicPrefixLength}` : ""}` : "-")}</strong></div>
+          <div class="detail-stat"><span>Coletor</span><strong>${escapeHtml(collectorLabel)}</strong></div>
+          <div class="detail-stat"><span>ID do agente</span><strong>${escapeHtml(collectorId || "-")}</strong></div>
+          <div class="detail-stat"><span>Source IP</span><strong>${escapeHtml(link.linkProbeSourceIp || "-")}</strong></div>
+          <div class="detail-stat"><span>Versao do agente</span><strong>${escapeHtml(link.mikrotikVersion || link.linkProbeVersion || "-")}</strong></div>
+        </div>
+      </article>
+    `;
+
+  const performanceSectionHtml = isSnmpLink
+    ? `
+      <article class="profile-section">
+        <div class="panel-title compact-title">
+          <h3>Trafego</h3>
+          <span>${link.snmpLastSampleAt ? formatDate(link.snmpLastSampleAt) : "-"}</span>
+        </div>
+        <div class="profile-stat-grid">
+          <div class="detail-stat"><span>Download</span><strong>${link.snmpInBps == null ? "-" : formatBps(link.snmpInBps)}</strong></div>
+          <div class="detail-stat"><span>Upload</span><strong>${link.snmpOutBps == null ? "-" : formatBps(link.snmpOutBps)}</strong></div>
+        </div>
+      </article>
+    `
+    : `
+      <article class="profile-section">
+        <div class="panel-title compact-title">
+          <h3>Desempenho</h3>
+          <span>${link.lastLatencyMs ?? "-"} ms</span>
+        </div>
+        <div class="profile-stat-grid">
+          <div class="detail-stat"><span>Latencia</span><strong>${link.lastLatencyMs ?? "-"} ms</strong></div>
+          <div class="detail-stat"><span>Perda</span><strong>${link.lastPacketLossPercent ?? "-"}%</strong></div>
+          <div class="detail-stat"><span>Jitter</span><strong>${link.lastJitterMs ?? "-"} ms</strong></div>
+          <div class="detail-stat"><span>Sucesso</span><strong>${link.linkProbeSuccessRate === null || link.linkProbeSuccessRate === undefined ? "-" : `${Math.round(Number(link.linkProbeSuccessRate) * 100)}%`}</strong></div>
+          ${isMikrotikProbe ? `<div class="detail-stat"><span>Health-check</span><strong>${escapeHtml(link.mikrotikHealthTarget || "-")}</strong><small>${link.mikrotikHealthReceived ?? 0}/${link.mikrotikHealthSent ?? 0} respostas</small></div>` : ""}
+        </div>
+      </article>
+    `;
+
   els.networkDetailPanel.innerHTML = `
     <div class="network-detail-header">
       <div>
@@ -5466,47 +6569,8 @@ function renderNetworkDetail(link) {
       </div>
       <span class="status-badge ${networkStatusClass(status)}">${networkStatusLabel(status)}</span>
     </div>
-    <article class="profile-section">
-      <div class="panel-title compact-title">
-        <h3>Conectividade</h3>
-        <span>${networkStatusLabel(status)}</span>
-      </div>
-      <div class="profile-stat-grid">
-        <div class="detail-stat"><span>${escapeHtml(activeTargetTitle(link))}</span><strong>${escapeHtml(activeLabel)}</strong></div>
-        <div class="detail-stat"><span>Metodo do ativo</span><strong>${escapeHtml(activeMethod)}</strong></div>
-        <div class="detail-stat"><span>Motivo do status</span><strong>${escapeHtml(networkStatusReasonLabel(link))}</strong></div>
-        <div class="detail-stat"><span>Alvos externos</span><strong>${escapeHtml(targetLabels.join(", ") || "-")}</strong></div>
-      </div>
-    </article>
-
-    <article class="profile-section">
-      <div class="panel-title compact-title">
-        <h3>Identificacao</h3>
-        <span>${escapeHtml(collectorLabel)}</span>
-      </div>
-      <div class="profile-stat-grid">
-        <div class="detail-stat"><span>IP publico observado</span><strong>${escapeHtml(link.observedPublicIp || "-")}</strong></div>
-        <div class="detail-stat"><span>Rede WAN esperada</span><strong>${escapeHtml(link.expectedPublicIp ? `${link.expectedPublicIp}${link.expectedPublicPrefixLength ? `/${link.expectedPublicPrefixLength}` : ""}` : "-")}</strong></div>
-        <div class="detail-stat"><span>Coletor</span><strong>${escapeHtml(collectorLabel)}</strong></div>
-        <div class="detail-stat"><span>ID do agente</span><strong>${escapeHtml(collectorId || "-")}</strong></div>
-        <div class="detail-stat"><span>Source IP</span><strong>${escapeHtml(link.linkProbeSourceIp || "-")}</strong></div>
-        <div class="detail-stat"><span>Versao do agente</span><strong>${escapeHtml(link.mikrotikVersion || link.linkProbeVersion || "-")}</strong></div>
-      </div>
-    </article>
-
-    <article class="profile-section">
-      <div class="panel-title compact-title">
-        <h3>Desempenho</h3>
-        <span>${link.lastLatencyMs ?? "-"} ms</span>
-      </div>
-      <div class="profile-stat-grid">
-        <div class="detail-stat"><span>Latencia</span><strong>${link.lastLatencyMs ?? "-"} ms</strong></div>
-        <div class="detail-stat"><span>Perda</span><strong>${link.lastPacketLossPercent ?? "-"}%</strong></div>
-        <div class="detail-stat"><span>Jitter</span><strong>${link.lastJitterMs ?? "-"} ms</strong></div>
-        <div class="detail-stat"><span>Sucesso</span><strong>${link.linkProbeSuccessRate === null || link.linkProbeSuccessRate === undefined ? "-" : `${Math.round(Number(link.linkProbeSuccessRate) * 100)}%`}</strong></div>
-        ${isMikrotikProbe ? `<div class="detail-stat"><span>Health-check</span><strong>${escapeHtml(link.mikrotikHealthTarget || "-")}</strong><small>${link.mikrotikHealthReceived ?? 0}/${link.mikrotikHealthSent ?? 0} respostas</small></div>` : ""}
-      </div>
-    </article>
+    ${connectivitySectionHtml}
+    ${performanceSectionHtml}
 
     <article class="profile-section">
       <div class="panel-title compact-title">
@@ -5519,8 +6583,14 @@ function renderNetworkDetail(link) {
         <div class="detail-stat"><span>Falhas para offline</span><strong>${link.failureThreshold || 3}</strong></div>
         <div class="detail-stat"><span>Tipo</span><strong>${networkLinkTypeLabel(link.linkType)}</strong></div>
         <div class="detail-stat"><span>Interface</span><strong>${escapeHtml(link.interfaceName || "-")}</strong></div>
-        <div class="detail-stat"><span>Limite latencia</span><strong>${link.degradedLatencyMs || 120} ms</strong></div>
-        <div class="detail-stat"><span>Limite perda</span><strong>${link.degradedPacketLossPercent ?? 10}%</strong></div>
+        ${
+          isSnmpLink
+            ? ""
+            : `
+              <div class="detail-stat"><span>Limite latencia</span><strong>${link.degradedLatencyMs || 120} ms</strong></div>
+              <div class="detail-stat"><span>Limite perda</span><strong>${link.degradedPacketLossPercent ?? 10}%</strong></div>
+            `
+        }
       </div>
     </article>
     ${
@@ -5641,8 +6711,45 @@ function renderNetworkCompanyDetail(group) {
   const jitterValues = links.map((link) => Number(link.lastJitterMs)).filter(Number.isFinite);
   const avgJitter = jitterValues.length ? Math.round(jitterValues.reduce((sum, value) => sum + value, 0) / jitterValues.length) : null;
   const activeLinks = confirmedActive.length ? confirmedActive : onlineLinks.slice(0, 3);
+  // Links SNMP nao tem latencia/perda/jitter (nao usam ping) — quando a
+  // empresa so tem esse tipo de link, "Qualidade media" mostra throughput
+  // medio em vez de metricas de ping que nunca teriam dado.
+  const snmpLinks = links.filter((link) => link.monitorSource === "snmp");
+  // Number(null) === 0 em JS — nao pode usar latencyValues aqui (ele conta
+  // "0" como amostra valida mesmo quando lastLatencyMs nunca foi definido).
+  const useSnmpQuality = links.every((link) => link.lastLatencyMs == null) && snmpLinks.length > 0;
+  const snmpInValues = snmpLinks.map((link) => Number(link.snmpInBps)).filter(Number.isFinite);
+  const snmpOutValues = snmpLinks.map((link) => Number(link.snmpOutBps)).filter(Number.isFinite);
+  const avgSnmpInBps = snmpInValues.length ? Math.round(snmpInValues.reduce((sum, value) => sum + value, 0) / snmpInValues.length) : null;
+  const avgSnmpOutBps = snmpOutValues.length ? Math.round(snmpOutValues.reduce((sum, value) => sum + value, 0) / snmpOutValues.length) : null;
+  const qualityGridHtml = useSnmpQuality
+    ? `
+      <div class="network-quality-grid">
+        <article><strong>${avgSnmpInBps === null ? "-" : formatBps(avgSnmpInBps)}</strong><span>download medio</span></article>
+        <article><strong>${avgSnmpOutBps === null ? "-" : formatBps(avgSnmpOutBps)}</strong><span>upload medio</span></article>
+        <article><strong>${counts.online || 0}/${statusTotal}</strong><span>interfaces online</span></article>
+      </div>
+    `
+    : `
+      <div class="network-quality-grid">
+        <article><strong>${avgLatency === null ? "-" : avgLatency}</strong><span>ms latencia</span></article>
+        <article class="${avgLoss && avgLoss > 0 ? "warning" : ""}"><strong>${avgLoss === null ? "-" : avgLoss}</strong><span>% perda</span></article>
+        <article><strong>${avgJitter === null ? "-" : avgJitter}</strong><span>ms jitter</span></article>
+      </div>
+    `;
   const linkQualityRows = links.slice(0, 4).map((link) => {
     const status = link.displayStatus || link.currentStatus || "unknown";
+    if (link.monitorSource === "snmp") {
+      const inBps = Number(link.snmpInBps);
+      const pct = status === "online" ? 100 : status === "degraded" ? 50 : 0;
+      return `
+        <button type="button" data-network-link-id="${escapeHtml(link.id)}">
+          <span>${escapeHtml(link.name)}</span>
+          <i aria-hidden="true"><b class="${networkStatusClass(status)}" style="width:${pct}%"></b></i>
+          <strong>${Number.isFinite(inBps) ? formatBps(inBps) : "-"}</strong>
+        </button>
+      `;
+    }
     const latency = Number(link.lastLatencyMs);
     const limit = Number(link.degradedLatencyMs || 120);
     const latencyPct = Number.isFinite(latency) ? Math.max(4, Math.min(100, Math.round((latency / Math.max(limit, 1)) * 100))) : 0;
@@ -5707,11 +6814,7 @@ function renderNetworkCompanyDetail(group) {
           <h3>Qualidade media</h3>
           <span>ultimos resultados</span>
         </div>
-        <div class="network-quality-grid">
-          <article><strong>${avgLatency === null ? "-" : avgLatency}</strong><span>ms latencia</span></article>
-          <article class="${avgLoss && avgLoss > 0 ? "warning" : ""}"><strong>${avgLoss === null ? "-" : avgLoss}</strong><span>% perda</span></article>
-          <article><strong>${avgJitter === null ? "-" : avgJitter}</strong><span>ms jitter</span></article>
-        </div>
+        ${qualityGridHtml}
         <div class="network-quality-list">
           ${linkQualityRows || `<div class="empty-list compact">Sem dados de qualidade ainda.</div>`}
         </div>
@@ -5742,6 +6845,16 @@ function renderNetworkCompanyDetail(group) {
           }
         </div>
       </article>
+
+      <article class="company-insight-card company-bps-card" data-bps-history-group="${escapeHtml(group.id || "none")}">
+        <div class="panel-title compact-title">
+          <h3>Variacao de velocidade</h3>
+          <span>ultimas 72h</span>
+        </div>
+        <div class="network-bps-history-body">
+          <div class="metrics-chart-empty">Carregando...</div>
+        </div>
+      </article>
     </section>
 
     <section class="profile-section">
@@ -5768,32 +6881,133 @@ function renderNetworkCompanyDetail(group) {
       </div>
     </section>
   `;
+  loadNetworkGroupBpsHistory(group.id || "none", els.networkDetailPanel.querySelector(".network-bps-history-body"));
+}
+
+// Grafico de variacao de velocidade (download/upload) na visao de empresa —
+// agrega no servidor a banda de todos os links SNMP "featured" da empresa,
+// reaproveita o mesmo componente de grafico de linha do historico de CPU/RAM.
+async function loadNetworkGroupBpsHistory(groupId, container) {
+  if (!container) return;
+  try {
+    const data = await api(`/api/network/groups/${encodeURIComponent(groupId)}/bps-history`);
+    const samples = data.samples || [];
+    if (!samples.length) {
+      container.innerHTML = `<div class="metrics-chart-empty">Nenhum dado neste periodo ainda.</div>`;
+      return;
+    }
+    container.innerHTML = [
+      metricsLineChart(samples, (s) => s.inBps, "var(--accent)", "Download", formatBps),
+      metricsLineChart(samples, (s) => s.outBps, "#e8a838", "Upload", formatBps)
+    ].join("");
+  } catch (error) {
+    container.innerHTML = `<div class="metrics-chart-empty">Falha ao carregar historico: ${escapeHtml(error.message)}</div>`;
+  }
 }
 
 function renderNetworkLinkRow(link) {
   const status = link.displayStatus || link.currentStatus || "unknown";
   const selected = state.selectedNetworkLinkId === link.id ? "selected" : "";
   const statusTone = status === "offline" ? "is-offline" : "";
+  const isSnmp = link.monitorSource === "snmp";
+  // Quando a RB expoe tabela de rotas via SNMP, quem manda e ela (link.snmpActiveRoute
+  // true/false) — e o sinal mais confiavel de qual interface carrega a rota
+  // padrao agora, mesmo se duas interfaces tiverem trafego real ao mesmo
+  // tempo (ver applyNetworkDeviceSnmpResult no server.js). Sem esse sinal
+  // (dispositivo nao expoe ipRouteTable), cai pro heuristico de trafego — e
+  // aí o selo ATIVO precisa bater com o que a coluna de trafego mostra
+  // (formatBps arredonda pro Mbps mais proximo), senao da pra marcar um link
+  // como ativo enquanto ele exibe "0 Mbps", o que parece um bug.
+  const hasRouteSignal = link.snmpActiveRoute === true || link.snmpActiveRoute === false;
+  const hasActiveTraffic =
+    isSnmp &&
+    (hasRouteSignal
+      ? link.snmpActiveRoute === true
+      : state.networkTrafficFallbackActiveLinkIds?.has(link.id) === true);
   const subtitle = [
     link.provider || "Sem operadora",
     link.networkDeviceName || "Sem dispositivo",
-    networkTargetSummary(link)
+    isSnmp ? (link.snmpIfDescr || "Interface SNMP") : networkTargetSummary(link)
   ].filter(Boolean).join(" · ");
+  // Links via SNMP nao tem latencia de ping — mostra throughput da interface no lugar.
+  const metric = isSnmp
+    ? `${formatBps(link.snmpInBps)} ↓ · ${formatBps(link.snmpOutBps)} ↑`
+    : `${link.lastLatencyMs ?? "-"} ms`;
   return `
-    <button class="network-link-row ${selected} ${statusTone}" type="button" data-network-link-id="${escapeHtml(link.id)}">
+    <button class="network-link-row ${selected} ${statusTone} ${hasActiveTraffic ? "is-active" : ""}" type="button" data-network-link-id="${escapeHtml(link.id)}">
       <span class="status-dot ${networkStatusClass(status)}"></span>
       <div>
-        <strong>${escapeHtml(link.name)}</strong>
+        <strong>${escapeHtml(link.name)}${hasActiveTraffic ? `<em class="network-link-active-badge">ATIVO</em>` : ""}</strong>
         <small>${escapeHtml(subtitle)}</small>
       </div>
       <span class="status-badge ${networkStatusClass(status)}">${networkStatusLabel(status)}</span>
-      <small>${link.lastLatencyMs ?? "-"} ms</small>
+      <small>${metric}</small>
     </button>
+  `;
+}
+
+function networkDeviceStatusClass(status) {
+  return status === "unreachable" ? "offline" : status === "ok" ? "online" : "paused";
+}
+
+function networkDeviceStatusLabel(status) {
+  return { ok: "SNMP OK", unreachable: "SNMP SEM CONTATO" }[status] || "SNMP NAO CONFIGURADO";
+}
+
+function renderNetworkDeviceRow(device, featuredLinks = []) {
+  const status = device.snmpStatus || "unconfigured";
+  // .unifi-device-row so tem estilo definido pra "offline"/"attention"/"unknown"
+  // (vocabulario do card UniFi que essa linha reaproveita) — mapeia o status SNMP pra isso.
+  const rowClass = status === "unreachable" ? "offline" : status === "unconfigured" ? "unknown" : "";
+  const networkProbe = device.networkProbeId ? state.probes.find((item) => item.id === device.networkProbeId) : null;
+  const metrics = [
+    device.cpuPercent != null ? `CPU ${device.cpuPercent}%` : "",
+    device.memPercent != null ? `RAM ${device.memPercent}%` : "",
+    networkProbe?.speedTestDownloadMbps != null ? `${networkProbe.speedTestDownloadMbps} Mbps real` : ""
+  ].filter(Boolean);
+  // Interfaces auto-descobertas via SNMP que o admin ainda nao marcou como WAN
+  // (featured) ficam colapsadas aqui — mesmo padrao visual de VM sob host Proxmox.
+  const collapsedLinks = (state.networkLinks || []).filter(
+    (link) => link.networkDeviceId === device.id && link.featured === false
+  );
+  const expanded = state.networkDeviceExpanded.has(device.id);
+  return `
+    <div class="unifi-device-row ${rowClass}" data-network-device-id="${escapeHtml(device.id)}">
+      ${
+        collapsedLinks.length
+          ? `<span class="topology-toggle ${expanded ? "expanded" : ""}" data-network-device-toggle="${escapeHtml(device.id)}" aria-label="${expanded ? "Ocultar interfaces" : "Exibir interfaces"}" aria-expanded="${expanded ? "true" : "false"}"><i aria-hidden="true"></i></span>`
+          : `<span class="topology-spacer" aria-hidden="true"></span>`
+      }
+      <span class="status-dot ${networkDeviceStatusClass(status)}"></span>
+      <span class="unifi-device-identity">
+        <strong>${escapeHtml(device.name)}</strong>
+        <small>${escapeHtml(device.vendor || "generic")} · ${escapeHtml(device.managementIp || "Sem IP")}${collapsedLinks.length ? ` · ${collapsedLinks.length} interface(s) nao destacada(s)` : ""}</small>
+      </span>
+      <span class="status-badge ${networkDeviceStatusClass(status)}">${networkDeviceStatusLabel(status)}</span>
+      <span class="unifi-device-metrics">
+        ${metrics.length ? metrics.map((metric) => `<small>${escapeHtml(metric)}</small>`).join("") : "<small>Aguardando coleta</small>"}
+      </span>
+    </div>
+    ${
+      // Links destacados (featured) do dispositivo ficam sempre visiveis logo
+      // abaixo dele, num bloco a parte — nao atras do toggle de "nao
+      // destacadas". Isso evita que, com mais de uma RB na mesma empresa, os
+      // links destacados de dispositivos diferentes se misturem numa lista so.
+      featuredLinks.length
+        ? `<div class="dependency-children network-device-featured-links">${sortedByAlpha(featuredLinks, networkLinkSortLabel).map(renderNetworkLinkRow).join("")}</div>`
+        : ""
+    }
+    ${
+      collapsedLinks.length && expanded
+        ? `<div class="dependency-children">${sortedByAlpha(collapsedLinks, networkLinkSortLabel).map(renderNetworkLinkRow).join("")}</div>`
+        : ""
+    }
   `;
 }
 
 function renderNetworkCompanySection(group) {
   const links = sortedByAlpha(group.links, networkLinkSortLabel);
+  const devices = sortedByAlpha(group.devices || [], (device) => device.name);
   const counts = links.reduce((acc, link) => {
     const status = link.displayStatus || link.currentStatus || "unknown";
     acc[status] = (acc[status] || 0) + 1;
@@ -5805,6 +7019,20 @@ function renderNetworkCompanySection(group) {
   const stale = counts.probe_unreachable || 0;
   const attention = offline + degraded + stale;
   const selected = state.selectedNetworkGroupId === group.id ? "selected" : "";
+  // Cada link destacado (featured) e agrupado sob o dispositivo dono dele —
+  // com mais de uma RB na mesma empresa (ex: Kompier), isso evita misturar
+  // os links de dispositivos diferentes numa lista unica e ambigua.
+  const deviceIds = new Set(devices.map((device) => device.id));
+  const linksByDeviceId = new Map();
+  const linksWithoutDevice = [];
+  for (const link of links) {
+    if (link.networkDeviceId && deviceIds.has(link.networkDeviceId)) {
+      if (!linksByDeviceId.has(link.networkDeviceId)) linksByDeviceId.set(link.networkDeviceId, []);
+      linksByDeviceId.get(link.networkDeviceId).push(link);
+    } else {
+      linksWithoutDevice.push(link);
+    }
+  }
   return `
     <section class="network-company-section ${selected}">
       <button class="network-company-header" type="button" data-network-group-id="${escapeHtml(group.id)}">
@@ -5817,9 +7045,18 @@ function renderNetworkCompanySection(group) {
           ${attention ? `<span class="mini-badge offline">${attention} atencao</span>` : ""}
         </div>
       </button>
-      <div class="network-company-items">
-        ${links.map(renderNetworkLinkRow).join("")}
-      </div>
+      ${
+        devices.length
+          ? `<div class="network-company-items">${devices
+              .map((device) => renderNetworkDeviceRow(device, linksByDeviceId.get(device.id) || []))
+              .join("")}</div>`
+          : ""
+      }
+      ${
+        linksWithoutDevice.length
+          ? `<div class="network-company-items">${linksWithoutDevice.map(renderNetworkLinkRow).join("")}</div>`
+          : ""
+      }
     </section>
   `;
 }
@@ -6052,9 +7289,67 @@ async function linkUnifiSiteToGroup(siteId, groupId) {
   }
 }
 
+function renderNetworkDiscoveryBanner() {
+  if (!els.networkDiscoveryBanner) return;
+  const suggestions = state.networkDiscoverySuggestions || [];
+  if (!isAdmin() || !suggestions.length) {
+    els.networkDiscoveryBanner.innerHTML = "";
+    return;
+  }
+  els.networkDiscoveryBanner.innerHTML = suggestions
+    .map(
+      (suggestion) => `
+        <div class="network-discovery-banner">
+          <div>
+            <strong>Dispositivo de rede detectado automaticamente</strong>
+            <small>Gateway ${escapeHtml(suggestion.discoveredGatewayIp)} visto pelo network probe "${escapeHtml(suggestion.probeName)}"</small>
+          </div>
+          <button class="ghost-button compact" type="button" data-network-discovery-probe-id="${escapeHtml(suggestion.probeId)}" data-network-discovery-ip="${escapeHtml(suggestion.discoveredGatewayIp)}">Cadastrar</button>
+        </div>
+      `
+    )
+    .join("");
+}
+
+// Quando o dispositivo nao expoe tabela de rotas via SNMP (snmpActiveRoute
+// nunca fica definido em nenhum link dele — ex: alguns Fortigate nao
+// implementam ipCidrRouteTable), o heuristico de trafego precisa escolher
+// SO UM vencedor por dispositivo (o de maior trafego combinado), nao
+// qualquer interface que cruze um limite absoluto — senao um link de
+// backup com so um pouco de trafego residual (health-check/keepalive)
+// tambem acende como ATIVO junto com o link principal.
+function computeTrafficFallbackActiveLinkIds(allLinks) {
+  const byDevice = new Map();
+  for (const link of allLinks) {
+    if (link.monitorSource !== "snmp" || !link.networkDeviceId) continue;
+    if (!byDevice.has(link.networkDeviceId)) byDevice.set(link.networkDeviceId, []);
+    byDevice.get(link.networkDeviceId).push(link);
+  }
+  const winners = new Set();
+  for (const deviceLinks of byDevice.values()) {
+    // Se algum link do dispositivo ja tem sinal de rota confirmado
+    // (true ou false), a rota manda — nao usa heuristico de trafego pra
+    // nenhum link desse dispositivo.
+    if (deviceLinks.some((link) => link.snmpActiveRoute === true || link.snmpActiveRoute === false)) continue;
+    let best = null;
+    for (const link of deviceLinks) {
+      const total = Math.max(0, Number(link.snmpInBps) || 0) + Math.max(0, Number(link.snmpOutBps) || 0);
+      if (total <= 0) continue;
+      if (!best || total > best.total) best = { link, total };
+    }
+    if (best) winners.add(best.link.id);
+  }
+  return winners;
+}
+
 function renderNetworks() {
   if (!els.networkLinksList) return;
-  const links = sortedByAlpha(state.networkLinks || [], networkLinkSortLabel);
+  const allLinks = sortedByAlpha(state.networkLinks || [], networkLinkSortLabel);
+  state.networkTrafficFallbackActiveLinkIds = computeTrafficFallbackActiveLinkIds(allLinks);
+  // So conta/lista na visualizacao principal os links "featured" — os demais
+  // (interfaces auto-descobertas via SNMP ainda nao confirmadas como WAN pelo
+  // admin) ficam colapsados sob o dispositivo, ver renderNetworkDeviceRow.
+  const links = allLinks.filter((link) => link.featured !== false);
   const counts = links.reduce((acc, link) => {
     const status = link.displayStatus || link.currentStatus || "unknown";
     acc[status] = (acc[status] || 0) + 1;
@@ -6066,37 +7361,40 @@ function renderNetworks() {
   if (els.networkDegradedCount) els.networkDegradedCount.textContent = counts.degraded || 0;
   if (els.networkOfflineCount) els.networkOfflineCount.textContent = counts.offline || 0;
   if (els.networkProbeStaleCount) els.networkProbeStaleCount.textContent = counts.probe_unreachable || 0;
-  if (els.linkProbeInstallCommand) {
-    els.linkProbeInstallCommand.textContent = probeToken() ? linkProbeInstallCommand() : "Token ainda nao disponivel.";
-  }
-  if (els.mikrotikProbeInstallCommand) {
-    els.mikrotikProbeInstallCommand.textContent = probeToken() ? mikrotikProbeInstallCommand() : "Token ainda nao disponivel.";
-  }
 
   const groups = new Map();
-  links.forEach((link) => {
-    const key = link.groupId || "none";
+  const ensureGroup = (key) => {
     if (!groups.has(key)) {
       groups.set(key, {
         id: key,
         label: key === "none" ? "Sem empresa" : groupLabel(key),
         logoDataUrl: key === "none" ? "" : groupLogo(key),
-        links: []
+        links: [],
+        devices: []
       });
     }
-    groups.get(key).links.push(link);
+    return groups.get(key);
+  };
+  links.forEach((link) => {
+    ensureGroup(link.groupId || "none").links.push(link);
   });
+  // So mostra na lista dispositivos com SNMP habilitado — sem isso a linha
+  // ficaria redundante com o nome do dispositivo ja exibido no subtitulo do link.
+  (state.networkDevices || []).filter((device) => device.snmpEnabled).forEach((device) => {
+    ensureGroup(device.groupId || "none").devices.push(device);
+  });
+  renderNetworkDiscoveryBanner();
   const groupedLinks = Array.from(groups.values()).sort((left, right) => {
     if (left.id === "none") return 1;
     if (right.id === "none") return -1;
     return compareAlpha(left.label, right.label);
   });
-  els.networkLinksList.innerHTML = links.length
+  els.networkLinksList.innerHTML = groupedLinks.length
     ? groupedLinks.map(renderNetworkCompanySection).join("")
     : `<div class="empty-list">Nenhum link cadastrado ainda.</div>`;
   const selectedGroup = state.selectedNetworkGroupId ? groupedLinks.find((group) => group.id === state.selectedNetworkGroupId) : null;
   if (selectedGroup) renderNetworkCompanyDetail(selectedGroup);
-  else renderNetworkDetail(links.find((link) => link.id === state.selectedNetworkLinkId) || null);
+  else renderNetworkDetail(allLinks.find((link) => link.id === state.selectedNetworkLinkId) || null);
   renderUnifiNetwork();
   updateNetworkProviderVisibility();
 }
@@ -6202,6 +7500,78 @@ function closeDialog() {
   forceCloseDialog(els.serverDialog);
 }
 
+function normalizeGroupContractInput(contract = {}) {
+  return {
+    id: contract.id || "",
+    label: contract.label || "",
+    startDate: contract.startDate || "",
+    endDate: contract.endDate || ""
+  };
+}
+
+function renderGroupContractInputs(contracts = []) {
+  if (!els.groupContractsList) return;
+  const normalized = contracts.map(normalizeGroupContractInput).slice(0, 20);
+  els.groupContractsList.innerHTML = normalized.length
+    ? normalized
+        .map(
+          (contract) => `
+      <div class="group-contract-input-row" data-group-contract-row>
+        <input type="hidden" data-group-contract-id value="${escapeHtml(contract.id)}" />
+        <label>
+          Descricao
+          <input data-group-contract-label value="${escapeHtml(contract.label)}" placeholder="Contrato de suporte, backup mensal..." />
+        </label>
+        <label>
+          Inicio (opcional)
+          <input type="date" data-group-contract-start value="${escapeHtml(contract.startDate)}" />
+        </label>
+        <label>
+          Fim
+          <input type="date" data-group-contract-end value="${escapeHtml(contract.endDate)}" />
+        </label>
+        <button class="icon-button group-contract-remove" type="button" data-remove-group-contract title="Remover contrato">-</button>
+      </div>
+    `
+        )
+        .join("")
+    : "";
+  if (els.addGroupContract) {
+    els.addGroupContract.disabled = normalized.length >= 20;
+    els.addGroupContract.title = normalized.length >= 20 ? "Limite de 20 contratos atingido" : "Adicionar contrato";
+  }
+}
+
+function readGroupContractRows() {
+  if (!els.groupContractsList) return [];
+  return [...els.groupContractsList.querySelectorAll("[data-group-contract-row]")].map((row) => ({
+    id: row.querySelector("[data-group-contract-id]")?.value.trim() || "",
+    label: row.querySelector("[data-group-contract-label]")?.value.trim() || "",
+    startDate: row.querySelector("[data-group-contract-start]")?.value || "",
+    endDate: row.querySelector("[data-group-contract-end]")?.value || ""
+  }));
+}
+
+function readGroupContractInputs() {
+  return readGroupContractRows().filter((contract) => contract.endDate);
+}
+
+function addGroupContractInput() {
+  const contracts = readGroupContractRows();
+  if (contracts.length >= 20) return;
+  renderGroupContractInputs([...contracts, {}]);
+}
+
+function removeGroupContractInput(button) {
+  if (!els.groupContractsList) return;
+  const rows = [...els.groupContractsList.querySelectorAll("[data-group-contract-row]")];
+  const index = rows.findIndex((row) => row.contains(button));
+  if (index === -1) return;
+  const contracts = readGroupContractRows();
+  contracts.splice(index, 1);
+  renderGroupContractInputs(contracts);
+}
+
 function openGroupDialog(group = null) {
   els.groupForm.reset();
   state.groupLogoDraft = group?.logoDataUrl || "";
@@ -6213,6 +7583,7 @@ function openGroupDialog(group = null) {
   els.groupContractInputs?.forEach((input) => {
     input.checked = selectedContracts.has(input.value);
   });
+  renderGroupContractInputs(group?.serviceContracts || []);
   if (els.groupLogoInput) els.groupLogoInput.value = "";
   if (els.groupLogoPreviewName) els.groupLogoPreviewName.textContent = group?.name || "Logo da empresa";
   paintBrandLogo(els.groupLogoPreview, state.groupLogoDraft, group?.name || els.groupName.value || "SW");
@@ -6273,7 +7644,7 @@ function closeUserDialog() {
   els.userDialog.close();
 }
 
-function openNetworkDeviceDialog(device = null) {
+function openNetworkDeviceDialog(device = null, prefill = null) {
   if (!els.networkDeviceDialog || !isAdmin()) return;
   els.networkDeviceForm.reset();
   renderGroupOptions();
@@ -6283,13 +7654,59 @@ function openNetworkDeviceDialog(device = null) {
   els.networkDeviceName.value = device?.name || "";
   els.networkDeviceVendor.value = device?.vendor || "mikrotik";
   els.networkDeviceModel.value = device?.model || "";
-  els.networkDeviceManagementIp.value = device?.managementIp || "";
+  els.networkDeviceManagementIp.value = device?.managementIp || prefill?.managementIp || "";
   els.networkDeviceGroup.value = device?.groupId || "";
   if (device?.probeId && state.probes.some((probe) => probe.id === device.probeId)) {
     els.networkDeviceProbe.value = device.probeId;
   }
+  if (els.networkDeviceSnmpEnabled) els.networkDeviceSnmpEnabled.checked = device?.snmpEnabled ?? Boolean(prefill?.snmpEnabled);
+  if (els.networkDeviceSnmpCommunity) {
+    // Padrao operacional: toda community SNMP cadastrada nos equipamentos
+    // dos clientes se chama "serverwatch" — pre-preenche pra cadastro novo
+    // (valor real, nao so placeholder, pra evitar o erro de ficar em branco
+    // achando que "cai" num default que na verdade nunca existiu).
+    els.networkDeviceSnmpCommunity.value = device ? "" : "serverwatch";
+    els.networkDeviceSnmpCommunity.placeholder = device ? "Deixe em branco para manter a atual" : "serverwatch";
+  }
+  if (els.networkDeviceSnmpPort) els.networkDeviceSnmpPort.value = device?.snmpPort || 161;
+  const networkProbeId = device?.networkProbeId || prefill?.networkProbeId || "";
+  if (els.networkDeviceNetworkProbe && networkProbeId && state.probes.some((probe) => probe.id === networkProbeId)) {
+    els.networkDeviceNetworkProbe.value = networkProbeId;
+  }
   els.networkDeviceNotes.value = device?.notes || "";
+  renderNetworkDeviceInterfaceChecklist(device);
   els.networkDeviceDialog.showModal();
+}
+
+// Checklist de interfaces descobertas via SNMP no editor do dispositivo —
+// marca quais sao WAN de verdade (featured, aparecem na lista principal) e
+// quais ficam colapsadas (LAN/VPN/bridge, criadas automaticamente mas fora
+// da visualizacao padrao).
+function renderNetworkDeviceInterfaceChecklist(device) {
+  if (!els.networkDeviceInterfacesSection || !els.networkDeviceInterfaceChecklist) return;
+  const interfaces = device?.discoveredInterfaces || [];
+  if (!device || !interfaces.length) {
+    els.networkDeviceInterfacesSection.hidden = true;
+    els.networkDeviceInterfaceChecklist.innerHTML = "";
+    return;
+  }
+  els.networkDeviceInterfacesSection.hidden = false;
+  const linksByIfIndex = new Map(
+    state.networkLinks.filter((link) => link.networkDeviceId === device.id && link.snmpIfIndex != null).map((link) => [link.snmpIfIndex, link])
+  );
+  const sorted = [...interfaces].sort((a, b) => a.ifIndex - b.ifIndex);
+  els.networkDeviceInterfaceChecklist.innerHTML = sorted
+    .map((iface) => {
+      const link = linksByIfIndex.get(iface.ifIndex);
+      const checked = link ? link.featured !== false : false;
+      return `
+        <label class="toggle-row">
+          <input type="checkbox" data-network-interface-ifindex="${iface.ifIndex}" ${checked ? "checked" : ""} />
+          <span>${escapeHtml(iface.ifDescr || `Interface ${iface.ifIndex}`)}</span>
+        </label>
+      `;
+    })
+    .join("");
 }
 
 function closeNetworkDeviceDialog() {
@@ -6298,10 +7715,35 @@ function closeNetworkDeviceDialog() {
 
 function applyNetworkDeviceDefaults() {
   const device = state.networkDevices.find((item) => item.id === els.networkLinkDevice?.value);
+  renderNetworkLinkSnmpIfPicker(device, null);
   if (!device) return;
   if (device.groupId && els.networkLinkGroup) els.networkLinkGroup.value = device.groupId;
   if (device.probeId && els.networkLinkProbe && state.probes.some((probe) => probe.id === device.probeId)) {
     els.networkLinkProbe.value = device.probeId;
+  }
+}
+
+// Preenche o seletor de interfaces com os nomes reais descobertos pelo SNMP
+// walk do Network Probe — evita o admin ter que descobrir o ifIndex na mao.
+function renderNetworkLinkSnmpIfPicker(device, currentIfIndex) {
+  if (!els.networkLinkSnmpIfPicker || !els.networkLinkSnmpIfPickerLabel) return;
+  const interfaces = device?.discoveredInterfaces || [];
+  if (!interfaces.length) {
+    els.networkLinkSnmpIfPickerLabel.hidden = true;
+    els.networkLinkSnmpIfPicker.innerHTML = `<option value="">Selecione a interface...</option>`;
+    return;
+  }
+  els.networkLinkSnmpIfPickerLabel.hidden = false;
+  const sorted = [...interfaces].sort((a, b) => a.ifIndex - b.ifIndex);
+  const options = sorted
+    .map(
+      (iface) =>
+        `<option value="${iface.ifIndex}">${escapeHtml(iface.ifDescr || `Interface ${iface.ifIndex}`)} (ifIndex ${iface.ifIndex})</option>`
+    )
+    .join("");
+  els.networkLinkSnmpIfPicker.innerHTML = `<option value="">Selecione a interface...</option>${options}`;
+  if (currentIfIndex != null && sorted.some((iface) => iface.ifIndex === Number(currentIfIndex))) {
+    els.networkLinkSnmpIfPicker.value = String(currentIfIndex);
   }
 }
 
@@ -6315,8 +7757,13 @@ function openNetworkLinkDialog(link = null) {
   els.networkLinkName.value = link?.name || "";
   els.networkLinkProvider.value = link?.provider || "";
   els.networkLinkDevice.value = link?.networkDeviceId || "";
+  if (els.networkLinkSnmpIfIndex) els.networkLinkSnmpIfIndex.value = link?.snmpIfIndex ?? "";
+  renderNetworkLinkSnmpIfPicker(
+    state.networkDevices.find((item) => item.id === link?.networkDeviceId),
+    link?.snmpIfIndex ?? null
+  );
   els.networkLinkType.value = link?.linkType || "internet";
-  renderNetworkTargetInputs(link ? networkTargetsForLink(link) : [{ name: "", host: "" }]);
+  renderNetworkTargetInputs(link ? networkTargetsForLink(link) : [{ name: "", host: "" }], link?.snmpIfIndex != null);
   els.networkLinkInterface.value = link?.interfaceName || "";
   if (els.networkLinkExpectedPublicIp) els.networkLinkExpectedPublicIp.value = link?.expectedPublicIp || "";
   if (els.networkLinkExpectedPrefix) els.networkLinkExpectedPrefix.value = link?.expectedPublicPrefixLength ? `/${link.expectedPublicPrefixLength}` : "";
@@ -6362,7 +7809,7 @@ function closeDialogFromBackdrop(event, closeFn) {
 }
 
 function setInstallGuideTab(tab) {
-  const activeTab = ["link", "mikrotik"].includes(tab) ? tab : "server";
+  const activeTab = ["networkProbe"].includes(tab) ? tab : "server";
   document.querySelectorAll("[data-install-guide-tab]").forEach((button) => {
     const selected = button.dataset.installGuideTab === activeTab;
     button.classList.toggle("active", selected);
@@ -6390,6 +7837,7 @@ async function submitGroup(event) {
     name: els.groupName.value,
     description: els.groupDescription.value,
     contracts: [...(els.groupContractInputs || [])].filter((input) => input.checked).map((input) => input.value),
+    serviceContracts: readGroupContractInputs(),
     logoDataUrl: state.groupLogoDraft || "",
     type: "company"
   };
@@ -6488,6 +7936,15 @@ async function submitUser(event) {
 async function submitNetworkDevice(event) {
   event.preventDefault();
   const id = els.networkDeviceId.value;
+  // Ao criar um dispositivo novo com SNMP habilitado, a community e
+  // obrigatoria — o placeholder "public" no campo e so uma dica visual, nao
+  // um valor padrao real; deixar em branco salva um dispositivo que nunca
+  // vai responder e some do fluxo de erro (ja aconteceu mais de uma vez).
+  if (!id && els.networkDeviceSnmpEnabled?.checked && !els.networkDeviceSnmpCommunity?.value) {
+    showToast("Informe a community SNMP", "Com coleta SNMP habilitada, a community (v2c) e obrigatoria — deixar em branco nao usa \"public\" automaticamente.");
+    els.networkDeviceSnmpCommunity?.focus();
+    return;
+  }
   const payload = {
     name: els.networkDeviceName.value,
     vendor: els.networkDeviceVendor.value,
@@ -6495,8 +7952,22 @@ async function submitNetworkDevice(event) {
     managementIp: els.networkDeviceManagementIp.value,
     groupId: els.networkDeviceGroup.value || null,
     probeId: els.networkDeviceProbe.value || null,
+    snmpEnabled: els.networkDeviceSnmpEnabled?.checked || false,
+    snmpPort: Number(els.networkDeviceSnmpPort?.value) || 161,
+    networkProbeId: els.networkDeviceNetworkProbe?.value || null,
     notes: els.networkDeviceNotes.value
   };
+  // Campo de senha vazio na edicao = "nao mexer na community atual"; so envia
+  // se o admin realmente digitou algo (novo cadastro sempre envia, mesmo vazio,
+  // pra permitir limpar/definir explicitamente).
+  if (!id || els.networkDeviceSnmpCommunity?.value) {
+    payload.snmpCommunity = els.networkDeviceSnmpCommunity?.value || "";
+  }
+  if (els.networkDeviceInterfacesSection && !els.networkDeviceInterfacesSection.hidden) {
+    payload.featuredSnmpIfIndexes = Array.from(
+      els.networkDeviceInterfaceChecklist.querySelectorAll("input[data-network-interface-ifindex]:checked")
+    ).map((input) => Number(input.dataset.networkInterfaceIfindex));
+  }
   try {
     const saved = id
       ? await api(`/api/network/devices/${encodeURIComponent(id)}`, { method: "PUT", body: JSON.stringify(payload) })
@@ -6515,11 +7986,13 @@ async function submitNetworkLink(event) {
   event.preventDefault();
   event.stopPropagation();
   const id = els.networkLinkId.value;
-  const targets = readNetworkTargetInputs();
-  if (!targets.length || targets.some((target) => !target.host)) {
+  const isSnmpLink = els.networkLinkSnmpIfIndex?.value !== "" && els.networkLinkSnmpIfIndex?.value != null;
+  const rawTargets = readNetworkTargetInputs();
+  if (!isSnmpLink && (!rawTargets.length || rawTargets.some((target) => !target.host))) {
     showToast("Informe os IPs", "Cada link cadastrado precisa ter um IP monitorado.");
     return;
   }
+  const targets = isSnmpLink ? rawTargets.filter((target) => target.host) : rawTargets;
   const invalidPrefix = targets.find((target) => {
     if (!target.prefixLength) return false;
     const prefixLength = Number(target.prefixLength);
@@ -6541,6 +8014,7 @@ async function submitNetworkLink(event) {
     name: els.networkLinkName.value,
     provider: els.networkLinkProvider.value,
     networkDeviceId: els.networkLinkDevice.value || null,
+    snmpIfIndex: els.networkLinkSnmpIfIndex?.value !== "" ? Number(els.networkLinkSnmpIfIndex.value) : null,
     linkType: els.networkLinkType.value,
     targets,
     interfaceName: els.networkLinkInterface.value,
@@ -6801,7 +8275,41 @@ function bindEvents() {
     card.click();
   });
 
+  document.addEventListener("mousemove", (event) => {
+    const svg = event.target.closest?.(".metrics-chart-svg");
+    if (svg) {
+      showMetricsChartTooltip(svg, event.clientX, event.clientY);
+    } else {
+      hideMetricsChartTooltips();
+    }
+  });
+
   els.simpleDashboardContent?.addEventListener("click", (event) => {
+    const nocSortHeader = eventClosest(event, "[data-noc-sort]");
+    if (nocSortHeader?.dataset.nocSort) {
+      const column = nocSortHeader.dataset.nocSort;
+      if (_nocSort.column === column) {
+        _nocSort.direction = _nocSort.direction === "asc" ? "desc" : "asc";
+      } else {
+        _nocSort.column = column;
+        _nocSort.direction = "asc";
+      }
+      renderNocDashboard();
+      return;
+    }
+
+    const dashboardCompanyRow = eventClosest(event, "[data-dashboard-company-row]");
+    if (dashboardCompanyRow?.dataset.dashboardCompanyRow) {
+      const groupId = dashboardCompanyRow.dataset.dashboardCompanyRow;
+      state.selectedServerGroupId = groupId;
+      state.filters.groupId = groupId;
+      if (els.groupFilter) els.groupFilter.value = groupId;
+      setActiveView("servers");
+      updateActiveFilterCount();
+      renderServerDirectory();
+      return;
+    }
+
     const viewButton = eventClosest(event, "[data-simple-view]");
     if (viewButton?.dataset.simpleView) {
       setActiveView(viewButton.dataset.simpleView);
@@ -6846,6 +8354,14 @@ function bindEvents() {
   });
 
   document.querySelector("#dashboardScopeBar")?.addEventListener("click", (event) => {
+    const modeButton = eventClosest(event, "[data-dashboard-mode]");
+    if (modeButton?.dataset.dashboardMode) {
+      state.dashboardMode = modeButton.dataset.dashboardMode === "complete" ? "complete" : "simple";
+      localStorage.setItem("serverwatch.dashboardMode", state.dashboardMode);
+      renderSimpleDashboard();
+      return;
+    }
+
     const scopeButton = eventClosest(event, "[data-company-scope-id]");
     if (scopeButton?.dataset.companyScopeId) {
       state.filters.groupId = scopeButton.dataset.companyScopeId;
@@ -6900,6 +8416,22 @@ function bindEvents() {
   });
 
   els.networkLinksList?.addEventListener("click", (event) => {
+    const deviceToggle = eventClosest(event, "[data-network-device-toggle]");
+    if (deviceToggle) {
+      event.preventDefault();
+      event.stopPropagation();
+      const deviceId = deviceToggle.dataset.networkDeviceToggle;
+      if (state.networkDeviceExpanded.has(deviceId)) state.networkDeviceExpanded.delete(deviceId);
+      else state.networkDeviceExpanded.add(deviceId);
+      renderNetworks();
+      return;
+    }
+    const deviceRow = eventClosest(event, "[data-network-device-id]");
+    if (deviceRow) {
+      const device = state.networkDevices.find((item) => item.id === deviceRow.dataset.networkDeviceId);
+      if (device) openNetworkDeviceDialog(device);
+      return;
+    }
     const row = eventClosest(event, "[data-network-link-id]");
     if (row) {
       state.selectedNetworkLinkId = row.dataset.networkLinkId;
@@ -6980,36 +8512,35 @@ function bindEvents() {
     button.addEventListener("click", () => {
       document.querySelectorAll(".segment").forEach((item) => item.classList.remove("active"));
       button.classList.add("active");
-      state.filters.status = button.dataset.status;
-      updateActiveFilterCount();
-      renderMetrics();
-      renderServerDirectory();
+      state.filterDraft.status = button.dataset.status;
     });
   });
 
   els.searchInput.addEventListener("input", () => {
-    state.filters.query = els.searchInput.value.trim();
-    updateActiveFilterCount();
-    renderMetrics();
-    renderServerDirectory();
+    state.filterDraft.query = els.searchInput.value.trim();
   });
 
   els.environmentFilter.addEventListener("change", () => {
-    state.filters.environment = els.environmentFilter.value;
-    updateActiveFilterCount();
-    renderMetrics();
-    renderServerDirectory();
+    state.filterDraft.environment = els.environmentFilter.value;
   });
 
   els.groupFilter.addEventListener("change", () => {
-    state.filters.groupId = els.groupFilter.value;
-    updateActiveFilterCount();
-    render();
+    state.filterDraft.groupId = els.groupFilter.value;
   });
 
   els.historyServerFilter?.addEventListener("change", () => {
     state.historyFilters.serverId = els.historyServerFilter.value;
     renderTimeline();
+  });
+
+  els.timeline?.addEventListener("click", (event) => {
+    const toggle = eventClosest(event, "[data-timeline-group-toggle]");
+    if (!toggle) return;
+    const body = document.getElementById(toggle.dataset.timelineGroupToggle);
+    if (!body) return;
+    if (!toggle.dataset.timelineGroupLabel) toggle.dataset.timelineGroupLabel = toggle.textContent;
+    body.hidden = !body.hidden;
+    toggle.textContent = body.hidden ? toggle.dataset.timelineGroupLabel : "Ocultar eventos";
   });
 
   els.historyCategoryFilter?.addEventListener("change", () => {
@@ -7032,18 +8563,29 @@ function bindEvents() {
     renderAlerts();
   });
 
-  els.clearFilters?.addEventListener("click", () => {
-    state.filters.status = "all";
-    state.filters.environment = "all";
-    state.filters.groupId = "all";
-    state.filters.query = "";
-    els.searchInput.value = "";
-    els.environmentFilter.value = "all";
-    els.groupFilter.value = "all";
-    document.querySelectorAll(".segment").forEach((item) => {
-      item.classList.toggle("active", item.dataset.status === "all");
-    });
+  els.applyFilters?.addEventListener("click", () => {
+    state.filters = { ...state.filterDraft };
+    updateActiveFilterCount();
+    if (state.filters.groupId !== "all") {
+      state.selectedServerGroupId = state.filters.groupId;
+      state.selectedServerId = null;
+    }
     render();
+    if (els.filterMenu) els.filterMenu.open = false;
+  });
+
+  els.clearFilters?.addEventListener("click", () => {
+    state.filters = { status: "all", environment: "all", groupId: "all", query: "" };
+    state.filterDraft = { ...state.filters };
+    syncFilterPanelControls(state.filters);
+    render();
+    if (els.filterMenu) els.filterMenu.open = false;
+  });
+
+  els.filterMenu?.addEventListener("toggle", () => {
+    if (!els.filterMenu.open) return;
+    state.filterDraft = { ...state.filters };
+    syncFilterPanelControls(state.filters);
   });
 
   els.companyNav?.addEventListener("click", (event) => {
@@ -7109,6 +8651,15 @@ function bindEvents() {
   els.serverForm.addEventListener("submit", submitServer);
 
   document.querySelector("#openNetworkDeviceForm")?.addEventListener("click", () => openNetworkDeviceDialog());
+  els.networkDiscoveryBanner?.addEventListener("click", (event) => {
+    const button = eventClosest(event, "[data-network-discovery-probe-id]");
+    if (!button) return;
+    openNetworkDeviceDialog(null, {
+      managementIp: button.dataset.networkDiscoveryIp,
+      networkProbeId: button.dataset.networkDiscoveryProbeId,
+      snmpEnabled: true
+    });
+  });
   document.querySelector("#openNetworkLinkForm")?.addEventListener("click", () => openNetworkLinkDialog());
   document.querySelector("#closeNetworkDeviceDialog")?.addEventListener("click", closeNetworkDeviceDialog);
   document.querySelector("#cancelNetworkDeviceForm")?.addEventListener("click", closeNetworkDeviceDialog);
@@ -7118,10 +8669,31 @@ function bindEvents() {
   els.networkDeviceForm?.addEventListener("submit", submitNetworkDevice);
   els.networkLinkForm?.addEventListener("submit", submitNetworkLink);
   els.networkLinkDevice?.addEventListener("change", applyNetworkDeviceDefaults);
+  els.networkLinkSnmpIfPicker?.addEventListener("change", () => {
+    const ifIndex = els.networkLinkSnmpIfPicker.value;
+    if (!ifIndex) return;
+    if (els.networkLinkSnmpIfIndex) els.networkLinkSnmpIfIndex.value = ifIndex;
+    // Escolher uma interface SNMP torna o IP de ping opcional — sem isso o
+    // required ficava travado no valor renderizado quando o dialog abriu.
+    els.networkLinkTarget?.querySelectorAll("[data-network-target-host]").forEach((input) => {
+      input.required = false;
+    });
+    const device = state.networkDevices.find((item) => item.id === els.networkLinkDevice?.value);
+    const iface = device?.discoveredInterfaces?.find((item) => item.ifIndex === Number(ifIndex));
+    if (iface?.ifDescr && els.networkLinkName && !els.networkLinkName.value.trim()) {
+      els.networkLinkName.value = iface.ifDescr;
+    }
+  });
   els.addNetworkTarget?.addEventListener("click", addNetworkTargetInput);
   els.networkLinkTarget?.addEventListener("click", (event) => {
     const button = eventClosest(event, "[data-remove-network-target]");
     if (button) removeNetworkTargetInput(button);
+  });
+
+  els.addGroupContract?.addEventListener("click", addGroupContractInput);
+  els.groupContractsList?.addEventListener("click", (event) => {
+    const button = eventClosest(event, "[data-remove-group-contract]");
+    if (button) removeGroupContractInput(button);
   });
 
   els.toggleProbeToken?.addEventListener("click", () => {
@@ -7138,11 +8710,8 @@ function bindEvents() {
     copyText(probeInstallCommand(), "Comando de instalacao do probe copiado.");
   });
 
-  els.copyLinkProbeInstallCommand?.addEventListener("click", () => {
-    copyText(linkProbeInstallCommand(), "Comando de instalacao do LinkProbe copiado.");
-  });
-  els.copyMikrotikProbeInstallCommand?.addEventListener("click", () => {
-    copyText(mikrotikProbeInstallCommand(), "Comando de instalacao do MikroTik Probe copiado.");
+  els.copyNetworkProbeInstallCommand?.addEventListener("click", () => {
+    copyText(networkProbeInstallCommand(), "Comando de instalacao do Network Probe copiado.");
   });
 
   els.openCommandGeneratorButton?.addEventListener("click", () => openCommandGeneratorDialog("server"));
@@ -7152,7 +8721,6 @@ function bindEvents() {
   els.commandGeneratorDialog?.addEventListener("input", () => updateGeneratedCommand());
   els.commandGeneratorDialog?.addEventListener("change", () => updateGeneratedCommand());
   els.refreshGeneratedCommand?.addEventListener("click", () => {
-    collectCommandMikrotikUplinks();
     updateGeneratedCommand();
   });
   els.copyGeneratedCommand?.addEventListener("click", () => {
@@ -7160,27 +8728,6 @@ function bindEvents() {
   });
   document.querySelectorAll("[data-command-generator-mode]").forEach((button) => {
     button.addEventListener("click", () => setCommandGeneratorMode(button.dataset.commandGeneratorMode));
-  });
-  els.addCommandMikrotikUplink?.addEventListener("click", () => {
-    collectCommandMikrotikUplinks();
-    if (state.commandGeneratorMikrotikUplinks.length >= 10) return;
-    const next = state.commandGeneratorMikrotikUplinks.length + 1;
-    state.commandGeneratorMikrotikUplinks.push({
-      name: `Link ${next} - Operadora`,
-      interfaceName: `ether${next}-WAN`,
-      gateway: "",
-      prefix: "30",
-      target: next % 2 === 0 ? "149.112.112.112" : "4.2.2.2"
-    });
-    renderCommandMikrotikUplinks();
-  });
-  els.commandMikrotikUplinkList?.addEventListener("click", (event) => {
-    const button = eventClosest(event, "[data-remove-command-uplink]");
-    if (!button) return;
-    collectCommandMikrotikUplinks();
-    if (state.commandGeneratorMikrotikUplinks.length <= 1) return;
-    state.commandGeneratorMikrotikUplinks.splice(Number(button.dataset.removeCommandUplink), 1);
-    renderCommandMikrotikUplinks();
   });
 
   document.querySelectorAll("[data-open-probe-guide]").forEach((button) => {
@@ -7211,6 +8758,11 @@ function bindEvents() {
     document.querySelectorAll(".probe-card").forEach((item) => {
       item.classList.toggle("selected", item.dataset.probeId === state.selectedProbeId);
     });
+    if (els.probeDetailPanel) {
+      const selected = state.probes.find((item) => item.id === state.selectedProbeId) || null;
+      els.probeDetailPanel.hidden = !selected;
+      renderProbeDetail(selected);
+    }
   });
 
   els.updateOutdatedProbes?.addEventListener("click", async () => {
@@ -7242,6 +8794,26 @@ function bindEvents() {
     }
   });
 
+  els.refreshProxmoxBackupsButton?.addEventListener("click", async () => {
+    const button = els.refreshProxmoxBackupsButton;
+    const originalLabel = button.textContent;
+    button.disabled = true;
+    button.textContent = "Atualizando...";
+    if (els.proxmoxBackupsSyncMeta) els.proxmoxBackupsSyncMeta.textContent = "Consultando o Proxmox Backup Server...";
+    try {
+      const response = await api("/api/proxmox-backups/refresh", { method: "POST" });
+      state.proxmoxBackup = response.proxmoxBackup || state.proxmoxBackup;
+      renderBackups();
+      showToast("PBS atualizado", "Os dados do Proxmox Backup Server foram atualizados agora.");
+    } catch (error) {
+      renderBackups();
+      showToast("Falha ao atualizar PBS", error.message);
+    } finally {
+      button.disabled = false;
+      button.textContent = originalLabel;
+    }
+  });
+
   els.backupsKpiRow?.addEventListener("click", (event) => {
     if (event.target.closest("[data-backup-errors-trigger]")) openBackupErrorsDialog();
   });
@@ -7252,6 +8824,10 @@ function bindEvents() {
 
   els.closeBackupErrorsDialog?.addEventListener("click", () => {
     els.backupErrorsDialog?.close();
+  });
+
+  els.closeProxmoxIssuesDialog?.addEventListener("click", () => {
+    els.proxmoxIssuesDialog?.close();
   });
 
   els.closeOfflineServersDialog?.addEventListener("click", () => {
@@ -7334,6 +8910,18 @@ function bindEvents() {
       return;
     }
 
+    if (button.dataset.action === "speed-test") {
+      try {
+        const response = await api(`/api/probes/${encodeURIComponent(probe.id)}/speed-test`, { method: "POST" });
+        state.probes = state.probes.map((item) => (item.id === probe.id ? response.probe : item));
+        renderProbes();
+        showToast("Teste agendado", `${probe.name || probe.id} vai medir a velocidade real no proximo contato.`);
+      } catch (error) {
+        showToast("Falha ao agendar teste", error.message);
+      }
+      return;
+    }
+
     if (button.dataset.action === "update-probe") {
       try {
         const response = await api(`/api/probes/${encodeURIComponent(probe.id)}/update`, { method: "POST" });
@@ -7410,6 +8998,11 @@ function bindEvents() {
     if (serverSelect) {
       linkProxmoxBackupToServer(serverSelect.dataset.namespace, serverSelect.dataset.backupId, serverSelect.value);
     }
+  });
+  document.getElementById("proxmoxBackupsContent")?.addEventListener("click", (event) => {
+    const button = event.target.closest("[data-proxmox-issue-open]");
+    if (!button) return;
+    openProxmoxIssuesDialog(button.dataset.proxmoxIssueOpen);
   });
 
   document.querySelectorAll("[data-backup-provider]").forEach((button) => {
@@ -7515,6 +9108,12 @@ function bindEvents() {
     const group = state.groups.find((item) => item.id === button.dataset.id);
     if (group && button.dataset.groupAction === "edit") openGroupDialog(group);
     if (group && button.dataset.groupAction === "delete") deleteGroup(group);
+    if (group && button.dataset.groupAction === "report") {
+      showToast(
+        "Relatorio automatico em desenvolvimento",
+        `A geracao de relatorios profissionais para "${group.name}" (picos de uso, comparativos mensais, indisponibilidade) esta no roadmap e ainda nao gera relatorios reais.`
+      );
+    }
   });
 
   els.serverDirectoryList?.addEventListener("click", (event) => {
@@ -7539,6 +9138,66 @@ function bindEvents() {
   });
 
   els.serverProfilePanel?.addEventListener("click", async (event) => {
+    // Metrics history: toggle panel
+    const histToggle = eventClosest(event, "[data-action='toggle-metrics-history']");
+    if (histToggle) {
+      const section = eventClosest(event, ".metrics-history-section");
+      if (!section) return;
+      const body = section.querySelector(".metrics-history-body");
+      if (!body) return;
+      const probeId = section.dataset.historyProbeId;
+      if (body.hidden) {
+        _mh.open = true;
+        _mh.probeId = probeId;
+        _mh.type = "short";
+        _mh.rangeMs = 6 * 60 * 60_000;
+        _mh.chartsHtml = "";
+        body.hidden = false;
+        histToggle.classList.add("active");
+        body.innerHTML = buildMetricsHistoryBody(probeId, _mh.type, _mh.rangeMs);
+        loadMetricsHistory(probeId, _mh.type, _mh.rangeMs, body.querySelector(".metrics-charts-area"));
+      } else {
+        _mh.open = false;
+        body.hidden = true;
+        histToggle.classList.remove("active");
+      }
+      return;
+    }
+
+    // Metrics history: type tab switch
+    const typeTab = eventClosest(event, "[data-mh-type]");
+    if (typeTab && typeTab.classList.contains("mh-type-tab")) {
+      const section = eventClosest(event, ".metrics-history-section");
+      const body = section?.querySelector(".metrics-history-body");
+      if (!body) return;
+      const probeId = typeTab.dataset.mhProbeId;
+      const type = typeTab.dataset.mhType;
+      const defaultRange = type === "short" ? 6 * 60 * 60_000 : 30 * 24 * 60 * 60_000;
+      _mh.type = type;
+      _mh.rangeMs = defaultRange;
+      _mh.chartsHtml = "";
+      body.innerHTML = buildMetricsHistoryBody(probeId, type, defaultRange);
+      loadMetricsHistory(probeId, type, defaultRange, body.querySelector(".metrics-charts-area"));
+      return;
+    }
+
+    // Metrics history: range tab switch
+    const rangeTab = eventClosest(event, "[data-mh-range]");
+    if (rangeTab && rangeTab.classList.contains("mh-range-tab")) {
+      const section = eventClosest(event, ".metrics-history-section");
+      const body = section?.querySelector(".metrics-history-body");
+      if (!body) return;
+      const probeId = rangeTab.dataset.mhProbeId;
+      const type = rangeTab.dataset.mhType;
+      const rangeMs = Number(rangeTab.dataset.mhRange);
+      _mh.type = type;
+      _mh.rangeMs = rangeMs;
+      _mh.chartsHtml = "";
+      body.innerHTML = buildMetricsHistoryBody(probeId, type, rangeMs);
+      loadMetricsHistory(probeId, type, rangeMs, body.querySelector(".metrics-charts-area"));
+      return;
+    }
+
     const backupClient = eventClosest(event, "[data-company-backup-client-id]");
     if (backupClient) {
       state.selectedBackupClientId = backupClient.dataset.companyBackupClientId;
@@ -7645,6 +9304,5 @@ api("/api/auth/session")
   .catch(() => showLogin());
 setInterval(() => {
   if (!state.currentUser) return;
-  renderServerDirectory();
-  renderServerProfile();
+  tickLiveDurations();
 }, 1000);

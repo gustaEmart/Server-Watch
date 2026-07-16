@@ -1,0 +1,323 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SERVER_URL=""
+PROBE_ID=""
+TOKEN=""
+NAME=""
+INSTALL_DIR="/opt/serverwatch-network-probe"
+NODE_VERSION_REQUIRED="20.19.2"
+MODE="install"
+LOG_FILE="/var/log/serverwatch-network-probe-install.log"
+
+usage() {
+  cat <<'USAGE'
+Usage:
+  curl -fsSL <serverwatch-url>/downloads/network-probe/linux-installer | sudo bash -s -- --server-url <url> --probe-id <id> --token <token> [--name <name>]
+  curl -fsSL <serverwatch-url>/downloads/network-probe/linux-installer | sudo bash -s -- --repair --server-url <url> --probe-id <id> --token <token> [--name <name>]
+  curl -fsSL <serverwatch-url>/downloads/network-probe/linux-installer | sudo bash -s -- --remove
+USAGE
+}
+
+log() {
+  local message="$1"
+  printf '[%s] %s\n' "$(date -Is)" "$message" | tee -a "$LOG_FILE"
+}
+
+step() {
+  local percent="$1"
+  local message="$2"
+  log "[$percent%] $message"
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --server-url) SERVER_URL="${2:-}"; shift 2 ;;
+    --probe-id) PROBE_ID="${2:-}"; shift 2 ;;
+    --token) TOKEN="${2:-}"; shift 2 ;;
+    --name) NAME="${2:-}"; shift 2 ;;
+    --repair) MODE="repair"; shift ;;
+    --remove|--uninstall) MODE="remove"; shift ;;
+    --help) usage; exit 0 ;;
+    *) echo "Unknown option: $1" >&2; usage; exit 2 ;;
+  esac
+done
+
+if [[ "${EUID}" -ne 0 ]]; then
+  echo "Run as root, for example with sudo." >&2
+  exit 1
+fi
+
+touch "$LOG_FILE"
+chmod 600 "$LOG_FILE"
+
+remove_probe() {
+  step 10 "Parando ServerWatch Network Probe..."
+  systemctl stop serverwatch-network-probe >/dev/null 2>&1 || true
+  step 35 "Desabilitando servico systemd..."
+  systemctl disable serverwatch-network-probe >/dev/null 2>&1 || true
+  rm -f /etc/systemd/system/serverwatch-network-probe.service
+  systemctl daemon-reload
+  step 70 "Removendo arquivos em ${INSTALL_DIR}..."
+  rm -rf "$INSTALL_DIR"
+  step 100 "Network Probe removido."
+}
+
+if [[ "$MODE" == "remove" ]]; then
+  remove_probe
+  exit 0
+fi
+
+if [[ -z "$SERVER_URL" || -z "$PROBE_ID" || -z "$TOKEN" ]]; then
+  usage
+  exit 2
+fi
+
+SERVER_URL="${SERVER_URL%/}"
+TMP_DIR="$(mktemp -d)"
+BACKUP_DIR=""
+ROLLBACK_READY=0
+
+cleanup() {
+  rm -rf "$TMP_DIR"
+}
+
+restore_backup() {
+  if [[ "$ROLLBACK_READY" != "1" || -z "$BACKUP_DIR" || ! -d "$BACKUP_DIR" ]]; then
+    return
+  fi
+
+  log "Falha detectada. Restaurando instalacao anterior do network probe..."
+  systemctl stop serverwatch-network-probe >/dev/null 2>&1 || true
+
+  if [[ -d "$BACKUP_DIR/install" ]]; then
+    rm -rf "$INSTALL_DIR"
+    mkdir -p "$(dirname "$INSTALL_DIR")"
+    cp -a "$BACKUP_DIR/install" "$INSTALL_DIR"
+  else
+    rm -rf "$INSTALL_DIR"
+  fi
+
+  if [[ -f "$BACKUP_DIR/serverwatch-network-probe.service" ]]; then
+    cp "$BACKUP_DIR/serverwatch-network-probe.service" /etc/systemd/system/serverwatch-network-probe.service
+    systemctl daemon-reload || true
+    systemctl enable serverwatch-network-probe >/dev/null 2>&1 || true
+    systemctl restart serverwatch-network-probe >/dev/null 2>&1 || true
+  else
+    rm -f /etc/systemd/system/serverwatch-network-probe.service
+    systemctl daemon-reload || true
+  fi
+}
+
+on_exit() {
+  local code="$?"
+  if [[ "$code" -ne 0 ]]; then
+    restore_backup
+  fi
+  cleanup
+  exit "$code"
+}
+trap on_exit EXIT
+
+create_backup() {
+  BACKUP_DIR="$TMP_DIR/backup"
+  mkdir -p "$BACKUP_DIR"
+  if [[ -d "$INSTALL_DIR" ]]; then
+    cp -a "$INSTALL_DIR" "$BACKUP_DIR/install"
+  fi
+  if [[ -f /etc/systemd/system/serverwatch-network-probe.service ]]; then
+    cp /etc/systemd/system/serverwatch-network-probe.service "$BACKUP_DIR/serverwatch-network-probe.service"
+  fi
+  ROLLBACK_READY=1
+}
+
+download_url() {
+  local url="$1"
+  local destination="$2"
+  shift 2
+
+  if command -v curl >/dev/null 2>&1; then
+    curl -fsSL "$@" -o "$destination" "$url"
+    return
+  fi
+
+  if command -v wget >/dev/null 2>&1; then
+    local wget_headers=()
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        -H) wget_headers+=(--header="$2"); shift 2 ;;
+        *) shift ;;
+      esac
+    done
+    wget -q "${wget_headers[@]}" -O "$destination" "$url"
+    return
+  fi
+
+  echo "curl or wget is required to download network probe files." >&2
+  exit 1
+}
+
+# namespace: "network-probe" (collector/snmp assets) ou "probe" (runtime Node
+# bundlado, que continua compartilhado entre os dois tipos de probe).
+download_asset() {
+  local namespace="$1"
+  local asset="$2"
+  local destination="$3"
+  local url="${SERVER_URL}/downloads/${namespace}/${asset}"
+
+  download_url "$url" "$destination" \
+    -H "Authorization: Bearer ${TOKEN}" \
+    -H "X-ServerWatch-Probe-Token: ${TOKEN}"
+}
+
+validate_server_connection() {
+  local encoded_probe_id="${PROBE_ID// /%20}"
+  local url="${SERVER_URL}/api/network-probe/validate?probeId=${encoded_probe_id}"
+  step 5 "Validando URL e token no ServerWatch..."
+  if command -v curl >/dev/null 2>&1; then
+    curl -fsSL \
+      -H "Authorization: Bearer ${TOKEN}" \
+      -H "X-ServerWatch-Probe-Token: ${TOKEN}" \
+      "$url" >/dev/null
+    return
+  fi
+  if command -v wget >/dev/null 2>&1; then
+    wget -q \
+      --header="Authorization: Bearer ${TOKEN}" \
+      --header="X-ServerWatch-Probe-Token: ${TOKEN}" \
+      -O /dev/null \
+      "$url"
+    return
+  fi
+  echo "curl or wget is required to validate ServerWatch connectivity." >&2
+  exit 1
+}
+
+node_major() {
+  local node_bin="$1"
+  local version
+  version="$("$node_bin" -p 'process.versions.node' 2>/dev/null || true)"
+  echo "${version%%.*}"
+}
+
+system_node_path() {
+  if ! command -v node >/dev/null 2>&1; then
+    return
+  fi
+  local node_bin
+  node_bin="$(command -v node)"
+  local major
+  major="$(node_major "$node_bin")"
+  if [[ -n "$major" && "$major" -ge 20 ]]; then
+    echo "$node_bin"
+  fi
+}
+
+node_archive_platform() {
+  case "$(uname -m)" in
+    x86_64|amd64) echo "linux-x64" ;;
+    aarch64|arm64) echo "linux-arm64" ;;
+    armv7l) echo "linux-armv7l" ;;
+    *)
+      echo "Unsupported CPU architecture for bundled Node.js: $(uname -m)" >&2
+      exit 1
+      ;;
+  esac
+}
+
+ensure_node_runtime() {
+  local node_bin
+  node_bin="$(system_node_path)"
+  if [[ -n "$node_bin" ]]; then
+    echo "$node_bin"
+    return
+  fi
+
+  local platform archive_name archive_path runtime_root bundled_node
+  platform="$(node_archive_platform)"
+  archive_name="node-v${NODE_VERSION_REQUIRED}-${platform}.tar.xz"
+  archive_path="$TMP_DIR/$archive_name"
+  runtime_root="$INSTALL_DIR/node"
+  bundled_node="$runtime_root/bin/node"
+
+  mkdir -p "$INSTALL_DIR"
+  echo "Installing isolated Node.js ${NODE_VERSION_REQUIRED} runtime for ServerWatch Network Probe..." >&2
+  download_asset "probe" "node-runtime-${platform}" "$archive_path"
+  rm -rf "$runtime_root"
+  mkdir -p "$runtime_root"
+  tar -xJf "$archive_path" --strip-components=1 -C "$runtime_root"
+
+  if [[ ! -x "$bundled_node" ]]; then
+    echo "Bundled Node.js installation failed." >&2
+    exit 1
+  fi
+  echo "$bundled_node"
+}
+
+validate_server_connection
+
+if [[ "$MODE" == "repair" ]]; then
+  step 8 "Reparando instalacao existente..."
+else
+  step 8 "Iniciando instalacao..."
+fi
+
+step 15 "Baixando arquivos do network probe de ${SERVER_URL}..."
+download_asset "network-probe" "network-collector.js" "$TMP_DIR/network-collector.js"
+download_asset "network-probe" "snmp-client.js" "$TMP_DIR/snmp-client.js"
+download_asset "network-probe" "vendor-templates.js" "$TMP_DIR/vendor-templates.js"
+download_asset "network-probe" "poller.js" "$TMP_DIR/poller.js"
+
+step 35 "Preparando runtime e diretorio de instalacao..."
+create_backup
+systemctl stop serverwatch-network-probe >/dev/null 2>&1 || true
+mkdir -p "$INSTALL_DIR/snmp"
+NODE_BIN="$(ensure_node_runtime)"
+step 55 "Copiando network collector..."
+cp "$TMP_DIR/network-collector.js" "$INSTALL_DIR/network-collector.js"
+cp "$TMP_DIR/snmp-client.js" "$INSTALL_DIR/snmp/client.js"
+cp "$TMP_DIR/vendor-templates.js" "$INSTALL_DIR/snmp/vendor-templates.js"
+cp "$TMP_DIR/poller.js" "$INSTALL_DIR/snmp/poller.js"
+cat >"$INSTALL_DIR/package.json" <<'EOF'
+{
+  "type": "module"
+}
+EOF
+cat >"$INSTALL_DIR/config.json" <<EOF
+{
+  "serverUrl": "$SERVER_URL",
+  "probeId": "$PROBE_ID",
+  "name": "${NAME:-$PROBE_ID}",
+  "token": "$TOKEN",
+  "intervalSeconds": 60,
+  "timeoutMs": 3000
+}
+EOF
+chmod 600 "$INSTALL_DIR/config.json"
+
+step 70 "Configurando servico systemd..."
+cat >/etc/systemd/system/serverwatch-network-probe.service <<EOF
+[Unit]
+Description=ServerWatch Network Probe (SNMP)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=$INSTALL_DIR
+ExecStart=$NODE_BIN $INSTALL_DIR/network-collector.js --config $INSTALL_DIR/config.json
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+step 84 "Habilitando servico..."
+systemctl daemon-reload
+systemctl enable serverwatch-network-probe
+step 92 "Iniciando Network Probe..."
+systemctl restart serverwatch-network-probe
+systemctl status serverwatch-network-probe --no-pager
+ROLLBACK_READY=0
+step 100 "Instalacao concluida. Log salvo em ${LOG_FILE}."

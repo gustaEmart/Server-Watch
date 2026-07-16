@@ -2,8 +2,22 @@
 
 Resumo das versoes estaveis publicadas do ServerWatch.
 
-## Unreleased
+## v4.5.0 - 2026-07-16
 
+- Renomeia a aba `Empresas` para `Empresas/Clientes` na navegacao, no painel administrativo e no titulo do cadastro, refletindo que o sistema tambem atende clientes Pessoa Fisica.
+- Adiciona cadastro de contratos/prestacao de servico por empresa (descricao, inicio opcional e data de fim), com selo de vencimento no cartao da empresa e alerta automatico ~10 dias antes do fim (checagem de hora em hora), reaproveitando o mesmo sino/som/notificacao do navegador ja usado para queda de servidor.
+- Generaliza o sistema de Alertas para aceitar avisos por empresa alem de por servidor (controle de acesso, filtro por tipo/empresa e popup de notificacoes), sem alterar o comportamento existente de alertas de servidor.
+- Adiciona deteccao do status ativo do SD-WAN de FortiGate via a tabela de health-check SNMP do fabricante (perda de pacote por membro), corrigindo o caso em que dois links do mesmo Fortigate apareciam como "ATIVO" simultaneamente quando so um estava de fato passando trafego; usada como sinal primario para esse fabricante, com a rota generica como respaldo.
+- Corrige o Dockerfile do ServerWatch para publicar os instaladores e o coletor do Network Probe (SNMP): a imagem nunca era reconstruida apos os arquivos serem adicionados, entao `/downloads/network-probe/*` retornava 404 mesmo com as rotas corretas no `server.js`.
+- Corrige o template de OID de CPU do MikroTik: `.1.3.6.1.4.1.14988.1.1.3.14.0` retorna a frequencia do clock em MHz (nao a carga), causando leituras como "880%". Passa a usar HOST-RESOURCES-MIB `hrProcessorLoad`, validado contra hardware real.
+- Corrige a deteccao de memoria RAM em RouterOS: o regex de identificacao da linha de memoria nao reconhecia o rotulo "main memory" usado pelo MikroTik, retornando sempre `null`/`0%`.
+- Corrige a ausencia de handler de clique na linha de dispositivo de rede (`renderNetworkDeviceRow`): o elemento tinha `data-network-device-id` mas nenhum listener, tornando impossivel editar a configuracao SNMP de um dispositivo ja cadastrado pela UI.
+- Adiciona selecao de interface SNMP por nome real (dropdown populado pelo walk `ifDescr` do proprio dispositivo) no cadastro de link, eliminando a necessidade de descobrir o `ifIndex` manualmente via SNMP walk.
+- Adiciona auto-criacao de links para toda interface descoberta via SNMP; para nao poluir a lista principal com LAN/VPN/bridge, links auto-criados nascem `featured:false` (colapsados sob o dispositivo, mesmo padrao visual de VM sob host Proxmox) ate o admin marcar quais sao WAN de verdade no editor do dispositivo.
+- Corrige contagens de "Links" no Dashboard, pagina Empresas e cabecalho de Redes para considerar somente links `featured` (visiveis), evitando que interfaces colapsadas inflassem os totais exibidos.
+- Corrige um link SNMP pausado ("Desativar monitoramento") continuar sendo consultado em segundo plano pelo Network Probe; a interface so passa a ser omitida da lista de alvos enviada ao probe.
+- Adiciona instalador Windows `.exe` para o Network Probe (SNMP), espelhando o instalador grafico ja existente do Probe Collector (host): mesma UI, mesmo padrao de tarefa agendada, arquivos do coletor embutidos no executavel.
+- Documenta que a deteccao automatica de gateway do Network Probe e apenas uma sugestao de conveniencia (usada no banner de descoberta), nao um requisito: o dispositivo de rede pode ser cadastrado manualmente com qualquer IP alcancavel pelo probe, mesmo que nao seja a rota padrao da maquina onde o probe roda (comum em servidores multi-homed ou quando o equipamento SNMP fica numa sub-rede diferente da rota padrao). Ver "Solucao de problemas" em `docs/NETWORK_MONITORING.md`.
 - Adiciona integracao com a API oficial local do UniFi Network em controladores UniFi OS.
 - Importa sites, access points, switches, gateways, clientes conectados e metricas de CPU, memoria e uptime.
 - Adiciona a visualizacao `UniFi Network` na pagina Redes sem alterar o monitoramento atual de links.

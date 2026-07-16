@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk.WindowsDesktop">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>assets\serverwatch.ico</ApplicationIcon>
+    <AssemblyName>ServerWatchNetworkProbeSetup</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="assets\serverwatch.ico" LogicalName="serverwatch.ico" />
+    <EmbeddedResource Include="assets\serverwatch-mark-64.png" LogicalName="serverwatch-mark-64.png" />
+    <EmbeddedResource Include="assets\serverwatch-wordmark.png" LogicalName="serverwatch-wordmark.png" />
+    <EmbeddedResource Include="assets\network-collector.js" LogicalName="network-collector.js" />
+    <EmbeddedResource Include="assets\snmp-client.js" LogicalName="snmp-client.js" />
+    <EmbeddedResource Include="assets\vendor-templates.js" LogicalName="vendor-templates.js" />
+  </ItemGroup>
+</Project>

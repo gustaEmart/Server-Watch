@@ -108,6 +108,27 @@ Coletas futuras:
 - SNMP dentro da LAN do cliente.
 - Status de servicos especificos.
 
+### Relatorios operacionais automaticos
+
+Objetivo:
+
+- Gerar, a partir do historico de metricas (disco, CPU, memoria, quedas e backups), relatorios profissionais por empresa com conclusoes prontas para o cliente final, em vez de apenas graficos brutos.
+
+Estado atual:
+
+- Botao "Relatorio" adicionado na aba Empresas (`public/app.js`, `renderGroups`) como placeholder — hoje apenas exibe um aviso de que a geracao automatica ainda esta em desenvolvimento, sem gerar nenhum relatorio real.
+
+Funcionalidades sugeridas:
+
+- Selecao de periodo (ultimos 7/30/60 dias) por empresa.
+- Conclusoes automaticas geradas a partir do historico ja coletado, por exemplo:
+  - "O processador do servidor X gera picos de uso durante o horario comercial (media Y% entre HHh-HHh)".
+  - "Servidor X registrou mais quedas neste periodo se comparado ao anterior (N vs M ocorrencias)".
+  - Particoes que cruzaram o limite de alerta de disco durante o periodo.
+  - Janelas de backup fora do esperado.
+- Exportacao em PDF/HTML com identidade visual (white label) da empresa.
+- Agendamento opcional de envio periodico (mensal) por e-mail, dependente da futura integracao de notificacoes por e-mail (Prioridade 5).
+
 ## Prioridade 4 - Dados, backup e retencao
 
 ### Backup e restore
