@@ -10,6 +10,7 @@ import { createProxmoxBackupsHandler } from "./routes/proxmoxBackups.js";
 import { createUnifiNetworkHandler } from "./routes/unifiNetwork.js";
 import { createDownloadHandler } from "./routes/downloads.js";
 import { createGroupsHandler } from "./routes/groups.js";
+import { createTicketsHandler } from "./routes/tickets.js";
 import { createHealthHandler } from "./routes/health.js";
 import { createMetaHandler } from "./routes/meta.js";
 import { createNetworkHandler } from "./routes/network.js";
@@ -210,6 +211,7 @@ let state = {
   users: [],
   events: [],
   alerts: [],
+  tickets: [],
   probeUpdateRequests: [],
   sessions: [],
   cloudBackup: emptyCloudBackupState(),
@@ -1381,6 +1383,7 @@ async function loadState() {
     networkLinks: Array.isArray(parsed.networkLinks) ? parsed.networkLinks : [],
     networkEvents: Array.isArray(parsed.networkEvents) ? parsed.networkEvents : [],
     probeUpdateRequests: Array.isArray(parsed.probeUpdateRequests) ? parsed.probeUpdateRequests : [],
+    tickets: Array.isArray(parsed.tickets) ? parsed.tickets : [],
     users: Array.isArray(parsed.users) ? parsed.users : [],
     settings: { ...state.settings, ...(parsed.settings || {}) }
   };
@@ -1858,6 +1861,114 @@ function publicGroup(group) {
     updatedAt: group.updatedAt,
     deletedAt: group.deletedAt || null
   };
+}
+
+const TICKET_STATUSES = new Set(["open", "in_progress", "resolved", "closed"]);
+const TICKET_PRIORITIES = new Set(["low", "normal", "high"]);
+const TICKET_UPDATE_KINDS = new Set(["comment", "resolution", "status_change"]);
+
+function listedTickets() {
+  return (state.tickets || []).filter((ticket) => !ticket.deletedAt);
+}
+
+// Modulo de suporte e 100% admin — nao existe visao "cliente" pra chamado
+// ainda (abertura por cliente fica pra depois), entao nao ha scoping por
+// empresa aqui como em listedGroups/scopedServers.
+function normalizeTicket(payload, existing = {}) {
+  const title = String(payload.title ?? existing.title ?? "").trim().slice(0, 160);
+  const groupId = String(payload.groupId ?? existing.groupId ?? "").trim();
+  if (!title) {
+    const error = new Error("Informe o titulo do chamado.");
+    error.statusCode = 400;
+    throw error;
+  }
+  if (!groupId) {
+    const error = new Error("Selecione a empresa/cliente do chamado.");
+    error.statusCode = 400;
+    throw error;
+  }
+  const priority = String(payload.priority ?? existing.priority ?? "normal").trim();
+  const status = String(payload.status ?? existing.status ?? "open").trim();
+  const assignedTo = payload.assignedTo !== undefined ? String(payload.assignedTo || "").trim() || null : existing.assignedTo ?? null;
+
+  return {
+    ...existing,
+    title,
+    groupId,
+    description: String(payload.description ?? existing.description ?? "").trim().slice(0, 5000),
+    requesterName: String(payload.requesterName ?? existing.requesterName ?? "").trim().slice(0, 160),
+    priority: TICKET_PRIORITIES.has(priority) ? priority : "normal",
+    status: TICKET_STATUSES.has(status) ? status : "open",
+    assignedTo,
+    updates: Array.isArray(existing.updates) ? existing.updates : [],
+    updatedAt: nowIso()
+  };
+}
+
+function publicTicket(ticket) {
+  const group = listedGroups().find((item) => item.id === ticket.groupId);
+  const assignee = ticket.assignedTo ? listedUsers().find((user) => user.id === ticket.assignedTo) : null;
+  return {
+    id: ticket.id,
+    groupId: ticket.groupId,
+    groupName: group?.name || "",
+    title: ticket.title,
+    description: ticket.description || "",
+    requesterName: ticket.requesterName || "",
+    priority: ticket.priority || "normal",
+    status: ticket.status || "open",
+    assignedTo: ticket.assignedTo || null,
+    assignedToName: assignee?.name || "",
+    updates: Array.isArray(ticket.updates) ? ticket.updates : [],
+    createdAt: ticket.createdAt,
+    updatedAt: ticket.updatedAt,
+    closedAt: ticket.closedAt || null,
+    deletedAt: ticket.deletedAt || null
+  };
+}
+
+// Adiciona uma entrada (comentario/resolucao) ao chamado; se `newStatus` vier
+// e for diferente do status atual, grava uma segunda entrada de status_change
+// e atualiza o ticket — igual addNetworkEvent faz pra transicao de link, mas
+// aqui as duas coisas (comentario + mudanca de status) podem acontecer juntas
+// no mesmo POST, entao viram duas entradas na mesma chamada.
+function appendTicketUpdate(ticket, payload, actorName) {
+  const kind = TICKET_UPDATE_KINDS.has(payload.kind) ? payload.kind : "comment";
+  const message = String(payload.message || "").trim().slice(0, 5000);
+  if (!message) {
+    const error = new Error("Escreva uma mensagem para o chamado.");
+    error.statusCode = 400;
+    throw error;
+  }
+  const now = nowIso();
+  const entries = [
+    {
+      id: randomUUID(),
+      kind,
+      message,
+      authorName: actorName || null,
+      createdAt: now
+    }
+  ];
+
+  const newStatus = payload.newStatus ? String(payload.newStatus).trim() : null;
+  if (newStatus && TICKET_STATUSES.has(newStatus) && newStatus !== ticket.status) {
+    entries.push({
+      id: randomUUID(),
+      kind: "status_change",
+      message: null,
+      authorName: actorName || null,
+      createdAt: now,
+      fromStatus: ticket.status,
+      toStatus: newStatus
+    });
+    ticket.status = newStatus;
+    ticket.closedAt = newStatus === "resolved" || newStatus === "closed" ? now : null;
+  }
+
+  ticket.updates = [...(ticket.updates || []), ...entries];
+  ticket.updatedAt = now;
+  return ticket;
 }
 
 function listedNetworkDevices() {
@@ -2502,6 +2613,7 @@ function snapshot(currentUser = null) {
     networkEvents: scopedNetworkEvents(currentUser).slice(0, 100),
     networkDiscoverySuggestions: isAdminUser(currentUser) ? networkDiscoverySuggestions() : [],
     probes: isAdminUser(currentUser) ? (state.probes || []).filter((probe) => !probe.deletedAt).map(publicProbe) : [],
+    tickets: isAdminUser(currentUser) ? listedTickets().map(publicTicket) : [],
     users: isAdminUser(currentUser) ? listedUsers().map(publicUser) : [],
     currentUser: currentUser ? publicUser(currentUser) : null,
     settings: publicSettings(currentUser),
@@ -4153,6 +4265,10 @@ async function handleApi(req, res) {
       if (await handleGroups(req, res, { parts, session })) return;
     }
 
+    if (parts[1] === "tickets") {
+      if (await handleTickets(req, res, { parts, session })) return;
+    }
+
     if (parts[1] === "network") {
       if (await handleNetwork(req, res, { parts, session })) return;
     }
@@ -4272,6 +4388,21 @@ const handleGroups = createGroupsHandler({
   publicGroup,
   normalizeGroup,
   addGroup: (group) => state.groups.unshift(group),
+  scheduleSave,
+  broadcastSnapshot
+});
+const handleTickets = createTicketsHandler({
+  randomId: randomUUID,
+  nowIso,
+  readBody,
+  sendJson,
+  notFound,
+  requireAdmin,
+  listedTickets,
+  publicTicket,
+  normalizeTicket,
+  addTicket: (ticket) => state.tickets.unshift(ticket),
+  appendTicketUpdate,
   scheduleSave,
   broadcastSnapshot
 });

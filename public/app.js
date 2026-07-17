@@ -11,6 +11,8 @@ const state = {
   settings: {},
   events: [],
   alerts: [],
+  tickets: [],
+  selectedTicketId: null,
   summary: {},
   selectedServerId: null,
   selectedServerGroupId: null,
@@ -53,6 +55,11 @@ const state = {
     groupId: "all",
     status: "all",
     type: "all"
+  },
+  ticketFilters: {
+    groupId: "all",
+    status: "all",
+    priority: "all"
   },
   socket: null,
   reconnectTimer: null,
@@ -259,6 +266,27 @@ const els = {
   alertStatusFilter: document.querySelector("#alertStatusFilter"),
   alertTypeFilter: document.querySelector("#alertTypeFilter"),
   alertsList: document.querySelector("#alertsList"),
+  ticketCount: document.querySelector("#ticketCount"),
+  ticketListCount: document.querySelector("#ticketListCount"),
+  ticketGroupFilter: document.querySelector("#ticketGroupFilter"),
+  ticketStatusFilter: document.querySelector("#ticketStatusFilter"),
+  ticketPriorityFilter: document.querySelector("#ticketPriorityFilter"),
+  ticketsList: document.querySelector("#ticketsList"),
+  ticketDetailPanel: document.querySelector("#ticketDetailPanel"),
+  openTicketForm: document.querySelector("#openTicketForm"),
+  ticketDialog: document.querySelector("#ticketDialog"),
+  ticketForm: document.querySelector("#ticketForm"),
+  ticketDialogTitle: document.querySelector("#ticketDialogTitle"),
+  closeTicketDialog: document.querySelector("#closeTicketDialog"),
+  cancelTicketForm: document.querySelector("#cancelTicketForm"),
+  ticketId: document.querySelector("#ticketId"),
+  ticketTitle: document.querySelector("#ticketTitle"),
+  ticketGroupId: document.querySelector("#ticketGroupId"),
+  ticketPriority: document.querySelector("#ticketPriority"),
+  ticketRequesterName: document.querySelector("#ticketRequesterName"),
+  ticketAssignedTo: document.querySelector("#ticketAssignedTo"),
+  ticketDescription: document.querySelector("#ticketDescription"),
+  ticketFormError: document.querySelector("#ticketFormError"),
   toastStack: document.querySelector("#toastStack"),
   searchInput: document.querySelector("#searchInput"),
   environmentFilter: document.querySelector("#environmentFilter"),
@@ -418,7 +446,8 @@ const VIEW_ROUTES = {
   integrations: "/integracoes",
   settings: "/configuracoes",
   history: "/historico",
-  alerts: "/alertas"
+  alerts: "/alertas",
+  tickets: "/suporte"
 };
 
 const ROUTE_VIEWS = Object.fromEntries(Object.entries(VIEW_ROUTES).map(([view, route]) => [route, view]));
@@ -1078,6 +1107,7 @@ function applySnapshot(payload) {
   state.settings = payload.settings || {};
   applyBranding();
   state.alerts = payload.alerts || [];
+  state.tickets = payload.tickets || [];
   state.events = payload.events || [];
   state.cloudBackup = payload.cloudBackup || null;
   state.proxmoxBackup = payload.proxmoxBackup || null;
@@ -1106,6 +1136,9 @@ function applySnapshot(payload) {
   }
   if (!state.selectedNetworkGroupId && !state.selectedNetworkLinkId && state.networkLinks.length) {
     state.selectedNetworkLinkId = sortedByAlpha(state.networkLinks, networkLinkSortLabel)[0].id;
+  }
+  if (state.selectedTicketId && !state.tickets.some((ticket) => ticket.id === state.selectedTicketId)) {
+    state.selectedTicketId = null;
   }
   if (!needsRender) return;
   renderGroupOptions();
@@ -1181,7 +1214,8 @@ function updateTopbarContext() {
     integrations: ["Conexoes externas", "Integracoes"],
     settings: ["Identidade do sistema", "Configuracoes"],
     history: ["Auditoria operacional", "Historico de eventos"],
-    alerts: ["Incidentes e recuperacoes", "Historico de alertas"]
+    alerts: ["Incidentes e recuperacoes", "Historico de alertas"],
+    tickets: ["Suporte", "Chamados e historico de atendimento"]
   };
   const [eyebrow, title] = titles[activeViewName()] || titles.dashboard;
   if (els.topbarEyebrow) els.topbarEyebrow.textContent = eyebrow;
@@ -1397,6 +1431,7 @@ function renderGroupOptions() {
     }
   }
   renderAlertGroupOptions(groupOptions);
+  renderTicketGroupOptions(groupOptions);
   renderCompanyNav();
 }
 
@@ -1410,6 +1445,30 @@ function renderAlertGroupOptions(groupOptions = "") {
   `;
   els.alertGroupFilter.value = [...els.alertGroupFilter.options].some((option) => option.value === current) ? current : "all";
   state.alertFilters.groupId = els.alertGroupFilter.value;
+}
+
+function renderTicketGroupOptions(groupOptions = "") {
+  const resolvedOptions =
+    groupOptions || sortedByAlpha(state.groups, groupSortLabel).map((group) => `<option value="${group.id}">${escapeHtml(group.name)}</option>`).join("");
+  if (els.ticketGroupFilter) {
+    const current = els.ticketGroupFilter.value || state.ticketFilters.groupId;
+    els.ticketGroupFilter.innerHTML = `
+      <option value="all">Todas empresas</option>
+      ${resolvedOptions}
+    `;
+    els.ticketGroupFilter.value = [...els.ticketGroupFilter.options].some((option) => option.value === current) ? current : "all";
+    state.ticketFilters.groupId = els.ticketGroupFilter.value;
+  }
+  if (els.ticketGroupId) {
+    const current = els.ticketGroupId.value;
+    els.ticketGroupId.innerHTML = `
+      <option value="">Selecione...</option>
+      ${resolvedOptions}
+    `;
+    if ([...els.ticketGroupId.options].some((option) => option.value === current)) {
+      els.ticketGroupId.value = current;
+    }
+  }
 }
 
 function renderParentOptions(currentServerId = "") {
@@ -3898,6 +3957,186 @@ function renderNotificationPopup() {
     : `<div class="empty-list compact-empty">Nenhum alerta recente.</div>`;
 }
 
+function ticketStatusTone(status) {
+  if (status === "in_progress") return "dependency_down";
+  if (status === "resolved") return "online";
+  return "paused";
+}
+
+function ticketStatusLabel(status) {
+  return (
+    {
+      open: "Aberto",
+      in_progress: "Em andamento",
+      resolved: "Resolvido",
+      closed: "Fechado"
+    }[status] || "Aberto"
+  );
+}
+
+function ticketPriorityLabel(priority) {
+  return { low: "Baixa", normal: "Normal", high: "Alta" }[priority] || "Normal";
+}
+
+function ticketUpdateTitle(update) {
+  if (update.kind === "status_change") {
+    return `Status alterado: ${ticketStatusLabel(update.fromStatus)} -> ${ticketStatusLabel(update.toStatus)}`;
+  }
+  return update.kind === "resolution" ? "Resolucao" : "Comentario";
+}
+
+function filteredTickets() {
+  return (state.tickets || []).filter((ticket) => {
+    const groupOk = state.ticketFilters.groupId === "all" || ticket.groupId === state.ticketFilters.groupId;
+    const statusOk = state.ticketFilters.status === "all" || ticket.status === state.ticketFilters.status;
+    const priorityOk = state.ticketFilters.priority === "all" || ticket.priority === state.ticketFilters.priority;
+    return groupOk && statusOk && priorityOk;
+  });
+}
+
+function selectedTicket() {
+  return (state.tickets || []).find((ticket) => ticket.id === state.selectedTicketId) || null;
+}
+
+function selectTicket(ticketId) {
+  state.selectedTicketId = ticketId;
+  renderTickets();
+}
+
+function renderTickets() {
+  if (!els.ticketsList) return;
+  const tickets = [...filteredTickets()].sort((left, right) => new Date(right.updatedAt || 0) - new Date(left.updatedAt || 0));
+  if (els.ticketCount) {
+    els.ticketCount.textContent = `${state.tickets.length} ${state.tickets.length === 1 ? "chamado" : "chamados"}`;
+  }
+  if (els.ticketListCount) {
+    els.ticketListCount.textContent = `${tickets.length} ${tickets.length === 1 ? "chamado" : "chamados"}`;
+  }
+
+  els.ticketsList.innerHTML = tickets.length
+    ? tickets
+        .map((ticket) => {
+          const selected = ticket.id === state.selectedTicketId ? "selected" : "";
+          return `
+            <button class="network-link-row ${selected}" type="button" data-ticket-id="${escapeHtml(ticket.id)}">
+              <span class="status-dot ${ticketStatusTone(ticket.status)}"></span>
+              <div>
+                <strong>${escapeHtml(ticket.title)}</strong>
+                <small>${escapeHtml(ticket.groupName || "Sem empresa")}</small>
+              </div>
+              <span class="ticket-priority-badge ${escapeHtml(ticket.priority)}">${ticketPriorityLabel(ticket.priority)}</span>
+              <span class="status-badge ${ticketStatusTone(ticket.status)}">${ticketStatusLabel(ticket.status)}</span>
+            </button>
+          `;
+        })
+        .join("")
+    : `<div class="empty-list">Nenhum chamado encontrado para os filtros atuais.</div>`;
+
+  renderTicketDetail(selectedTicket());
+}
+
+function renderTicketDetail(ticket) {
+  if (!els.ticketDetailPanel) return;
+  if (!ticket) {
+    els.ticketDetailPanel.innerHTML = `
+      <div class="empty-state compact-empty">
+        <strong>Nenhum chamado selecionado</strong>
+        <span>Selecione um chamado para ver detalhes, historico e adicionar atualizacoes.</span>
+      </div>
+    `;
+    return;
+  }
+
+  const updates = [...(ticket.updates || [])].sort((left, right) => new Date(right.createdAt || 0) - new Date(left.createdAt || 0));
+
+  els.ticketDetailPanel.innerHTML = `
+    <div class="network-detail-header">
+      <div>
+        <h3>${escapeHtml(ticket.title)}</h3>
+        <span>${escapeHtml(ticket.groupName || "Sem empresa")}</span>
+      </div>
+      <span class="status-badge ${ticketStatusTone(ticket.status)}">${ticketStatusLabel(ticket.status)}</span>
+    </div>
+
+    <article class="profile-section">
+      <div class="panel-title compact-title">
+        <h3>Detalhes</h3>
+        <span class="ticket-priority-badge ${escapeHtml(ticket.priority)}">${ticketPriorityLabel(ticket.priority)}</span>
+      </div>
+      <div class="profile-stat-grid">
+        <div class="detail-stat"><span>Solicitante</span><strong>${escapeHtml(ticket.requesterName || "-")}</strong></div>
+        <div class="detail-stat"><span>Responsavel</span><strong>${escapeHtml(ticket.assignedToName || "Sem responsavel")}</strong></div>
+        <div class="detail-stat"><span>Criado em</span><strong>${formatDate(ticket.createdAt)}</strong></div>
+        <div class="detail-stat"><span>Fechado em</span><strong>${ticket.closedAt ? formatDate(ticket.closedAt) : "-"}</strong></div>
+      </div>
+      ${ticket.description ? `<p class="ticket-description">${escapeHtml(ticket.description)}</p>` : ""}
+      <div class="dialog-actions">
+        <button class="ghost-button compact" type="button" data-ticket-action="edit" data-id="${escapeHtml(ticket.id)}">Editar</button>
+        <button class="danger-button compact" type="button" data-ticket-action="delete" data-id="${escapeHtml(ticket.id)}">Excluir</button>
+      </div>
+    </article>
+
+    <article class="profile-section">
+      <div class="panel-title compact-title">
+        <h3>Historico de atendimento</h3>
+        <span>${updates.length} ${updates.length === 1 ? "registro" : "registros"}</span>
+      </div>
+      <div class="mini-history">
+        ${
+          updates.length
+            ? updates
+                .map(
+                  (update) => `
+                  <div class="timeline-item">
+                    <span class="status-pulse ${update.kind === "status_change" ? ticketStatusTone(update.toStatus) : "online"}"></span>
+                    <div>
+                      <strong>${escapeHtml(ticketUpdateTitle(update))}</strong>
+                      ${update.message ? `<small>${escapeHtml(update.message)}</small>` : ""}
+                      <small>${escapeHtml(update.authorName || "Sistema")} · ${formatDate(update.createdAt)}</small>
+                    </div>
+                  </div>
+                `
+                )
+                .join("")
+            : `<div class="empty-list">Nenhuma atualizacao registrada ainda.</div>`
+        }
+      </div>
+    </article>
+
+    <article class="profile-section">
+      <div class="panel-title compact-title">
+        <h3>Adicionar atualizacao</h3>
+      </div>
+      <form id="ticketUpdateForm" data-ticket-id="${escapeHtml(ticket.id)}">
+        <label>
+          Tipo
+          <select id="ticketUpdateKind">
+            <option value="comment">Comentario</option>
+            <option value="resolution">Resolucao</option>
+          </select>
+        </label>
+        <label>
+          Mensagem
+          <textarea id="ticketUpdateMessage" rows="3" placeholder="Descreva o atendimento ou a resolucao" required></textarea>
+        </label>
+        <label>
+          Mudar status para
+          <select id="ticketUpdateStatus">
+            <option value="">Manter status atual</option>
+            <option value="open" ${ticket.status === "open" ? "disabled" : ""}>Aberto</option>
+            <option value="in_progress" ${ticket.status === "in_progress" ? "disabled" : ""}>Em andamento</option>
+            <option value="resolved" ${ticket.status === "resolved" ? "disabled" : ""}>Resolvido</option>
+            <option value="closed" ${ticket.status === "closed" ? "disabled" : ""}>Fechado</option>
+          </select>
+        </label>
+        <div class="dialog-actions">
+          <button class="primary-button compact" type="submit">Adicionar</button>
+        </div>
+      </form>
+    </article>
+  `;
+}
+
 async function requestBrowserNotifications() {
   if (!alertSettings().browserNotificationsEnabled) {
     showToast("Notificacoes desativadas", "Ative notificacoes do navegador nas configuracoes de alertas.");
@@ -4981,30 +5220,25 @@ function daysUntilDate(dateStr) {
   return Math.round((end - todayStart) / 86400000);
 }
 
-// Pior caso entre os contratos com data da empresa (menor numero de dias
-// restantes) — usado pra mostrar uma unica tag de aviso no cartao.
-function groupContractExpiryStatus(group) {
+// Uma tag por contrato com data, sempre mostrando os dias restantes (nao so
+// perto do vencimento) — cor muda conforme a proximidade: normal enquanto
+// falta bastante, aviso dentro da janela de alerta (10 dias), vencido em vermelho.
+function groupContractTags(group) {
   const contracts = Array.isArray(group.serviceContracts) ? group.serviceContracts : [];
-  let worst = null;
-  for (const contract of contracts) {
-    const daysLeft = daysUntilDate(contract.endDate);
-    if (daysLeft === null) continue;
-    if (!worst || daysLeft < worst.daysLeft) worst = { daysLeft, contract };
-  }
-  return worst;
-}
-
-function groupContractExpiryTag(group) {
-  const status = groupContractExpiryStatus(group);
-  if (!status || status.daysLeft > 10) return "";
-  const tone = status.daysLeft < 0 ? "expired" : "expiring";
-  const label =
-    status.daysLeft < 0
-      ? `Contrato venceu ha ${Math.abs(status.daysLeft)} dia(s)`
-      : status.daysLeft === 0
-      ? "Contrato vence hoje"
-      : `Contrato vence em ${status.daysLeft} dia(s)`;
-  return `<span class="company-contract-tag ${tone}" title="${escapeHtml(status.contract.label)} · ${escapeHtml(formatDateOnly(status.contract.endDate))}">${escapeHtml(label)}</span>`;
+  return contracts
+    .map((contract) => {
+      const daysLeft = daysUntilDate(contract.endDate);
+      if (daysLeft === null) return "";
+      const tone = daysLeft < 0 ? "expired" : daysLeft <= 10 ? "expiring" : "";
+      const label =
+        daysLeft < 0
+          ? `${contract.label}: venceu ha ${Math.abs(daysLeft)} dia(s)`
+          : daysLeft === 0
+          ? `${contract.label}: vence hoje`
+          : `${contract.label}: ${daysLeft} dia(s) restantes`;
+      return `<span class="company-contract-tag ${tone}" title="${escapeHtml(formatDateOnly(contract.endDate))}">${escapeHtml(label)}</span>`;
+    })
+    .join("");
 }
 
 function renderGroups() {
@@ -5044,7 +5278,7 @@ function renderGroups() {
                       .join("")
                   : `<span class="company-contract-tag empty">Sem contratos marcados</span>`
               }
-              ${groupContractExpiryTag(group)}
+              ${groupContractTags(group)}
             </div>
           </div>
           <div class="group-stats">
@@ -7412,6 +7646,7 @@ function render() {
   renderTimeline();
   renderAlerts();
   renderGroups();
+  renderTickets();
   renderProbes();
   renderUsers();
   renderBackups();
@@ -7898,6 +8133,107 @@ async function deleteGroup(group) {
     );
   } catch (error) {
     showToast("Falha ao remover empresa", error.message);
+  }
+}
+
+function upsertTicket(ticket) {
+  if (ticket.deletedAt) {
+    state.tickets = state.tickets.filter((item) => item.id !== ticket.id);
+    if (state.selectedTicketId === ticket.id) state.selectedTicketId = null;
+    return;
+  }
+  const index = state.tickets.findIndex((item) => item.id === ticket.id);
+  if (index >= 0) state.tickets[index] = ticket;
+  else state.tickets.unshift(ticket);
+}
+
+function openTicketDialog(ticket = null) {
+  els.ticketForm.reset();
+  if (els.ticketFormError) els.ticketFormError.textContent = "";
+  els.ticketId.value = ticket?.id || "";
+  els.ticketDialogTitle.textContent = ticket ? "Editar chamado" : "Adicionar chamado";
+  els.ticketTitle.value = ticket?.title || "";
+  els.ticketDescription.value = ticket?.description || "";
+  els.ticketRequesterName.value = ticket?.requesterName || "";
+  els.ticketPriority.value = ticket?.priority || "normal";
+  renderTicketGroupOptions();
+  els.ticketGroupId.value = ticket?.groupId || "";
+  if (els.ticketAssignedTo) {
+    const admins = sortedByAlpha(
+      state.users.filter((user) => user.role === "admin"),
+      (user) => user.name
+    );
+    els.ticketAssignedTo.innerHTML = `
+      <option value="">Sem responsavel</option>
+      ${admins.map((user) => `<option value="${escapeHtml(user.id)}">${escapeHtml(user.name)}</option>`).join("")}
+    `;
+    els.ticketAssignedTo.value = ticket?.assignedTo || "";
+  }
+  els.ticketDialog.showModal();
+}
+
+function closeTicketDialog() {
+  els.ticketDialog.close();
+}
+
+async function submitTicket(event) {
+  event.preventDefault();
+  if (els.ticketFormError) els.ticketFormError.textContent = "";
+  const id = els.ticketId.value;
+  const payload = {
+    title: els.ticketTitle.value,
+    groupId: els.ticketGroupId.value,
+    description: els.ticketDescription.value,
+    requesterName: els.ticketRequesterName.value,
+    priority: els.ticketPriority.value,
+    assignedTo: els.ticketAssignedTo.value
+  };
+  try {
+    const saved = id
+      ? await api(`/api/tickets/${id}`, { method: "PUT", body: JSON.stringify(payload) })
+      : await api("/api/tickets", { method: "POST", body: JSON.stringify(payload) });
+    upsertTicket(saved);
+    state.selectedTicketId = saved.id;
+    closeTicketDialog();
+    renderTickets();
+    showToast("Chamado salvo", `${saved.title} foi salvo com sucesso.`);
+  } catch (error) {
+    if (els.ticketFormError) els.ticketFormError.textContent = error.message;
+    else showToast("Falha ao salvar chamado", error.message);
+  }
+}
+
+async function deleteTicket(ticket) {
+  if (!window.confirm(`Excluir o chamado "${ticket.title}"?`)) return;
+  try {
+    await api(`/api/tickets/${encodeURIComponent(ticket.id)}`, { method: "DELETE" });
+    state.tickets = state.tickets.filter((item) => item.id !== ticket.id);
+    if (state.selectedTicketId === ticket.id) state.selectedTicketId = null;
+    renderTickets();
+    showToast("Chamado removido", `${ticket.title} foi removido.`);
+  } catch (error) {
+    showToast("Falha ao remover chamado", error.message);
+  }
+}
+
+async function submitTicketUpdate(event) {
+  event.preventDefault();
+  const form = event.target;
+  const ticketId = form.dataset.ticketId;
+  const kind = form.querySelector("#ticketUpdateKind")?.value || "comment";
+  const message = form.querySelector("#ticketUpdateMessage")?.value.trim() || "";
+  const newStatus = form.querySelector("#ticketUpdateStatus")?.value || "";
+  if (!message) return;
+  try {
+    const saved = await api(`/api/tickets/${ticketId}/updates`, {
+      method: "POST",
+      body: JSON.stringify({ kind, message, newStatus: newStatus || undefined })
+    });
+    upsertTicket(saved);
+    renderTickets();
+    showToast("Atualizacao adicionada", "O historico do chamado foi atualizado.");
+  } catch (error) {
+    showToast("Falha ao adicionar atualizacao", error.message);
   }
 }
 
@@ -9114,6 +9450,41 @@ function bindEvents() {
         `A geracao de relatorios profissionais para "${group.name}" (picos de uso, comparativos mensais, indisponibilidade) esta no roadmap e ainda nao gera relatorios reais.`
       );
     }
+  });
+
+  document.querySelector("#openTicketForm")?.addEventListener("click", () => openTicketDialog());
+  els.closeTicketDialog?.addEventListener("click", closeTicketDialog);
+  els.cancelTicketForm?.addEventListener("click", closeTicketDialog);
+  els.ticketForm?.addEventListener("submit", submitTicket);
+
+  els.ticketsList?.addEventListener("click", (event) => {
+    const row = eventClosest(event, "[data-ticket-id]");
+    if (row) selectTicket(row.dataset.ticketId);
+  });
+
+  els.ticketDetailPanel?.addEventListener("click", (event) => {
+    const button = eventClosest(event, "[data-ticket-action]");
+    if (!button) return;
+    const ticket = state.tickets.find((item) => item.id === button.dataset.id);
+    if (ticket && button.dataset.ticketAction === "edit") openTicketDialog(ticket);
+    if (ticket && button.dataset.ticketAction === "delete") deleteTicket(ticket);
+  });
+
+  els.ticketDetailPanel?.addEventListener("submit", (event) => {
+    if (event.target?.id === "ticketUpdateForm") submitTicketUpdate(event);
+  });
+
+  els.ticketGroupFilter?.addEventListener("change", () => {
+    state.ticketFilters.groupId = els.ticketGroupFilter.value;
+    renderTickets();
+  });
+  els.ticketStatusFilter?.addEventListener("change", () => {
+    state.ticketFilters.status = els.ticketStatusFilter.value;
+    renderTickets();
+  });
+  els.ticketPriorityFilter?.addEventListener("change", () => {
+    state.ticketFilters.priority = els.ticketPriorityFilter.value;
+    renderTickets();
   });
 
   els.serverDirectoryList?.addEventListener("click", (event) => {

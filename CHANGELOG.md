@@ -2,6 +2,11 @@
 
 Resumo das versoes estaveis publicadas do ServerWatch.
 
+## v5.0.0 - 2026-07-17
+
+- Adiciona o modulo de Suporte (`/suporte`): pagina inteiramente nova e separada, visivel so pra administradores/tecnicos, pra registrar e acompanhar chamados de clientes — cadastro (empresa, prioridade, solicitante, responsavel, descricao), lista filtravel por empresa/status/prioridade com layout mestre-detalhe (mesmo padrao ja usado em Redes), e historico de atendimento por chamado (comentarios, resolucoes e mudancas de status registradas automaticamente).
+- Abertura de chamado pelo proprio cliente fica fora de escopo por enquanto — hoje o time cadastra e conduz o chamado manualmente.
+
 ## v4.5.2 - 2026-07-16
 
 - Corrige o instalador `.exe` (.NET) do Network Probe (SNMP), que nunca gravava o `probe/snmp/poller.js` em disco (so `network-collector.js`, `client.js` e `vendor-templates.js`) — qualquer instalacao feita por ele ficava sem o modulo de coleta em si, incluindo a deteccao de SD-WAN de FortiGate da v4.5.1. Sincroniza tambem os demais assets embutidos (`network-collector.js`/`vendor-templates.js`) com a versao atual do codigo-fonte, que estavam desatualizados.
