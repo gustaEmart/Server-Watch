@@ -13,6 +13,7 @@ export function createGroupsHandler({
   publicGroup,
   normalizeGroup,
   addGroup,
+  syncProductCatalogFromProducts,
   scheduleSave,
   broadcastSnapshot
 }) {
@@ -32,6 +33,7 @@ export function createGroupsHandler({
         ...normalizeGroup(payload)
       };
       addGroup(group);
+      syncProductCatalogFromProducts(group.products || []);
       scheduleSave();
       broadcastSnapshot();
       return sendJson(res, 201, publicGroup(group));
@@ -49,6 +51,7 @@ export function createGroupsHandler({
     if (req.method === "PUT" && parts.length === 3) {
       const payload = await readBody(req);
       Object.assign(group, normalizeGroup(payload, group));
+      syncProductCatalogFromProducts(group.products || []);
       scheduleSave();
       broadcastSnapshot();
       return sendJson(res, 200, publicGroup(group));

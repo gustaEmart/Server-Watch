@@ -7,52 +7,19 @@ export function createAlertService({
   summary,
   publicServer
 }) {
-  function formatOutageDuration(ms) {
-    const totalMinutes = Math.max(0, Math.round(ms / 60000));
-    const hours = Math.floor(totalMinutes / 60);
-    const minutes = totalMinutes % 60;
-    if (hours && minutes) return `${hours}h ${minutes}min`;
-    if (hours) return `${hours}h`;
-    if (minutes) return `${minutes}min`;
-    return "menos de 1 min";
-  }
-
-  function formatClock(iso) {
-    const date = new Date(iso);
-    if (Number.isNaN(date.getTime())) return "-";
-    return new Intl.DateTimeFormat("pt-BR", {
-      day: "2-digit",
-      month: "2-digit",
-      hour: "2-digit",
-      minute: "2-digit",
-      timeZone: "America/Sao_Paulo"
-    }).format(date);
-  }
-
-  // Acha o inicio da interrupcao atual: volta no historico ate encontrar a
-  // transicao em que o servidor deixou de estar "online", mesmo que ele
-  // tenha oscilado entre "offline" e "unknown" (probe sem contato) no meio
-  // do caminho. Isso garante que a duracao reportada cubra a interrupcao
-  // inteira, nao apenas o ultimo trecho antes da reconexao.
-  function outageStart(serverId, beforeMs) {
+  function downtimeDurationMs(serverId, recoveredAt) {
     const state = getState();
-    for (const event of state.events) {
-      if (event.serverId !== serverId || event.category !== "technical") continue;
-      const eventMs = new Date(event.createdAt).getTime();
-      if (!Number.isFinite(eventMs) || eventMs >= beforeMs) continue;
-      if (event.currentStatus === "online") return null;
-      if (event.previousStatus === "online") return event.createdAt;
-    }
-    return null;
-  }
-
-  function outageInfo(serverId, recoveredAt) {
     const recoveredMs = new Date(recoveredAt || nowIso()).getTime();
-    const startedAt = outageStart(serverId, recoveredMs);
-    if (!startedAt) return null;
-    const startedMs = new Date(startedAt).getTime();
-    if (!Number.isFinite(startedMs) || !Number.isFinite(recoveredMs)) return null;
-    return { startedAt, durationMs: Math.max(0, recoveredMs - startedMs) };
+    const lastOffline = state.events.find(
+      (event) =>
+        event.serverId === serverId &&
+        event.category === "technical" &&
+        event.kind === "server_offline" &&
+        new Date(event.createdAt).getTime() <= recoveredMs
+    );
+    if (!lastOffline) return null;
+    const startedMs = new Date(lastOffline.createdAt).getTime();
+    return Number.isFinite(startedMs) && Number.isFinite(recoveredMs) ? Math.max(0, recoveredMs - startedMs) : null;
   }
 
   function recordEvent(event) {
@@ -67,7 +34,6 @@ export function createAlertService({
       currentStatus: event.currentStatus || null,
       latencyMs: event.latencyMs ?? null,
       durationMs: event.durationMs ?? null,
-      outageStartedAt: event.outageStartedAt ?? null,
       actorName: event.actorName || null,
       message: event.message || null,
       createdAt: event.createdAt || nowIso()
@@ -88,15 +54,6 @@ export function createAlertService({
   function addEvent(server, previousStatus, currentStatus, latencyMs, message) {
     const state = getState();
     const createdAt = nowIso();
-    const recovering = currentStatus === "online" && previousStatus !== "online";
-    const outage = recovering ? outageInfo(server.id, createdAt) : null;
-    const eventMessage =
-      outage
-        ? `${message ? `${message} ` : ""}Ficou ${formatOutageDuration(outage.durationMs)} sem contato (perdeu contato as ${formatClock(
-            outage.startedAt
-          )}, retomou as ${formatClock(createdAt)}).`
-        : message || null;
-
     const event = recordEvent({
       category: "technical",
       kind: currentStatus === "offline" ? "server_offline" : currentStatus === "online" ? "server_recovered" : "status_changed",
@@ -105,9 +62,8 @@ export function createAlertService({
       previousStatus,
       currentStatus,
       latencyMs,
-      durationMs: outage?.durationMs ?? null,
-      outageStartedAt: outage?.startedAt ?? null,
-      message: eventMessage,
+      durationMs: currentStatus === "online" && previousStatus === "offline" ? downtimeDurationMs(server.id, createdAt) : null,
+      message: message || null,
       createdAt
     });
 
@@ -120,14 +76,8 @@ export function createAlertService({
         severity: alertSeverityForServer(server, currentStatus),
         message:
           currentStatus === "offline"
-            ? `${server.name} perdeu contato as ${formatClock(createdAt)} (parou de responder em ${server.hostname}).`
-            : outage
-            ? `${server.name} voltou a responder em ${server.hostname} as ${formatClock(createdAt)}, apos ${formatOutageDuration(
-                outage.durationMs
-              )} sem contato (desde ${formatClock(outage.startedAt)}).`
+            ? `${server.name} parou de responder em ${server.hostname}.`
             : `${server.name} voltou a responder em ${server.hostname}.`,
-        durationMs: outage?.durationMs ?? null,
-        outageStartedAt: outage?.startedAt ?? null,
         createdAt,
         read: false,
         acknowledgedAt: null,

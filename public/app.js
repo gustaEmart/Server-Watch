@@ -1,6 +1,7 @@
 const state = {
   servers: [],
   groups: [],
+  productCatalog: [],
   probes: [],
   networkDevices: [],
   networkLinks: [],
@@ -13,6 +14,8 @@ const state = {
   alerts: [],
   tickets: [],
   selectedTicketId: null,
+  ticketUpdateDraft: null,
+  clientSupportMode: "list",
   summary: {},
   selectedServerId: null,
   selectedServerGroupId: null,
@@ -24,11 +27,15 @@ const state = {
   companyScopeQuery: "",
   dashboardMode: localStorage.getItem("serverwatch.dashboardMode") === "complete" ? "complete" : "simple",
   groupLogoDraft: "",
+  groupManagementView: "companies",
+  groupSearchQuery: "",
+  groupExpiringOnly: false,
   themeDraft: null,
   topologyExpanded: new Set(),
   networkDeviceExpanded: new Set(),
   selectedBackupClientId: null,
   backupProvider: "msp",
+  report: { groupId: "", days: 30, data: null, loadedKey: "", loading: false, error: "" },
   networkProvider: "connectivity",
   unifiExpandedSites: new Set(),
   unifiRenderSignature: "",
@@ -59,7 +66,10 @@ const state = {
   ticketFilters: {
     groupId: "all",
     status: "all",
-    priority: "all"
+    priority: "all",
+    assignee: "all",
+    query: "",
+    quick: "all"
   },
   socket: null,
   reconnectTimer: null,
@@ -118,6 +128,7 @@ function snapshotFingerprint(payload) {
       summary: payload.summary,
       servers: payload.servers,
       groups: payload.groups,
+      productCatalog: payload.productCatalog,
       probes: payload.probes,
       networkDevices: payload.networkDevices,
       networkLinks: payload.networkLinks,
@@ -125,6 +136,7 @@ function snapshotFingerprint(payload) {
       users: payload.users,
       settings: payload.settings,
       alerts: payload.alerts,
+      tickets: payload.tickets,
       events: payload.events,
       cloudBackup: payload.cloudBackup,
       proxmoxBackup: payload.proxmoxBackup,
@@ -271,7 +283,13 @@ const els = {
   ticketGroupFilter: document.querySelector("#ticketGroupFilter"),
   ticketStatusFilter: document.querySelector("#ticketStatusFilter"),
   ticketPriorityFilter: document.querySelector("#ticketPriorityFilter"),
+  ticketAssigneeFilter: document.querySelector("#ticketAssigneeFilter"),
+  ticketSearch: document.querySelector("#ticketSearch"),
+  ticketQuickFilters: document.querySelector("#ticketQuickFilters"),
   ticketsList: document.querySelector("#ticketsList"),
+  ticketQueueScreen: document.querySelector("#ticketQueueScreen"),
+  ticketWorkspaceScreen: document.querySelector("#ticketWorkspaceScreen"),
+  ticketWorkspacePanel: document.querySelector("#ticketWorkspacePanel"),
   ticketDetailPanel: document.querySelector("#ticketDetailPanel"),
   openTicketForm: document.querySelector("#openTicketForm"),
   ticketDialog: document.querySelector("#ticketDialog"),
@@ -283,10 +301,21 @@ const els = {
   ticketTitle: document.querySelector("#ticketTitle"),
   ticketGroupId: document.querySelector("#ticketGroupId"),
   ticketPriority: document.querySelector("#ticketPriority"),
+  ticketCategory: document.querySelector("#ticketCategory"),
+  ticketImpact: document.querySelector("#ticketImpact"),
+  ticketSource: document.querySelector("#ticketSource"),
+  ticketAssetType: document.querySelector("#ticketAssetType"),
+  ticketAssetName: document.querySelector("#ticketAssetName"),
+  ticketFirstResponseDueAt: document.querySelector("#ticketFirstResponseDueAt"),
+  ticketResolutionDueAt: document.querySelector("#ticketResolutionDueAt"),
   ticketRequesterName: document.querySelector("#ticketRequesterName"),
   ticketAssignedTo: document.querySelector("#ticketAssignedTo"),
   ticketDescription: document.querySelector("#ticketDescription"),
   ticketFormError: document.querySelector("#ticketFormError"),
+  clientSupportPortal: document.querySelector("#clientSupportPortal"),
+  clientCompanyContext: document.querySelector("#clientCompanyContext"),
+  clientSupportContent: document.querySelector("#clientSupportContent"),
+  clientNewTicket: document.querySelector("#clientNewTicket"),
   toastStack: document.querySelector("#toastStack"),
   searchInput: document.querySelector("#searchInput"),
   environmentFilter: document.querySelector("#environmentFilter"),
@@ -303,6 +332,16 @@ const els = {
   brandingForm: document.querySelector("#brandingForm"),
   themeSettingsForm: document.querySelector("#themeSettingsForm"),
   alertSettingsForm: document.querySelector("#alertSettingsForm"),
+  ticketSlaSettingsForm: document.querySelector("#ticketSlaSettingsForm"),
+  ticketSlaUrgentHours: document.querySelector("#ticketSlaUrgentHours"),
+  ticketSlaNormalHours: document.querySelector("#ticketSlaNormalHours"),
+  ticketAutomationSettingsForm: document.querySelector("#ticketAutomationSettingsForm"),
+  ticketAutomationEnabled: document.querySelector("#ticketAutomationEnabled"),
+  ticketAutomationServerMinutes: document.querySelector("#ticketAutomationServerMinutes"),
+  ticketAutomationLinkMinutes: document.querySelector("#ticketAutomationLinkMinutes"),
+  ticketAutomationBackupHours: document.querySelector("#ticketAutomationBackupHours"),
+  expirySettingsForm: document.querySelector("#expirySettingsForm"),
+  expiryNotifyDays: document.querySelector("#expiryNotifyDays"),
   cloudBackupSettingsForm: document.querySelector("#cloudBackupSettingsForm"),
   cloudBackupApiKeyInput: document.querySelector("#cloudBackupApiKeyInput"),
   cloudBackupSourceLabel: document.querySelector("#cloudBackupSourceLabel"),
@@ -367,6 +406,20 @@ const els = {
   groupContractInputs: document.querySelectorAll('input[name="groupContract"]'),
   groupContractsList: document.querySelector("#groupContractsList"),
   addGroupContract: document.querySelector("#addGroupContract"),
+  groupProductsList: document.querySelector("#groupProductsList"),
+  addGroupProduct: document.querySelector("#addGroupProduct"),
+  productCatalogSuggestions: document.querySelector("#productCatalogSuggestions"),
+  groupSearch: document.querySelector("#groupSearch"),
+  toggleGroupExpiryFilter: document.querySelector("#toggleGroupExpiryFilter"),
+  groupsDirectoryPanel: document.querySelector("#groupsDirectoryPanel"),
+  productCatalogPanel: document.querySelector("#productCatalogPanel"),
+  productCatalogCount: document.querySelector("#productCatalogCount"),
+  productCatalogForm: document.querySelector("#productCatalogForm"),
+  productCatalogId: document.querySelector("#productCatalogId"),
+  productCatalogName: document.querySelector("#productCatalogName"),
+  productCatalogList: document.querySelector("#productCatalogList"),
+  saveProductCatalog: document.querySelector("#saveProductCatalog"),
+  cancelProductCatalogEdit: document.querySelector("#cancelProductCatalogEdit"),
   groupLogoInput: document.querySelector("#groupLogoInput"),
   groupLogoPreview: document.querySelector("#groupLogoPreview"),
   groupLogoPreviewName: document.querySelector("#groupLogoPreviewName"),
@@ -431,7 +484,11 @@ const els = {
   closeProxmoxIssuesDialog: document.querySelector("#closeProxmoxIssuesDialog"),
   offlineServersDialog: document.querySelector("#offlineServersDialog"),
   offlineServersList: document.querySelector("#offlineServersList"),
-  closeOfflineServersDialog: document.querySelector("#closeOfflineServersDialog")
+  closeOfflineServersDialog: document.querySelector("#closeOfflineServersDialog"),
+  reportGroupSelect: document.querySelector("#reportGroupSelect"),
+  reportPeriodSelect: document.querySelector("#reportPeriodSelect"),
+  refreshReportButton: document.querySelector("#refreshReportButton"),
+  reportContent: document.querySelector("#reportContent")
 };
 
 const VIEW_ROUTES = {
@@ -447,7 +504,8 @@ const VIEW_ROUTES = {
   settings: "/configuracoes",
   history: "/historico",
   alerts: "/alertas",
-  tickets: "/suporte"
+  tickets: "/suporte",
+  reports: "/relatorios"
 };
 
 const ROUTE_VIEWS = Object.fromEntries(Object.entries(VIEW_ROUTES).map(([view, route]) => [route, view]));
@@ -517,6 +575,28 @@ function alertSettings() {
   };
 }
 
+function ticketSlaSettings() {
+  const current = state.settings.ticketSla || {};
+  return {
+    urgentHours: Number(current.urgentHours || 2),
+    normalHours: Number(current.normalHours || 24)
+  };
+}
+
+function ticketAutomationSettings() {
+  const current = state.settings.ticketAutomation || {};
+  return {
+    enabled: current.enabled === true,
+    serverOfflineMinutes: Number(current.serverOfflineMinutes || 30),
+    linkOfflineMinutes: Number(current.linkOfflineMinutes || 120),
+    backupOverdueHours: Number(current.backupOverdueHours || 36)
+  };
+}
+
+function expirationSettings() {
+  return { expiryNotifyDays: expiryNotifyDays() };
+}
+
 function brandInitials(name) {
   const raw = String(name || "SW").trim();
   const camelInitials = raw.match(/[A-Z]/g)?.join("") || "";
@@ -574,7 +654,7 @@ function showLogin() {
   els.appShell.hidden = true;
 }
 
-const SECTION_KEYS = ["servers", "networks", "backups", "alerts", "history"];
+const SECTION_KEYS = ["servers", "networks", "backups", "alerts", "history", "support"];
 
 function canSeeSection(section) {
   if (isAdmin()) return true;
@@ -590,6 +670,9 @@ function showApp(user) {
   els.currentUserName.textContent = `${user.name} · ${user.role === "admin" ? "Admin" : "Usuario"}`;
   document.querySelectorAll(".admin-only").forEach((item) => {
     item.hidden = !isAdmin();
+  });
+  document.querySelectorAll(".client-only").forEach((item) => {
+    item.hidden = isAdmin();
   });
   SECTION_KEYS.forEach((section) => {
     const tab = document.querySelector(`.nav-tab[data-view="${section}"]`);
@@ -1097,6 +1180,7 @@ function applySnapshot(payload) {
   state.summary = payload.summary || {};
   state.servers = payload.servers || [];
   state.groups = payload.groups || [];
+  state.productCatalog = payload.productCatalog || [];
   state.probes = payload.probes || [];
   state.networkDevices = payload.networkDevices || [];
   state.networkLinks = payload.networkLinks || [];
@@ -1108,6 +1192,7 @@ function applySnapshot(payload) {
   applyBranding();
   state.alerts = payload.alerts || [];
   state.tickets = payload.tickets || [];
+  restoreTicketFromLocation();
   state.events = payload.events || [];
   state.cloudBackup = payload.cloudBackup || null;
   state.proxmoxBackup = payload.proxmoxBackup || null;
@@ -1152,7 +1237,12 @@ function activeViewName() {
 
 function viewFromPath(pathname = window.location.pathname) {
   const normalized = pathname.length > 1 ? pathname.replace(/\/+$/, "") : pathname;
+  if (normalized === "/suporte/chamado") return "tickets";
   return ROUTE_VIEWS[normalized] || "dashboard";
+}
+
+function visibleNavTab(viewName) {
+  return [...document.querySelectorAll(`.nav-tab[data-view="${viewName}"]`)].find((item) => !item.hidden) || null;
 }
 
 function routeForView(viewName) {
@@ -1165,16 +1255,16 @@ function primaryNavView(viewName) {
 
 function setActiveView(viewName, options = {}) {
   const { push = true, replace = false } = options;
-  const requestedTab = document.querySelector(`.nav-tab[data-view="${viewName}"]`);
-  const nextView = requestedTab?.hidden ? "dashboard" : viewName;
-  const tab = document.querySelector(`.nav-tab[data-view="${nextView}"]`) || document.querySelector('[data-view="dashboard"]');
+  const clientViews = new Set(["tickets", "servers", "networks", "backups", "settings"]);
+  const nextView = !isAdmin() && !clientViews.has(viewName) ? "tickets" : viewName;
+  const tab = visibleNavTab(nextView) || visibleNavTab(isAdmin() ? "dashboard" : "tickets");
   if (!tab) return;
   const view = document.querySelector(`#${tab.dataset.view}View`);
   if (!view) return;
 
   document.querySelectorAll(".nav-tab").forEach((item) => item.classList.remove("active"));
   document.querySelectorAll(".view").forEach((item) => item.classList.remove("active"));
-  const primaryTab = document.querySelector(`.nav-tab[data-view="${primaryNavView(tab.dataset.view)}"]`) || tab;
+  const primaryTab = visibleNavTab(primaryNavView(tab.dataset.view)) || tab;
   primaryTab.classList.add("active");
   view.classList.add("active");
   updateTopbarContext();
@@ -1183,9 +1273,13 @@ function setActiveView(viewName, options = {}) {
     renderAlerts();
     refreshAlerts();
   }
+  if (tab.dataset.view === "reports") {
+    renderReports();
+    void loadCompanyReport();
+  }
 
   const nextRoute = routeForView(tab.dataset.view);
-  if (push && window.location.pathname !== nextRoute) {
+  if (push && (window.location.pathname !== nextRoute || window.location.hash)) {
     const method = replace ? "replaceState" : "pushState";
     window.history[method]({}, "", nextRoute);
   }
@@ -1198,7 +1292,19 @@ function activateLinkedView(target) {
 }
 
 function syncViewFromLocation(options = {}) {
-  setActiveView(viewFromPath(), { push: true, replace: options.replace ?? true });
+  const viewName = viewFromPath();
+  if (viewName === "tickets") {
+    if (ticketRouteReference()) restoreTicketFromLocation();
+    else {
+      state.selectedTicketId = null;
+      state.clientSupportMode = "list";
+    }
+  }
+  setActiveView(viewName, { push: false, replace: options.replace ?? true });
+  if (viewName === "tickets") {
+    if (isAdmin()) renderTickets();
+    else renderClientSupport();
+  }
 }
 
 function updateTopbarContext() {
@@ -1215,7 +1321,8 @@ function updateTopbarContext() {
     settings: ["Identidade do sistema", "Configuracoes"],
     history: ["Auditoria operacional", "Historico de eventos"],
     alerts: ["Incidentes e recuperacoes", "Historico de alertas"],
-    tickets: ["Suporte", "Chamados e historico de atendimento"]
+    reports: ["Relatorios operacionais", "Saude por empresa"],
+    tickets: isAdmin() ? ["Suporte", "Chamados e historico de atendimento"] : ["Atendimento", "Meus chamados"]
   };
   const [eyebrow, title] = titles[activeViewName()] || titles.dashboard;
   if (els.topbarEyebrow) els.topbarEyebrow.textContent = eyebrow;
@@ -1468,6 +1575,17 @@ function renderTicketGroupOptions(groupOptions = "") {
     if ([...els.ticketGroupId.options].some((option) => option.value === current)) {
       els.ticketGroupId.value = current;
     }
+  }
+  if (els.ticketAssigneeFilter) {
+    const current = els.ticketAssigneeFilter.value || state.ticketFilters.assignee;
+    const admins = sortedByAlpha(state.users.filter((user) => user.role === "admin"), (user) => user.name);
+    els.ticketAssigneeFilter.innerHTML = `
+      <option value="all">Todos responsaveis</option>
+      <option value="unassigned">Sem responsavel</option>
+      ${admins.map((user) => `<option value="${escapeHtml(user.id)}">${escapeHtml(user.name)}</option>`).join("")}
+    `;
+    els.ticketAssigneeFilter.value = [...els.ticketAssigneeFilter.options].some((option) => option.value === current) ? current : "all";
+    state.ticketFilters.assignee = els.ticketAssigneeFilter.value;
   }
 }
 
@@ -3958,7 +4076,8 @@ function renderNotificationPopup() {
 }
 
 function ticketStatusTone(status) {
-  if (status === "in_progress") return "dependency_down";
+  if (status === "in_progress" || status === "waiting_third_party") return "dependency_down";
+  if (status === "waiting_customer") return "degraded";
   if (status === "resolved") return "online";
   return "paused";
 }
@@ -3968,6 +4087,8 @@ function ticketStatusLabel(status) {
     {
       open: "Aberto",
       in_progress: "Em andamento",
+      waiting_customer: "Aguardando cliente",
+      waiting_third_party: "Aguardando terceiro",
       resolved: "Resolvido",
       closed: "Fechado"
     }[status] || "Aberto"
@@ -3975,7 +4096,32 @@ function ticketStatusLabel(status) {
 }
 
 function ticketPriorityLabel(priority) {
-  return { low: "Baixa", normal: "Normal", high: "Alta" }[priority] || "Normal";
+  return { low: "Baixa", normal: "Normal", high: "Alta", critical: "Urgente" }[priority] || "Normal";
+}
+
+function ticketCategoryLabel(category) {
+  return { incident: "Incidente", request: "Solicitacao", access: "Acesso", backup: "Backup", network: "Rede", server: "Servidor", other: "Outro" }[category] || "Incidente";
+}
+
+function ticketImpactLabel(impact) {
+  return { individual: "Individual", department: "Departamento", company: "Empresa", critical: "Critico" }[impact] || "Individual";
+}
+
+function ticketSlaState(ticket) {
+  const now = Date.now();
+  const createdAt = new Date(ticket.createdAt || 0).getTime();
+  const due = ticket.resolutionDueAt ? new Date(ticket.resolutionDueAt).getTime() : 0;
+  if (!due) return { label: "Sem SLA", tone: "muted", progress: 0, detail: "Prioridade baixa", hasSla: false };
+  const total = Math.max(1, due - (Number.isFinite(createdAt) && createdAt > 0 ? createdAt : due));
+  const elapsed = Math.max(0, now - (Number.isFinite(createdAt) && createdAt > 0 ? createdAt : now));
+  const progress = Math.min(100, Math.round((elapsed / total) * 100));
+  if (["resolved", "closed"].includes(ticket.status)) {
+    return { label: "Concluido", tone: "success", progress: 100, detail: "Resolvido dentro do fluxo", hasSla: true };
+  }
+  const remaining = due - now;
+  if (remaining < 0) return { label: "SLA vencido", tone: "danger", progress: 100, detail: `${formatTicketDuration(-remaining)} vencido`, hasSla: true };
+  if (remaining < total * 0.25) return { label: "SLA proximo", tone: "warning", progress, detail: `${formatTicketDuration(remaining)} restante`, hasSla: true };
+  return { label: "Dentro do SLA", tone: "success", progress, detail: `${formatTicketDuration(remaining)} restante`, hasSla: true };
 }
 
 function ticketUpdateTitle(update) {
@@ -3990,7 +4136,17 @@ function filteredTickets() {
     const groupOk = state.ticketFilters.groupId === "all" || ticket.groupId === state.ticketFilters.groupId;
     const statusOk = state.ticketFilters.status === "all" || ticket.status === state.ticketFilters.status;
     const priorityOk = state.ticketFilters.priority === "all" || ticket.priority === state.ticketFilters.priority;
-    return groupOk && statusOk && priorityOk;
+    const assigneeOk = state.ticketFilters.assignee === "all" || (state.ticketFilters.assignee === "unassigned" ? !ticket.assignedTo : ticket.assignedTo === state.ticketFilters.assignee);
+    const query = state.ticketFilters.query.trim().toLocaleLowerCase("pt-BR");
+    const searchOk = !query || [ticket.code, ticket.title, ticket.groupName, ticket.requesterName, ticket.assignedToName, ticket.assetName]
+      .filter(Boolean)
+      .some((value) => String(value).toLocaleLowerCase("pt-BR").includes(query));
+    const quick = state.ticketFilters.quick;
+    const quickOk = quick === "all"
+      || (quick === "attention" && !["resolved", "closed"].includes(ticket.status))
+      || (quick === "overdue" && ticketSlaState(ticket).tone === "danger")
+      || (quick === "unassigned" && !ticket.assignedTo);
+    return groupOk && statusOk && priorityOk && assigneeOk && searchOk && quickOk;
   });
 }
 
@@ -3998,13 +4154,69 @@ function selectedTicket() {
   return (state.tickets || []).find((ticket) => ticket.id === state.selectedTicketId) || null;
 }
 
-function selectTicket(ticketId) {
+function ticketReference(ticket) {
+  if (ticket?.reference) return String(ticket.reference);
+  const explicitNumber = Number(ticket?.ticketNumber);
+  if (Number.isInteger(explicitNumber) && explicitNumber > 0) return `#${String(explicitNumber).padStart(4, "0")}`;
+  const match = String(ticket?.code || "").match(/(\d+)\s*$/);
+  return match ? `#${String(Number(match[1])).padStart(4, "0")}` : String(ticket?.code || "Chamado");
+}
+
+function ticketRouteReference() {
+  const normalized = window.location.pathname.length > 1 ? window.location.pathname.replace(/\/+$/, "") : window.location.pathname;
+  if (normalized !== "/suporte/chamado") return "";
+  return decodeURIComponent(window.location.hash || "").replace(/^#/, "").trim();
+}
+
+function ticketRoute(ticket) {
+  return `/suporte/chamado${ticketReference(ticket)}`;
+}
+
+function ticketMatchesReference(ticket, reference) {
+  const normalized = String(reference || "").replace(/^#/, "").replace(/^0+/, "") || "0";
+  const number = String(ticket.ticketNumber || "").replace(/^0+/, "") || "0";
+  return number === normalized || ticketReference(ticket).replace(/^#/, "").replace(/^0+/, "") === normalized;
+}
+
+function restoreTicketFromLocation() {
+  const reference = ticketRouteReference();
+  if (!reference) return;
+  const ticket = (state.tickets || []).find((item) => ticketMatchesReference(item, reference));
+  if (!ticket) return;
+  state.selectedTicketId = ticket.id;
+  state.clientSupportMode = "detail";
+}
+
+function openTicketQueue({ push = true } = {}) {
+  state.selectedTicketId = null;
+  clearTicketUpdateDraft();
+  state.clientSupportMode = "list";
+  if (push && (window.location.pathname !== "/suporte" || window.location.hash)) {
+    window.history.pushState({}, "", "/suporte");
+  }
+  if (isAdmin()) renderTickets();
+  else renderClientSupport();
+}
+
+function selectTicket(ticketId, { push = true } = {}) {
+  if (state.selectedTicketId !== ticketId) clearTicketUpdateDraft();
   state.selectedTicketId = ticketId;
-  renderTickets();
+  state.clientSupportMode = "detail";
+  const ticket = selectedTicket();
+  if (ticket && push && window.location.href !== new URL(ticketRoute(ticket), window.location.origin).href) {
+    window.history.pushState({}, "", ticketRoute(ticket));
+  }
+  if (isAdmin()) renderTickets();
+  else renderClientSupport();
 }
 
 function renderTickets() {
+  if (!isAdmin()) {
+    renderClientSupport();
+    return;
+  }
   if (!els.ticketsList) return;
+  const previousScrollTop = els.ticketsList.scrollTop;
   const tickets = [...filteredTickets()].sort((left, right) => new Date(right.updatedAt || 0) - new Date(left.updatedAt || 0));
   if (els.ticketCount) {
     els.ticketCount.textContent = `${state.tickets.length} ${state.tickets.length === 1 ? "chamado" : "chamados"}`;
@@ -4017,123 +4229,343 @@ function renderTickets() {
     ? tickets
         .map((ticket) => {
           const selected = ticket.id === state.selectedTicketId ? "selected" : "";
+          const sla = ticketSlaState(ticket);
           return `
-            <button class="network-link-row ${selected}" type="button" data-ticket-id="${escapeHtml(ticket.id)}">
-              <span class="status-dot ${ticketStatusTone(ticket.status)}"></span>
-              <div>
+            <button class="ticket-table-row ${selected}" type="button" data-ticket-id="${escapeHtml(ticket.id)}">
+              <span class="status-dot ${ticketStatusTone(ticket.status)}" aria-hidden="true"></span>
+              <div class="ticket-table-main">
                 <strong>${escapeHtml(ticket.title)}</strong>
-                <small>${escapeHtml(ticket.groupName || "Sem empresa")}</small>
+                <small>${escapeHtml(ticketReference(ticket))} · ${escapeHtml(ticket.requesterName || "Sem solicitante")}</small>
               </div>
+              <span class="ticket-table-company">${escapeHtml(ticket.groupName || "Sem empresa")}</span>
+              <span class="ticket-table-assignee">${escapeHtml(ticket.assignedToName || "Sem responsavel")}</span>
               <span class="ticket-priority-badge ${escapeHtml(ticket.priority)}">${ticketPriorityLabel(ticket.priority)}</span>
               <span class="status-badge ${ticketStatusTone(ticket.status)}">${ticketStatusLabel(ticket.status)}</span>
+              <span class="ticket-sla-cell ${sla.tone}" title="${escapeHtml(sla.detail)}">
+                <span class="ticket-sla ${sla.tone}">${sla.label}</span>
+                ${sla.hasSla ? `<span class="ticket-sla-progress" aria-label="${escapeHtml(sla.detail)}"><i style="width:${sla.progress}%"></i></span><small>${escapeHtml(sla.detail)}</small>` : ""}
+              </span>
             </button>
           `;
         })
         .join("")
     : `<div class="empty-list">Nenhum chamado encontrado para os filtros atuais.</div>`;
 
-  renderTicketDetail(selectedTicket());
+  els.ticketsList.scrollTop = previousScrollTop;
+
+  const ticket = selectedTicket();
+  if (els.ticketQueueScreen) els.ticketQueueScreen.hidden = Boolean(ticket);
+  if (els.ticketWorkspaceScreen) els.ticketWorkspaceScreen.hidden = !ticket;
+  renderTicketWorkspace(ticket);
+  renderTicketSummary(ticket);
 }
 
-function renderTicketDetail(ticket) {
-  if (!els.ticketDetailPanel) return;
-  if (!ticket) {
-    els.ticketDetailPanel.innerHTML = `
-      <div class="empty-state compact-empty">
-        <strong>Nenhum chamado selecionado</strong>
-        <span>Selecione um chamado para ver detalhes, historico e adicionar atualizacoes.</span>
+function clientSupportGroups() {
+  return sortedByAlpha(state.groups || [], (group) => group.name);
+}
+
+function clientSupportEligibleGroups() {
+  return clientSupportGroups().filter((group) => Array.isArray(group.contracts) && group.contracts.includes("support"));
+}
+
+function clientTicketListHtml() {
+  const tickets = [...(state.tickets || [])].sort((a, b) => new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0));
+  if (!tickets.length) {
+    return `<div class="client-support-empty"><strong>Nenhum chamado aberto</strong><span>Quando precisar de ajuda, abra uma solicitacao por aqui.</span></div>`;
+  }
+  return `<div class="client-ticket-list">${tickets.map((ticket) => `
+    <button class="client-ticket-row" type="button" data-client-ticket="${escapeHtml(ticket.id)}">
+      <span class="status-dot ${ticketStatusTone(ticket.status)}" aria-hidden="true"></span>
+      <span class="client-ticket-copy"><strong>${escapeHtml(ticket.title)}</strong><small>${escapeHtml(ticketReference(ticket))} · ${escapeHtml(ticket.groupName || "Empresa")} · Atualizado ${formatDate(ticket.updatedAt)}</small></span>
+      <span class="ticket-priority-badge ${escapeHtml(ticket.priority)}">${ticketPriorityLabel(ticket.priority)}</span>
+      <span class="status-badge ${ticketStatusTone(ticket.status)}">${ticketStatusLabel(ticket.status)}</span>
+      <span class="client-ticket-arrow" aria-hidden="true">›</span>
+    </button>
+  `).join("")}</div>`;
+}
+
+function clientTicketDetailHtml(ticket) {
+  if (!ticket) return clientTicketListHtml();
+  const closed = ["resolved", "closed"].includes(ticket.status);
+  const updates = [...(ticket.updates || [])].sort((a, b) => new Date(a.createdAt || 0) - new Date(b.createdAt || 0));
+  return `
+    <div class="client-ticket-detail">
+      <button class="ghost-button compact client-back-button" type="button" data-client-action="back">← Voltar aos chamados</button>
+      <header class="client-ticket-detail-header">
+        <div><span>${escapeHtml(ticketReference(ticket))}</span><h3>${escapeHtml(ticket.title)}</h3><p>${escapeHtml(ticket.groupName || "Empresa")} · ${escapeHtml(ticket.location || "Localizacao nao informada")}</p></div>
+        <div class="ticket-detail-badges"><span class="ticket-priority-badge ${escapeHtml(ticket.priority)}">${ticketPriorityLabel(ticket.priority)}</span><span class="status-badge ${ticketStatusTone(ticket.status)}">${ticketStatusLabel(ticket.status)}</span></div>
+      </header>
+      <div class="client-ticket-summary">
+        <div><span>Categoria</span><strong>${ticketCategoryLabel(ticket.category)}</strong></div>
+        <div><span>Aberto em</span><strong>${formatDate(ticket.createdAt)}</strong></div>
+        <div><span>Responsavel</span><strong>${escapeHtml(ticket.assignedToName || "Aguardando atribuicao")}</strong></div>
       </div>
-    `;
+      <article class="client-ticket-description"><span>Solicitacao</span><p>${escapeHtml(ticket.description || "Sem descricao.")}</p></article>
+      ${(ticket.attachments || []).length ? `<div class="client-attachments"><span>Anexos</span>${ticket.attachments.map((file) => `<a class="ghost-button compact" href="/api/tickets/${encodeURIComponent(ticket.id)}/attachments/${encodeURIComponent(file.id)}">${escapeHtml(file.name)}</a>`).join("")}</div>` : ""}
+      <section class="client-conversation"><div class="panel-title compact-title"><h3>Conversa</h3><span>${updates.length} registros</span></div>
+        <div class="client-message-list">${updates.length ? updates.map((update) => `
+          <article class="client-message ${update.authorUserId === state.currentUser?.id ? "is-customer" : "is-support"}">
+            <header><strong>${escapeHtml(update.authorName || "Equipe de suporte")}</strong><span>${formatDate(update.createdAt)}</span></header>
+            <p>${escapeHtml(update.message || ticketUpdateTitle(update))}</p>
+          </article>`).join("") : `<div class="empty-list">Aguardando a primeira atualizacao.</div>`}</div>
+      </section>
+      ${closed ? `<div class="client-closed-note">Este chamado foi encerrado. O historico permanece disponivel para consulta.</div>` : `
+        <form class="client-reply-form" id="clientReplyForm" data-ticket-id="${escapeHtml(ticket.id)}">
+          <label>Adicionar mensagem<textarea name="message" rows="4" required placeholder="Escreva uma nova informacao para a equipe de suporte"></textarea></label>
+          <div class="dialog-actions"><button class="ghost-button" type="button" data-client-action="close" data-ticket-id="${escapeHtml(ticket.id)}">Nao preciso mais de ajuda</button><button class="primary-button" type="submit">Enviar mensagem</button></div>
+        </form>`}
+    </div>`;
+}
+
+function clientTicketFormHtml() {
+  const groups = clientSupportEligibleGroups();
+  if (!groups.length) return `<div class="client-contract-notice"><strong>Servico de suporte nao contratado</strong><p>Nenhuma das empresas vinculadas ao seu acesso possui contrato de suporte ativo.</p><button class="ghost-button" type="button" data-client-action="back">Voltar</button></div>`;
+  return `
+    <form class="client-ticket-form" id="clientTicketForm">
+      <div class="client-form-heading"><div><p class="eyebrow">Nova solicitacao</p><h3>Abrir chamado</h3><span>Descreva o que esta acontecendo. Quanto mais contexto, mais rapido conseguimos ajudar.</span></div><button class="ghost-button compact" type="button" data-client-action="back">Cancelar</button></div>
+      <div class="form-grid"><label>Empresa<select name="groupId" required>${groups.map((group) => `<option value="${escapeHtml(group.id)}">${escapeHtml(group.name)}</option>`).join("")}</select></label><label>Localizacao<input name="location" required maxlength="180" placeholder="Ex: Escritorio, recepcao ou filial" /></label></div>
+      <label>Titulo<input name="title" required maxlength="160" placeholder="Resuma o problema em uma frase" /></label>
+      <div class="form-grid"><label>Categoria<select name="category"><option value="incident">Incidente</option><option value="request">Solicitacao</option><option value="access">Acesso</option><option value="backup">Backup</option><option value="network">Rede</option><option value="server">Servidor</option><option value="other">Outro</option></select></label><label>Prioridade<select name="priority"><option value="low">Baixa</option><option value="normal" selected>Normal</option><option value="high">Alta</option><option value="critical">Critica</option></select></label></div>
+      <label>Descricao<textarea name="description" rows="7" required maxlength="5000" placeholder="Informe sintomas, quando comecou e quem esta sendo afetado"></textarea></label>
+      <label class="client-file-field">Anexos opcionais<input name="attachments" type="file" multiple accept="image/*,.pdf,.txt,.log" /><small>Ate 3 arquivos de 2 MB cada.</small></label>
+      <div class="form-error" data-client-form-error role="alert"></div><div class="dialog-actions"><button class="primary-button" type="submit">Enviar chamado</button></div>
+    </form>`;
+}
+
+function renderClientSupport() {
+  if (!els.clientSupportContent || isAdmin()) return;
+  const groups = clientSupportGroups();
+  const eligible = clientSupportEligibleGroups();
+  if (els.clientNewTicket) els.clientNewTicket.disabled = eligible.length === 0;
+  if (els.clientCompanyContext) {
+    els.clientCompanyContext.innerHTML = groups.map((group) => {
+      const active = eligible.some((item) => item.id === group.id);
+      return `<div><span class="status-dot ${active ? "online" : "unknown"}"></span><span><strong>${escapeHtml(group.name)}</strong><small>${active ? "Suporte contratado" : "Suporte nao contratado"}</small></span></div>`;
+    }).join("") || `<div><strong>Nenhuma empresa vinculada</strong></div>`;
+  }
+  if (state.clientSupportMode === "new") els.clientSupportContent.innerHTML = clientTicketFormHtml();
+  else if (state.clientSupportMode === "detail") els.clientSupportContent.innerHTML = clientTicketDetailHtml(selectedTicket());
+  else els.clientSupportContent.innerHTML = `<section class="client-ticket-index"><div class="panel-title"><div><h3>Meus chamados</h3><span>${state.tickets.length} ${state.tickets.length === 1 ? "solicitacao" : "solicitacoes"}</span></div></div>${clientTicketListHtml()}</section>`;
+}
+
+function formatTicketDuration(milliseconds) {
+  if (!Number.isFinite(milliseconds) || milliseconds < 0) return "-";
+  const minutes = Math.max(0, Math.floor(milliseconds / 60_000));
+  if (minutes < 60) return `${minutes} min`;
+  const hours = Math.floor(minutes / 60);
+  const remainingMinutes = minutes % 60;
+  if (hours < 24) return `${hours}h ${remainingMinutes}min`;
+  const days = Math.floor(hours / 24);
+  return `${days}d ${hours % 24}h`;
+}
+
+function ticketDurationBetween(start, end) {
+  const startAt = new Date(start || 0).getTime();
+  const endAt = new Date(end || 0).getTime();
+  if (!startAt || !endAt) return null;
+  return Math.max(0, endAt - startAt);
+}
+
+function ticketUpdateDraftFor(ticketId) {
+  const draft = state.ticketUpdateDraft;
+  if (draft?.ticketId === ticketId) return draft;
+  return {
+    ticketId,
+    open: false,
+    message: "",
+    kind: "comment",
+    newStatus: "",
+    internal: false
+  };
+}
+
+function captureTicketUpdateDraft() {
+  const form = els.ticketWorkspacePanel?.querySelector("#ticketUpdateForm");
+  if (!form) return null;
+  const ticketId = form.dataset.ticketId;
+  if (!ticketId) return null;
+  const previous = ticketUpdateDraftFor(ticketId);
+  state.ticketUpdateDraft = {
+    ticketId,
+    open: true,
+    message: form.querySelector("#ticketUpdateMessage")?.value || "",
+    kind: form.querySelector("#ticketUpdateKind")?.value || previous.kind || "comment",
+    newStatus: form.querySelector("#ticketUpdateStatus")?.value || "",
+    internal: Boolean(form.querySelector("#ticketUpdateInternal")?.checked)
+  };
+  return state.ticketUpdateDraft;
+}
+
+function clearTicketUpdateDraft(ticketId = null) {
+  if (!ticketId || state.ticketUpdateDraft?.ticketId === ticketId) state.ticketUpdateDraft = null;
+}
+
+function isEditingTicketUpdate(ticketId) {
+  const form = els.ticketWorkspacePanel?.querySelector("#ticketUpdateForm");
+  return Boolean(
+    state.ticketUpdateDraft?.open &&
+      state.ticketUpdateDraft.ticketId === ticketId &&
+    form &&
+      form.dataset.ticketId === ticketId &&
+      form.contains(document.activeElement)
+  );
+}
+
+function renderTicketWorkspace(ticket) {
+  if (!els.ticketWorkspacePanel) return;
+  if (!ticket) {
+    els.ticketWorkspacePanel.innerHTML = "";
     return;
   }
 
-  const updates = [...(ticket.updates || [])].sort((left, right) => new Date(right.createdAt || 0) - new Date(left.createdAt || 0));
+  if (isEditingTicketUpdate(ticket.id)) {
+    captureTicketUpdateDraft();
+    return;
+  }
 
-  els.ticketDetailPanel.innerHTML = `
-    <div class="network-detail-header">
-      <div>
-        <h3>${escapeHtml(ticket.title)}</h3>
-        <span>${escapeHtml(ticket.groupName || "Sem empresa")}</span>
+  const updates = [...(ticket.updates || [])].sort((left, right) => new Date(left.createdAt || 0) - new Date(right.createdAt || 0));
+  const sla = ticketSlaState(ticket);
+  const attachments = ticket.attachments || [];
+  const updateDraft = ticketUpdateDraftFor(ticket.id);
+  const isClosed = ticket.status === "closed";
+
+  els.ticketWorkspacePanel.innerHTML = `
+    <header class="ticket-workspace-header">
+      <button class="icon-button ticket-back-button" type="button" data-ticket-action="back" title="Voltar para a fila" aria-label="Voltar para a fila">←</button>
+      <div class="ticket-workspace-heading">
+        <span>${escapeHtml(ticketReference(ticket))} · ${escapeHtml(ticket.groupName || "Sem empresa")}</span>
+        <h2>${escapeHtml(ticket.title)}</h2>
       </div>
-      <span class="status-badge ${ticketStatusTone(ticket.status)}">${ticketStatusLabel(ticket.status)}</span>
-    </div>
-
-    <article class="profile-section">
-      <div class="panel-title compact-title">
-        <h3>Detalhes</h3>
+      <div class="ticket-detail-badges">
         <span class="ticket-priority-badge ${escapeHtml(ticket.priority)}">${ticketPriorityLabel(ticket.priority)}</span>
+        <span class="ticket-sla ${sla.tone}">${sla.label}</span>
+        <span class="status-badge ${ticketStatusTone(ticket.status)}">${ticketStatusLabel(ticket.status)}</span>
       </div>
-      <div class="profile-stat-grid">
-        <div class="detail-stat"><span>Solicitante</span><strong>${escapeHtml(ticket.requesterName || "-")}</strong></div>
-        <div class="detail-stat"><span>Responsavel</span><strong>${escapeHtml(ticket.assignedToName || "Sem responsavel")}</strong></div>
-        <div class="detail-stat"><span>Criado em</span><strong>${formatDate(ticket.createdAt)}</strong></div>
-        <div class="detail-stat"><span>Fechado em</span><strong>${ticket.closedAt ? formatDate(ticket.closedAt) : "-"}</strong></div>
-      </div>
-      ${ticket.description ? `<p class="ticket-description">${escapeHtml(ticket.description)}</p>` : ""}
-      <div class="dialog-actions">
-        <button class="ghost-button compact" type="button" data-ticket-action="edit" data-id="${escapeHtml(ticket.id)}">Editar</button>
-        <button class="danger-button compact" type="button" data-ticket-action="delete" data-id="${escapeHtml(ticket.id)}">Excluir</button>
-      </div>
-    </article>
+    </header>
 
-    <article class="profile-section">
+    <section class="ticket-workspace-section ticket-request-section">
       <div class="panel-title compact-title">
-        <h3>Historico de atendimento</h3>
+        <div><p class="eyebrow">Solicitacao</p><h3>Informacoes do chamado</h3></div>
+        <div class="panel-title-actions">
+          <button class="ghost-button compact" type="button" data-ticket-action="edit" data-id="${escapeHtml(ticket.id)}">Editar</button>
+          <button class="danger-button compact" type="button" data-ticket-action="delete" data-id="${escapeHtml(ticket.id)}">Excluir</button>
+        </div>
+      </div>
+      <div class="ticket-overview-grid">
+        <div><span>Solicitante</span><strong>${escapeHtml(ticket.requesterName || "Nao informado")}</strong></div>
+        <div><span>Responsavel</span><strong>${escapeHtml(ticket.assignedToName || "Sem responsavel")}</strong></div>
+        <div><span>Categoria</span><strong>${ticketCategoryLabel(ticket.category)}</strong></div>
+        <div><span>Impacto</span><strong>${ticketImpactLabel(ticket.impact)}</strong></div>
+        <div><span>Localizacao</span><strong>${escapeHtml(ticket.location || "Nao informada")}</strong></div>
+        <div><span>Ativo vinculado</span><strong>${escapeHtml(ticket.assetName || "Nao vinculado")}</strong></div>
+      </div>
+      <div class="ticket-description-block">
+        <span>Descricao</span>
+        <p>${escapeHtml(ticket.description || "Nenhuma descricao informada.")}</p>
+      </div>
+      ${attachments.length ? `<div class="ticket-attachments"><span>Anexos</span><div>${attachments.map((file) => `<a class="ghost-button compact" href="/api/tickets/${encodeURIComponent(ticket.id)}/attachments/${encodeURIComponent(file.id)}">${escapeHtml(file.name)}</a>`).join("")}</div></div>` : ""}
+    </section>
+
+    <section class="ticket-workspace-section ticket-history-section">
+      <div class="panel-title compact-title">
+        <div><p class="eyebrow">Atendimento</p><h3>Historico e comunicacao</h3></div>
         <span>${updates.length} ${updates.length === 1 ? "registro" : "registros"}</span>
       </div>
-      <div class="mini-history">
-        ${
-          updates.length
-            ? updates
-                .map(
-                  (update) => `
-                  <div class="timeline-item">
-                    <span class="status-pulse ${update.kind === "status_change" ? ticketStatusTone(update.toStatus) : "online"}"></span>
-                    <div>
-                      <strong>${escapeHtml(ticketUpdateTitle(update))}</strong>
-                      ${update.message ? `<small>${escapeHtml(update.message)}</small>` : ""}
-                      <small>${escapeHtml(update.authorName || "Sistema")} · ${formatDate(update.createdAt)}</small>
-                    </div>
-                  </div>
-                `
-                )
-                .join("")
-            : `<div class="empty-list">Nenhuma atualizacao registrada ainda.</div>`
-        }
+      <div class="ticket-conversation-list">
+        ${updates.length ? updates.map((update) => `
+          <article class="ticket-conversation-item ${update.visibility === "internal" ? "is-internal" : ""}">
+            <span class="status-pulse ${update.kind === "status_change" ? ticketStatusTone(update.toStatus) : "online"}" aria-hidden="true"></span>
+            <div>
+              <header><strong>${escapeHtml(ticketUpdateTitle(update))}</strong>${update.visibility === "internal" ? `<span class="ticket-internal-badge">Nota interna</span>` : ""}<time>${formatDate(update.createdAt)}</time></header>
+              ${update.message ? `<p>${escapeHtml(update.message)}</p>` : ""}
+              <small>${escapeHtml(update.authorName || "Sistema")}</small>
+            </div>
+          </article>`).join("") : `<div class="empty-list">Nenhuma atualizacao registrada ainda.</div>`}
       </div>
-    </article>
+    </section>
 
-    <article class="profile-section">
-      <div class="panel-title compact-title">
-        <h3>Adicionar atualizacao</h3>
+    <section class="ticket-workspace-section ticket-reply-section ${isClosed ? "is-closed" : ""}">
+      <div class="ticket-update-trigger">
+        <div><p class="eyebrow">${isClosed ? "Atendimento encerrado" : "Nova interacao"}</p><h3>${isClosed ? "Chamado fechado" : updateDraft.open ? "Adicionar atualizacao" : "Registrar atendimento"}</h3></div>
+        ${isClosed ? `<span class="ticket-sla muted">Reabra o chamado para atualizar</span>` : `<button class="${updateDraft.open ? "ghost-button" : "primary-button"} compact" type="button" data-ticket-action="toggle-update" data-id="${escapeHtml(ticket.id)}">${updateDraft.open ? "Cancelar" : "Adicionar atualizacao"}</button>`}
       </div>
-      <form id="ticketUpdateForm" data-ticket-id="${escapeHtml(ticket.id)}">
-        <label>
-          Tipo
-          <select id="ticketUpdateKind">
-            <option value="comment">Comentario</option>
-            <option value="resolution">Resolucao</option>
-          </select>
-        </label>
-        <label>
-          Mensagem
-          <textarea id="ticketUpdateMessage" rows="3" placeholder="Descreva o atendimento ou a resolucao" required></textarea>
-        </label>
-        <label>
-          Mudar status para
-          <select id="ticketUpdateStatus">
-            <option value="">Manter status atual</option>
-            <option value="open" ${ticket.status === "open" ? "disabled" : ""}>Aberto</option>
-            <option value="in_progress" ${ticket.status === "in_progress" ? "disabled" : ""}>Em andamento</option>
-            <option value="resolved" ${ticket.status === "resolved" ? "disabled" : ""}>Resolvido</option>
-            <option value="closed" ${ticket.status === "closed" ? "disabled" : ""}>Fechado</option>
-          </select>
-        </label>
-        <div class="dialog-actions">
-          <button class="primary-button compact" type="submit">Adicionar</button>
-        </div>
-      </form>
-    </article>
+      ${isClosed ? `<p class="ticket-closed-update-note">Novas atualizacoes estao bloqueadas. Altere o status para aberto ou em andamento para retomar o atendimento.</p>` : updateDraft.open ? `
+        <form class="ticket-update-form" id="ticketUpdateForm" data-ticket-id="${escapeHtml(ticket.id)}">
+          <label class="ticket-update-message">
+            Mensagem
+            <textarea id="ticketUpdateMessage" rows="4" placeholder="Descreva o atendimento, a orientacao ou a resolucao" required>${escapeHtml(updateDraft.message)}</textarea>
+          </label>
+          <div class="ticket-update-options">
+            <label>
+              Tipo
+              <select id="ticketUpdateKind">
+                <option value="comment" ${updateDraft.kind === "comment" ? "selected" : ""}>Comentario</option>
+                <option value="resolution" ${updateDraft.kind === "resolution" ? "selected" : ""}>Resolucao</option>
+              </select>
+            </label>
+            <label>
+              Mudar status para
+              <select id="ticketUpdateStatus">
+                <option value="" ${!updateDraft.newStatus ? "selected" : ""}>Manter status atual</option>
+                <option value="open" ${updateDraft.newStatus === "open" ? "selected" : ""} ${ticket.status === "open" ? "disabled" : ""}>Aberto</option>
+                <option value="in_progress" ${updateDraft.newStatus === "in_progress" ? "selected" : ""} ${ticket.status === "in_progress" ? "disabled" : ""}>Em andamento</option>
+                <option value="waiting_customer" ${updateDraft.newStatus === "waiting_customer" ? "selected" : ""} ${ticket.status === "waiting_customer" ? "disabled" : ""}>Aguardando cliente</option>
+                <option value="waiting_third_party" ${updateDraft.newStatus === "waiting_third_party" ? "selected" : ""} ${ticket.status === "waiting_third_party" ? "disabled" : ""}>Aguardando terceiro</option>
+                <option value="resolved" ${updateDraft.newStatus === "resolved" ? "selected" : ""} ${ticket.status === "resolved" ? "disabled" : ""}>Resolvido</option>
+                <option value="closed" ${updateDraft.newStatus === "closed" ? "selected" : ""} ${ticket.status === "closed" ? "disabled" : ""}>Fechado</option>
+              </select>
+            </label>
+          </div>
+          <div class="ticket-update-footer">
+            <label class="ticket-internal-toggle">
+              <input id="ticketUpdateInternal" type="checkbox" ${updateDraft.internal ? "checked" : ""} />
+              <span>Nota interna <small>nao aparece para o cliente</small></span>
+            </label>
+            <div class="dialog-actions"><button class="ghost-button compact" type="button" data-ticket-action="toggle-update" data-id="${escapeHtml(ticket.id)}">Cancelar</button><button class="primary-button compact" type="submit">Salvar atualizacao</button></div>
+          </div>
+        </form>
+      ` : ""}
+    </section>
+  `;
+}
+
+function renderTicketSummary(ticket) {
+  if (!els.ticketDetailPanel) return;
+  if (!ticket) {
+    els.ticketDetailPanel.innerHTML = "";
+    return;
+  }
+
+  const closed = ["resolved", "closed"].includes(ticket.status);
+  const totalDuration = ticketDurationBetween(ticket.createdAt, closed ? ticket.closedAt || ticket.updatedAt : new Date().toISOString());
+  const firstResponseDuration = ticketDurationBetween(ticket.createdAt, ticket.firstRespondedAt);
+  const resolutionDuration = closed ? ticketDurationBetween(ticket.createdAt, ticket.closedAt || ticket.updatedAt) : null;
+
+  els.ticketDetailPanel.innerHTML = `
+    <div class="ticket-summary-heading">
+      <p class="eyebrow">Resumo operacional</p>
+      <h3>${closed ? "Atendimento concluido" : "Chamado em andamento"}</h3>
+      <span>${escapeHtml(ticketReference(ticket))}</span>
+    </div>
+
+    <div class="ticket-time-summary">
+      <div class="ticket-time-primary">
+        <span>${closed ? "Tempo total" : "Aberto ha"}</span>
+        <strong>${formatTicketDuration(totalDuration)}</strong>
+        <small>${formatDate(ticket.createdAt)}</small>
+      </div>
+      <div><span>Primeira resposta</span><strong>${firstResponseDuration == null ? "Aguardando" : formatTicketDuration(firstResponseDuration)}</strong></div>
+      <div><span>Resolucao</span><strong>${resolutionDuration == null ? "Em andamento" : formatTicketDuration(resolutionDuration)}</strong></div>
+    </div>
+
+    <section class="ticket-summary-section">
+      <div><span>Empresa</span><strong>${escapeHtml(ticket.groupName || "Sem empresa")}</strong></div>
+      <div><span>Solicitante</span><strong>${escapeHtml(ticket.requesterName || "Nao informado")}</strong></div>
+      <div><span>Responsavel</span><strong>${escapeHtml(ticket.assignedToName || "Sem responsavel")}</strong></div>
+      <div><span>Prioridade</span><strong>${ticketPriorityLabel(ticket.priority)}</strong></div>
+      <div><span>Categoria</span><strong>${ticketCategoryLabel(ticket.category)}</strong></div>
+      <div><span>Prazo de solucao</span><strong>${ticket.resolutionDueAt ? formatDate(ticket.resolutionDueAt) : "Nao definido"}</strong></div>
+    </section>
   `;
 }
 
@@ -5220,39 +5652,106 @@ function daysUntilDate(dateStr) {
   return Math.round((end - todayStart) / 86400000);
 }
 
-// Uma tag por contrato com data, sempre mostrando os dias restantes (nao so
-// perto do vencimento) — cor muda conforme a proximidade: normal enquanto
-// falta bastante, aviso dentro da janela de alerta (10 dias), vencido em vermelho.
+function expiryNotifyDays() {
+  const value = Number(state.settings?.expiryNotifyDays ?? 10);
+  return Number.isFinite(value) ? Math.min(120, Math.max(1, Math.round(value))) : 10;
+}
+
+function groupDatedEntries(group) {
+  return [
+    ...(Array.isArray(group.serviceContracts) ? group.serviceContracts : []).map((entry) => ({ ...entry, type: "contract", label: entry.label || "Contrato" })),
+    ...(Array.isArray(group.products) ? group.products : []).map((entry) => ({ ...entry, type: "product", label: entry.name || "Produto" }))
+  ];
+}
+
+function expirationTag(entry) {
+  const daysLeft = daysUntilDate(entry.endDate);
+  if (daysLeft === null) return "";
+  const tone = daysLeft < 0 ? "expired" : daysLeft <= expiryNotifyDays() ? "expiring" : "";
+  const noun = entry.type === "product" ? "Produto" : "Contrato";
+  const suffix =
+    daysLeft < 0
+      ? `venceu ha ${Math.abs(daysLeft)} dia(s)`
+      : daysLeft === 0
+      ? "vence hoje"
+      : `${daysLeft} dia(s) restantes`;
+  return `<span class="company-contract-tag ${entry.type} ${tone}" title="${escapeHtml(`${noun}: ${formatDateOnly(entry.endDate)}`)}">${escapeHtml(`${entry.label}: ${suffix}`)}</span>`;
+}
+
 function groupContractTags(group) {
-  const contracts = Array.isArray(group.serviceContracts) ? group.serviceContracts : [];
-  return contracts
-    .map((contract) => {
-      const daysLeft = daysUntilDate(contract.endDate);
-      if (daysLeft === null) return "";
-      const tone = daysLeft < 0 ? "expired" : daysLeft <= 10 ? "expiring" : "";
-      const label =
-        daysLeft < 0
-          ? `${contract.label}: venceu ha ${Math.abs(daysLeft)} dia(s)`
-          : daysLeft === 0
-          ? `${contract.label}: vence hoje`
-          : `${contract.label}: ${daysLeft} dia(s) restantes`;
-      return `<span class="company-contract-tag ${tone}" title="${escapeHtml(formatDateOnly(contract.endDate))}">${escapeHtml(label)}</span>`;
-    })
-    .join("");
+  return groupDatedEntries(group).map(expirationTag).join("");
+}
+
+function groupHasNearExpiry(group) {
+  return groupDatedEntries(group).some((entry) => {
+    const daysLeft = daysUntilDate(entry.endDate);
+    return daysLeft !== null && daysLeft <= expiryNotifyDays();
+  });
+}
+
+function groupsForDirectory() {
+  const query = state.groupSearchQuery.trim().toLocaleLowerCase("pt-BR");
+  return sortedByAlpha(state.groups, groupSortLabel).filter((group) => {
+    const searchable = [group.name, group.description, group.document, group.cnpj, group.cpf].filter(Boolean).join(" ").toLocaleLowerCase("pt-BR");
+    return (!query || searchable.includes(query)) && (!state.groupExpiringOnly || groupHasNearExpiry(group));
+  });
+}
+
+function renderGroupManagementView() {
+  const showCatalog = state.groupManagementView === "catalog";
+  if (els.groupsDirectoryPanel) els.groupsDirectoryPanel.hidden = showCatalog;
+  if (els.productCatalogPanel) els.productCatalogPanel.hidden = !showCatalog;
+  document.querySelectorAll("[data-group-management-view]").forEach((button) => {
+    const active = button.dataset.groupManagementView === state.groupManagementView;
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-selected", active ? "true" : "false");
+  });
+}
+
+function resetProductCatalogForm() {
+  if (els.productCatalogForm) els.productCatalogForm.reset();
+  if (els.productCatalogId) els.productCatalogId.value = "";
+  if (els.saveProductCatalog) els.saveProductCatalog.textContent = "Adicionar produto";
+  if (els.cancelProductCatalogEdit) els.cancelProductCatalogEdit.hidden = true;
+}
+
+function renderProductCatalog() {
+  if (!els.productCatalogList) return;
+  const products = sortedByAlpha(state.productCatalog || [], (product) => product.name);
+  if (els.productCatalogCount) els.productCatalogCount.textContent = `${products.length} ${products.length === 1 ? "produto" : "produtos"}`;
+  els.productCatalogList.innerHTML = products.length
+    ? products.map((product) => `
+        <article class="product-catalog-row">
+          <div><strong>${escapeHtml(product.name)}</strong><small>Disponivel no cadastro de empresas</small></div>
+          <div class="product-catalog-actions">
+            <button class="ghost-button compact" type="button" data-product-catalog-action="edit" data-id="${escapeHtml(product.id)}">Editar</button>
+            <button class="danger-button compact" type="button" data-product-catalog-action="delete" data-id="${escapeHtml(product.id)}">Excluir</button>
+          </div>
+        </article>`).join("")
+    : `<div class="empty-list">Nenhum produto no catalogo. O primeiro produto cadastrado em uma empresa tambem aparecera aqui.</div>`;
 }
 
 function renderGroups() {
   if (!els.groupsList) return;
-  els.groupCount.textContent = `${state.groups.length} ${state.groups.length === 1 ? "empresa" : "empresas"}`;
+  const groups = groupsForDirectory();
+  const suffix = groups.length === state.groups.length ? "" : ` de ${state.groups.length}`;
+  els.groupCount.textContent = `${groups.length}${suffix} ${state.groups.length === 1 ? "empresa" : "empresas"}`;
+  if (els.toggleGroupExpiryFilter) {
+    els.toggleGroupExpiryFilter.classList.toggle("active", state.groupExpiringOnly);
+    els.toggleGroupExpiryFilter.setAttribute("aria-pressed", state.groupExpiringOnly ? "true" : "false");
+    els.toggleGroupExpiryFilter.textContent = state.groupExpiringOnly ? "Vencimentos proximos: ativo" : "Vencimentos proximos";
+  }
+  renderGroupManagementView();
+  renderProductCatalog();
 
-  if (!state.groups.length) {
+  if (!groups.length) {
     els.groupsList.innerHTML = `
-      <div class="empty-list">Nenhuma empresa cadastrada. Crie a primeira para associar servidores.</div>
+      <div class="empty-list">${state.groups.length ? "Nenhuma empresa corresponde aos filtros atuais." : "Nenhuma empresa cadastrada. Crie a primeira para associar servidores."}</div>
     `;
     return;
   }
 
-  els.groupsList.innerHTML = sortedByAlpha(state.groups, groupSortLabel)
+  els.groupsList.innerHTML = groups
     .map((group) => {
       const servers = state.servers.filter((server) => server.groupId === group.id);
       const links = state.networkLinks.filter((link) => link.groupId === group.id && link.featured !== false);
@@ -5373,6 +5872,33 @@ function renderAlertSettingsForm() {
   els.severityDevelopment.value = current.alertSeverityByEnvironment.development;
   els.soundAlertsEnabled.checked = current.soundAlertsEnabled;
   els.browserNotificationsEnabled.checked = current.browserNotificationsEnabled;
+}
+
+function renderTicketSlaSettingsForm() {
+  if (!els.ticketSlaSettingsForm || !isAdmin()) return;
+  const current = ticketSlaSettings();
+  if (document.activeElement !== els.ticketSlaUrgentHours) {
+    els.ticketSlaUrgentHours.value = current.urgentHours;
+  }
+  if (document.activeElement !== els.ticketSlaNormalHours) {
+    els.ticketSlaNormalHours.value = current.normalHours;
+  }
+}
+
+function renderTicketAutomationSettingsForm() {
+  if (!els.ticketAutomationSettingsForm || !isAdmin()) return;
+  const current = ticketAutomationSettings();
+  if (document.activeElement !== els.ticketAutomationEnabled) els.ticketAutomationEnabled.checked = current.enabled;
+  if (document.activeElement !== els.ticketAutomationServerMinutes) els.ticketAutomationServerMinutes.value = current.serverOfflineMinutes;
+  if (document.activeElement !== els.ticketAutomationLinkMinutes) els.ticketAutomationLinkMinutes.value = current.linkOfflineMinutes;
+  if (document.activeElement !== els.ticketAutomationBackupHours) els.ticketAutomationBackupHours.value = current.backupOverdueHours;
+}
+
+function renderExpirySettingsForm() {
+  if (!els.expirySettingsForm || !isAdmin()) return;
+  if (document.activeElement !== els.expiryNotifyDays) {
+    els.expiryNotifyDays.value = expirationSettings().expiryNotifyDays;
+  }
 }
 
 function backupIntegrationSourceLabel(source) {
@@ -5559,6 +6085,56 @@ async function submitAlertSettings(event) {
     showToast("Alertas salvos", "As regras de alerta foram atualizadas.");
   } catch (error) {
     showToast("Falha ao salvar alertas", error.message);
+  }
+}
+
+async function submitTicketSlaSettings(event) {
+  event.preventDefault();
+  const payload = {
+    urgentHours: Number(els.ticketSlaUrgentHours.value),
+    normalHours: Number(els.ticketSlaNormalHours.value)
+  };
+  try {
+    const settings = await api("/api/settings/ticket-sla", { method: "PUT", body: JSON.stringify(payload) });
+    state.settings = { ...state.settings, ...settings };
+    renderTicketSlaSettingsForm();
+    showToast("SLA salvo", "Os prazos serao aplicados aos proximos chamados.");
+  } catch (error) {
+    showToast("Falha ao salvar SLA", error.message);
+  }
+}
+
+async function submitTicketAutomationSettings(event) {
+  event.preventDefault();
+  const payload = {
+    enabled: els.ticketAutomationEnabled.checked,
+    serverOfflineMinutes: Number(els.ticketAutomationServerMinutes.value),
+    linkOfflineMinutes: Number(els.ticketAutomationLinkMinutes.value),
+    backupOverdueHours: Number(els.ticketAutomationBackupHours.value)
+  };
+  try {
+    const settings = await api("/api/settings/ticket-automation", { method: "PUT", body: JSON.stringify(payload) });
+    state.settings = { ...state.settings, ...settings };
+    renderTicketAutomationSettingsForm();
+    showToast("Automacao salva", payload.enabled ? "As novas regras serao aplicadas a partir de agora." : "A abertura automatica de chamados foi desativada.");
+  } catch (error) {
+    showToast("Falha ao salvar automacao", error.message);
+  }
+}
+
+async function submitExpirySettings(event) {
+  event.preventDefault();
+  try {
+    const settings = await api("/api/settings/expirations", {
+      method: "PUT",
+      body: JSON.stringify({ expiryNotifyDays: Number(els.expiryNotifyDays.value) })
+    });
+    state.settings = { ...state.settings, ...settings };
+    renderExpirySettingsForm();
+    renderGroups();
+    showToast("Vencimentos salvos", `Os avisos serao gerados ${settings.expiryNotifyDays} dia(s) antes do vencimento.`);
+  } catch (error) {
+    showToast("Falha ao salvar vencimentos", error.message);
   }
 }
 
@@ -7633,6 +8209,167 @@ function renderNetworks() {
   updateNetworkProviderVisibility();
 }
 
+function reportKey() {
+  return `${state.report.groupId}:${state.report.days}`;
+}
+
+function reportTone(value) {
+  const normalized = String(value || "").toLowerCase();
+  if (["online", "success", "ok", "resolved"].includes(normalized)) return "good";
+  if (["warning", "late", "degraded", "attention"].includes(normalized)) return "warn";
+  if (["offline", "error", "overdue", "probe_unreachable"].includes(normalized)) return "bad";
+  return "muted";
+}
+
+function reportStatusLabel(value) {
+  const labels = {
+    online: "Online",
+    offline: "Offline",
+    success: "Sucesso",
+    warning: "Atencao",
+    error: "Erro",
+    late: "Atrasado",
+    degraded: "Degradado",
+    overdue: "SLA vencido",
+    probe_unreachable: "Probe sem contato"
+  };
+  return labels[String(value || "").toLowerCase()] || "Evento";
+}
+
+function reportChartLabel(day, index, total) {
+  if (total <= 7 || index === 0 || index === total - 1 || index === Math.floor(total / 2)) {
+    return formatDateOnly(day);
+  }
+  return "";
+}
+
+function renderReportBars(trend = [], mode = "backup") {
+  const values = trend.map((item) => mode === "backup" ? item.success + item.warning + item.error : item.serverFailures + item.linkProblems);
+  const max = Math.max(1, ...values);
+  return trend.map((item, index) => {
+    const total = values[index];
+    const success = mode === "backup" ? item.success : 0;
+    const warning = mode === "backup" ? item.warning : item.linkProblems;
+    const error = mode === "backup" ? item.error : item.serverFailures;
+    const height = total ? Math.max(8, Math.round((total / max) * 100)) : 2;
+    const successHeight = total ? Math.round((success / total) * height) : 0;
+    const warningHeight = total ? Math.round((warning / total) * height) : 0;
+    const errorHeight = Math.max(0, height - successHeight - warningHeight);
+    const title = mode === "backup"
+      ? `${formatDateOnly(item.day)}: ${success} sucesso, ${warning} atencao, ${error} erro`
+      : `${formatDateOnly(item.day)}: ${item.serverFailures} falhas de servidor, ${item.linkProblems} ocorrencias de link`;
+    return `<div class="report-bar-column" title="${escapeHtml(title)}">
+      <div class="report-bar-stack" style="height:${height}%">
+        <i class="report-bar-success" style="height:${successHeight}%"></i>
+        <i class="report-bar-warning" style="height:${warningHeight}%"></i>
+        <i class="report-bar-error" style="height:${errorHeight}%"></i>
+      </div>
+      <span>${escapeHtml(reportChartLabel(item.day, index, trend.length))}</span>
+    </div>`;
+  }).join("");
+}
+
+function renderReportMetrics(report) {
+  const { coverage, backups, support, availability } = report;
+  const serverTotal = coverage.servers.active || coverage.servers.total;
+  const serverValue = serverTotal ? `${coverage.servers.online}/${serverTotal}` : "-";
+  const linkValue = coverage.links.total ? `${coverage.links.online}/${coverage.links.total}` : "-";
+  const backupValue = backups.monitored ? `${backups.success}/${backups.monitored}` : "-";
+  const backupTone = backups.error ? "bad" : backups.warning ? "warn" : "good";
+  return `<section class="report-kpi-grid">
+    <article class="report-kpi-card"><span>Servidores</span><strong class="${coverage.servers.offline ? "is-bad" : "is-good"}">${serverValue}</strong><small>${coverage.servers.offline ? `${coverage.servers.offline} offline` : "respondendo agora"}</small></article>
+    <article class="report-kpi-card"><span>Links</span><strong class="${coverage.links.offline ? "is-bad" : coverage.links.degraded ? "is-warn" : "is-good"}">${linkValue}</strong><small>${coverage.links.degraded ? `${coverage.links.degraded} degradado(s)` : coverage.links.offline ? `${coverage.links.offline} offline` : "operacionais"}</small></article>
+    <article class="report-kpi-card"><span>Backups</span><strong class="is-${backupTone}">${backupValue}</strong><small>${backups.monitored ? `${backups.successRate ?? 0}% de sucesso` : "sem coleta monitorada"}</small></article>
+    <article class="report-kpi-card"><span>Suporte</span><strong class="${support.slaOverdue ? "is-bad" : support.open ? "is-warn" : "is-good"}">${support.open}</strong><small>${support.slaOverdue ? `${support.slaOverdue} SLA vencido(s)` : "chamados em aberto"}</small></article>
+    <article class="report-kpi-card"><span>Ocorrencias</span><strong class="${availability.currentlyOffline ? "is-bad" : "is-good"}">${availability.serverFailures + availability.linkProblems}</strong><small>no periodo selecionado</small></article>
+  </section>`;
+}
+
+function renderReportExceptions(report) {
+  const items = report.exceptions || [];
+  if (!items.length) return `<div class="report-clear-state"><strong>Sem excecoes em aberto</strong><span>Os ativos e servicos vinculados a esta empresa estao dentro do esperado.</span></div>`;
+  return `<div class="report-exception-list">${items.map((item) => `<article class="report-exception report-${reportTone(item.status)}">
+    <div><strong>${escapeHtml(item.name)}</strong><span>${escapeHtml(item.detail || "Sem detalhes adicionais")}</span></div>
+    <em>${escapeHtml(reportStatusLabel(item.status))}</em>
+  </article>`).join("")}</div>`;
+}
+
+function renderReportExpiryItems(report) {
+  if (!report.expirations?.length) return `<div class="report-clear-state compact"><strong>Nenhum vencimento proximo</strong><span>Contratos e produtos estao fora da janela de alerta.</span></div>`;
+  return `<div class="report-expiry-list">${report.expirations.map((item) => `<div class="report-expiry-row">
+    <span>${escapeHtml(item.type)}</span><strong>${escapeHtml(item.label)}</strong><em class="${item.daysLeft < 0 ? "is-bad" : item.daysLeft <= 3 ? "is-warn" : ""}">${item.daysLeft < 0 ? `vencido ha ${Math.abs(item.daysLeft)}d` : item.daysLeft === 0 ? "vence hoje" : `vence em ${item.daysLeft}d`}</em>
+  </div>`).join("")}</div>`;
+}
+
+async function loadCompanyReport({ force = false } = {}) {
+  if (!isAdmin() || !state.report.groupId || state.report.loading) return;
+  const key = reportKey();
+  if (!force && state.report.loadedKey === key) return;
+  state.report.loading = true;
+  state.report.error = "";
+  renderReports();
+  try {
+    const payload = await api(`/api/reports/company/${encodeURIComponent(state.report.groupId)}?days=${state.report.days}`);
+    if (key !== reportKey()) return;
+    state.report.data = payload.report || null;
+    state.report.loadedKey = key;
+  } catch (error) {
+    if (key === reportKey()) state.report.error = error.message;
+  } finally {
+    if (key === reportKey()) state.report.loading = false;
+    renderReports();
+  }
+}
+
+function renderReports() {
+  if (!els.reportContent || !els.reportGroupSelect || !isAdmin()) return;
+  const groups = [...state.groups].sort((left, right) => String(left.name || "").localeCompare(String(right.name || ""), "pt-BR"));
+  if (!groups.some((group) => group.id === state.report.groupId)) {
+    state.report.groupId = groups[0]?.id || "";
+    state.report.data = null;
+    state.report.loadedKey = "";
+  }
+  els.reportGroupSelect.innerHTML = groups.map((group) => `<option value="${escapeHtml(group.id)}">${escapeHtml(group.name)}</option>`).join("");
+  els.reportGroupSelect.value = state.report.groupId;
+  els.reportPeriodSelect.value = String(state.report.days);
+
+  if (!state.report.groupId) {
+    els.reportContent.innerHTML = `<div class="empty-state"><strong>Nenhuma empresa cadastrada</strong><span>Cadastre uma empresa para gerar o primeiro relatorio.</span></div>`;
+    return;
+  }
+
+  const key = reportKey();
+  if (activeViewName() === "reports" && state.report.loadedKey !== key && !state.report.loading) {
+    window.setTimeout(() => loadCompanyReport(), 0);
+  }
+  if (state.report.loading && !state.report.data) {
+    els.reportContent.innerHTML = `<div class="report-loading"><span></span><span></span><span></span><span></span></div>`;
+    return;
+  }
+  if (state.report.error) {
+    els.reportContent.innerHTML = `<div class="empty-state"><strong>Nao foi possivel gerar o relatorio</strong><span>${escapeHtml(state.report.error)}</span></div>`;
+    return;
+  }
+  const report = state.report.data;
+  if (!report) return;
+  const backupRate = report.backups.successRate == null ? "Sem dados" : `${report.backups.successRate}%`;
+  const protectedStorage = report.backups.protectedBytes ? formatBytes(report.backups.protectedBytes) : "Sem inventario PBS";
+  els.reportContent.innerHTML = `<section class="report-hero">
+    <div><span class="eyebrow">Empresa selecionada</span><h2>${escapeHtml(report.company.name)}</h2><p>${report.period.days} dias consolidados ate ${escapeHtml(formatDate(report.generatedAt))}.</p></div>
+    <div class="report-hero-status ${report.availability.currentlyOffline ? "is-bad" : report.backups.error ? "is-warn" : "is-good"}"><strong>${report.availability.currentlyOffline ? "Atencao necessaria" : "Operacao acompanhada"}</strong><span>${report.availability.currentlyOffline ? `${report.availability.currentlyOffline} ativo(s) offline agora` : "Sem indisponibilidade confirmada agora"}</span></div>
+  </section>
+  ${renderReportMetrics(report)}
+  <section class="report-visual-grid">
+    <article class="report-panel report-chart-panel"><header><div><h3>Saude dos backups</h3><span>Historico diario consolidado</span></div><strong class="is-${report.backups.error ? "bad" : report.backups.warning ? "warn" : "good"}">${backupRate}</strong></header><div class="report-bars">${renderReportBars(report.trends, "backup")}</div><footer><span>Sucesso</span><span>Atencao</span><span>Erro</span></footer></article>
+    <article class="report-panel report-chart-panel"><header><div><h3>Eventos de disponibilidade</h3><span>Falhas e ocorrencias de rede</span></div><strong>${report.availability.serverFailures + report.availability.linkProblems}</strong></header><div class="report-bars report-incident-bars">${renderReportBars(report.trends, "availability")}</div><footer><span>Falhas de servidor</span><span>Ocorrencias de link</span></footer></article>
+    <article class="report-panel report-coverage-panel"><header><div><h3>Cobertura monitorada</h3><span>Ativos reconhecidos na empresa</span></div></header><div class="report-coverage-rows"><div><span>Servidores</span><strong>${report.coverage.servers.active}/${report.coverage.servers.total || 0}</strong><small>${report.coverage.servers.probe} por probe</small></div><div><span>Links</span><strong>${report.coverage.links.online}/${report.coverage.links.total || 0}</strong><small>${report.coverage.links.degraded} degradado(s)</small></div><div><span>UniFi</span><strong>${report.coverage.unifi.online}/${report.coverage.unifi.devices || 0}</strong><small>${report.coverage.unifi.sites} site(s)</small></div><div><span>Armazenamento PBS</span><strong>${escapeHtml(protectedStorage)}</strong><small>ultimo inventario protegido</small></div></div></article>
+  </section>
+  <section class="report-detail-grid">
+    <article class="report-panel"><header><div><h3>Excecoes para revisar</h3><span>Itens que pedem acompanhamento</span></div><strong>${report.exceptions.length}</strong></header>${renderReportExceptions(report)}</article>
+    <article class="report-panel"><header><div><h3>Vencimentos proximos</h3><span>Contratos e produtos vinculados</span></div><strong>${report.expirations.length}</strong></header>${renderReportExpiryItems(report)}</article>
+  </section>`;
+}
+
 function render() {
   updateTopbarContext();
   updateMetricsVisibility();
@@ -7650,8 +8387,12 @@ function render() {
   renderProbes();
   renderUsers();
   renderBackups();
+  renderReports();
   renderBrandingForm();
   renderAlertSettingsForm();
+  renderTicketSlaSettingsForm();
+  renderTicketAutomationSettingsForm();
+  renderExpirySettingsForm();
   renderBackupIntegrationSettingsForm();
 }
 
@@ -7807,6 +8548,73 @@ function removeGroupContractInput(button) {
   renderGroupContractInputs(contracts);
 }
 
+function renderProductSuggestions() {
+  if (!els.productCatalogSuggestions) return;
+  els.productCatalogSuggestions.innerHTML = sortedByAlpha(state.productCatalog || [], (product) => product.name)
+    .map((product) => `<option value="${escapeHtml(product.name)}"></option>`)
+    .join("");
+}
+
+function normalizeGroupProductInput(product = {}) {
+  return { id: product.id || "", productId: product.productId || "", name: product.name || "", endDate: product.endDate || "" };
+}
+
+function renderGroupProductInputs(products = []) {
+  if (!els.groupProductsList) return;
+  renderProductSuggestions();
+  const normalized = products.map(normalizeGroupProductInput).slice(0, 40);
+  els.groupProductsList.innerHTML = normalized.length
+    ? normalized.map((product) => `
+      <div class="group-contract-input-row group-product-input-row" data-group-product-row>
+        <input type="hidden" data-group-product-id value="${escapeHtml(product.id)}" />
+        <input type="hidden" data-group-product-catalog-id value="${escapeHtml(product.productId)}" />
+        <label>
+          Produto
+          <input data-group-product-name list="productCatalogSuggestions" value="${escapeHtml(product.name)}" placeholder="Ex: Licenca Windows Server" required />
+        </label>
+        <label>
+          Vencimento
+          <input type="date" data-group-product-end value="${escapeHtml(product.endDate)}" required />
+        </label>
+        <button class="icon-button group-contract-remove" type="button" data-remove-group-product title="Remover produto">-</button>
+      </div>`).join("")
+    : "";
+  if (els.addGroupProduct) {
+    els.addGroupProduct.disabled = normalized.length >= 40;
+    els.addGroupProduct.title = normalized.length >= 40 ? "Limite de 40 produtos atingido" : "Adicionar produto";
+  }
+}
+
+function readGroupProductRows() {
+  if (!els.groupProductsList) return [];
+  return [...els.groupProductsList.querySelectorAll("[data-group-product-row]")].map((row) => ({
+    id: row.querySelector("[data-group-product-id]")?.value.trim() || "",
+    productId: row.querySelector("[data-group-product-catalog-id]")?.value.trim() || "",
+    name: row.querySelector("[data-group-product-name]")?.value.trim() || "",
+    endDate: row.querySelector("[data-group-product-end]")?.value || ""
+  }));
+}
+
+function readGroupProductInputs() {
+  return readGroupProductRows().filter((product) => product.name || product.endDate);
+}
+
+function addGroupProductInput() {
+  const products = readGroupProductRows();
+  if (products.length >= 40) return;
+  renderGroupProductInputs([...products, {}]);
+}
+
+function removeGroupProductInput(button) {
+  if (!els.groupProductsList) return;
+  const rows = [...els.groupProductsList.querySelectorAll("[data-group-product-row]")];
+  const index = rows.findIndex((row) => row.contains(button));
+  if (index === -1) return;
+  const products = readGroupProductRows();
+  products.splice(index, 1);
+  renderGroupProductInputs(products);
+}
+
 function openGroupDialog(group = null) {
   els.groupForm.reset();
   state.groupLogoDraft = group?.logoDataUrl || "";
@@ -7819,6 +8627,7 @@ function openGroupDialog(group = null) {
     input.checked = selectedContracts.has(input.value);
   });
   renderGroupContractInputs(group?.serviceContracts || []);
+  renderGroupProductInputs(group?.products || []);
   if (els.groupLogoInput) els.groupLogoInput.value = "";
   if (els.groupLogoPreviewName) els.groupLogoPreviewName.textContent = group?.name || "Logo da empresa";
   paintBrandLogo(els.groupLogoPreview, state.groupLogoDraft, group?.name || els.groupName.value || "SW");
@@ -8073,6 +8882,7 @@ async function submitGroup(event) {
     description: els.groupDescription.value,
     contracts: [...(els.groupContractInputs || [])].filter((input) => input.checked).map((input) => input.value),
     serviceContracts: readGroupContractInputs(),
+    products: readGroupProductInputs(),
     logoDataUrl: state.groupLogoDraft || "",
     type: "company"
   };
@@ -8084,6 +8894,45 @@ async function submitGroup(event) {
   showToast("Empresa salva", `${saved.name} esta disponivel para associar servidores.`);
   const snap = await api("/api/snapshot");
   applySnapshot(snap);
+}
+
+async function submitProductCatalog(event) {
+  event.preventDefault();
+  const id = els.productCatalogId?.value || "";
+  const name = els.productCatalogName?.value.trim() || "";
+  if (!name) return;
+  try {
+    await api(id ? `/api/product-catalog/${encodeURIComponent(id)}` : "/api/product-catalog", {
+      method: id ? "PUT" : "POST",
+      body: JSON.stringify({ name })
+    });
+    resetProductCatalogForm();
+    applySnapshot(await api("/api/snapshot"));
+    showToast(id ? "Produto atualizado" : "Produto adicionado", `${name} esta disponivel para todas as empresas.`);
+  } catch (error) {
+    showToast("Falha ao salvar produto", error.message);
+  }
+}
+
+function editProductCatalog(product) {
+  if (!product) return;
+  els.productCatalogId.value = product.id;
+  els.productCatalogName.value = product.name;
+  els.saveProductCatalog.textContent = "Salvar produto";
+  els.cancelProductCatalogEdit.hidden = false;
+  els.productCatalogName.focus();
+}
+
+async function deleteProductCatalog(product) {
+  if (!product || !window.confirm(`Excluir o produto "${product.name}" do catalogo?`)) return;
+  try {
+    await api(`/api/product-catalog/${encodeURIComponent(product.id)}`, { method: "DELETE" });
+    if (els.productCatalogId.value === product.id) resetProductCatalogForm();
+    applySnapshot(await api("/api/snapshot"));
+    showToast("Produto excluido", `${product.name} foi removido do catalogo.`);
+  } catch (error) {
+    showToast("Nao foi possivel excluir", error.message);
+  }
 }
 
 async function deleteGroup(group) {
@@ -8147,6 +8996,21 @@ function upsertTicket(ticket) {
   else state.tickets.unshift(ticket);
 }
 
+function dateTimeLocalValue(value) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  const offset = date.getTimezoneOffset() * 60_000;
+  return new Date(date.getTime() - offset).toISOString().slice(0, 16);
+}
+
+function defaultTicketResolutionDateTime(priority) {
+  if (priority === "low") return "";
+  const settings = ticketSlaSettings();
+  const hours = priority === "critical" ? settings.urgentHours : settings.normalHours;
+  return dateTimeLocalValue(new Date(Date.now() + hours * 60 * 60 * 1000).toISOString());
+}
+
 function openTicketDialog(ticket = null) {
   els.ticketForm.reset();
   if (els.ticketFormError) els.ticketFormError.textContent = "";
@@ -8156,6 +9020,17 @@ function openTicketDialog(ticket = null) {
   els.ticketDescription.value = ticket?.description || "";
   els.ticketRequesterName.value = ticket?.requesterName || "";
   els.ticketPriority.value = ticket?.priority || "normal";
+  if (els.ticketCategory) els.ticketCategory.value = ticket?.category || "incident";
+  if (els.ticketImpact) els.ticketImpact.value = ticket?.impact || "individual";
+  if (els.ticketSource) els.ticketSource.value = ticket?.source || "manual";
+  if (els.ticketAssetType) els.ticketAssetType.value = ticket?.assetType || "";
+  if (els.ticketAssetName) els.ticketAssetName.value = ticket?.assetName || "";
+  if (els.ticketFirstResponseDueAt) els.ticketFirstResponseDueAt.value = dateTimeLocalValue(ticket?.firstResponseDueAt);
+  if (els.ticketResolutionDueAt) {
+    els.ticketResolutionDueAt.value = ticket
+      ? dateTimeLocalValue(ticket.resolutionDueAt)
+      : defaultTicketResolutionDateTime(els.ticketPriority.value);
+  }
   renderTicketGroupOptions();
   els.ticketGroupId.value = ticket?.groupId || "";
   if (els.ticketAssignedTo) {
@@ -8186,6 +9061,13 @@ async function submitTicket(event) {
     description: els.ticketDescription.value,
     requesterName: els.ticketRequesterName.value,
     priority: els.ticketPriority.value,
+    category: els.ticketCategory?.value || "incident",
+    impact: els.ticketImpact?.value || "individual",
+    source: els.ticketSource?.value || "manual",
+    assetType: els.ticketAssetType?.value || "",
+    assetName: els.ticketAssetName?.value || "",
+    firstResponseDueAt: els.ticketFirstResponseDueAt?.value || "",
+    resolutionDueAt: els.ticketResolutionDueAt?.value || "",
     assignedTo: els.ticketAssignedTo.value
   };
   try {
@@ -8193,13 +9075,83 @@ async function submitTicket(event) {
       ? await api(`/api/tickets/${id}`, { method: "PUT", body: JSON.stringify(payload) })
       : await api("/api/tickets", { method: "POST", body: JSON.stringify(payload) });
     upsertTicket(saved);
-    state.selectedTicketId = saved.id;
+    selectTicket(saved.id);
     closeTicketDialog();
-    renderTickets();
     showToast("Chamado salvo", `${saved.title} foi salvo com sucesso.`);
   } catch (error) {
     if (els.ticketFormError) els.ticketFormError.textContent = error.message;
     else showToast("Falha ao salvar chamado", error.message);
+  }
+}
+
+function fileAsDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve({ name: file.name, type: file.type || "application/octet-stream", dataUrl: reader.result });
+    reader.onerror = () => reject(new Error(`Nao foi possivel ler ${file.name}.`));
+    reader.readAsDataURL(file);
+  });
+}
+
+async function submitClientTicket(event) {
+  event.preventDefault();
+  const form = event.target;
+  const errorBox = form.querySelector("[data-client-form-error]");
+  if (errorBox) errorBox.textContent = "";
+  const files = [...(form.elements.attachments?.files || [])];
+  if (files.length > 3 || files.some((file) => file.size > 2 * 1024 * 1024)) {
+    if (errorBox) errorBox.textContent = "Envie no maximo 3 arquivos de ate 2 MB cada.";
+    return;
+  }
+  try {
+    const attachments = await Promise.all(files.map(fileAsDataUrl));
+    const saved = await api("/api/tickets", {
+      method: "POST",
+      body: JSON.stringify({
+        groupId: form.elements.groupId.value,
+        location: form.elements.location.value,
+        title: form.elements.title.value,
+        category: form.elements.category.value,
+        priority: form.elements.priority.value,
+        description: form.elements.description.value,
+        attachments
+      })
+    });
+    upsertTicket(saved);
+    selectTicket(saved.id);
+    showToast("Chamado aberto", `${ticketReference(saved)} foi enviado para a equipe.`);
+  } catch (error) {
+    if (errorBox) errorBox.textContent = error.message;
+  }
+}
+
+async function submitClientReply(event) {
+  event.preventDefault();
+  const form = event.target;
+  const message = form.elements.message.value.trim();
+  if (!message) return;
+  try {
+    const saved = await api(`/api/tickets/${encodeURIComponent(form.dataset.ticketId)}/updates`, {
+      method: "POST",
+      body: JSON.stringify({ kind: "comment", message })
+    });
+    upsertTicket(saved);
+    renderClientSupport();
+    showToast("Mensagem enviada", "A equipe de suporte recebeu sua atualizacao.");
+  } catch (error) {
+    showToast("Falha ao enviar", error.message);
+  }
+}
+
+async function closeClientTicket(ticketId) {
+  if (!window.confirm("Encerrar este chamado porque o apoio nao e mais necessario?")) return;
+  try {
+    const saved = await api(`/api/tickets/${encodeURIComponent(ticketId)}/close`, { method: "POST" });
+    upsertTicket(saved);
+    renderClientSupport();
+    showToast("Chamado encerrado", "O encerramento foi registrado no historico.");
+  } catch (error) {
+    showToast("Falha ao encerrar", error.message);
   }
 }
 
@@ -8220,16 +9172,26 @@ async function submitTicketUpdate(event) {
   event.preventDefault();
   const form = event.target;
   const ticketId = form.dataset.ticketId;
+  const ticket = state.tickets.find((item) => item.id === ticketId);
+  if (ticket?.status === "closed") {
+    clearTicketUpdateDraft(ticketId);
+    renderTickets();
+    showToast("Chamado fechado", "Reabra o chamado antes de adicionar uma atualizacao.");
+    return;
+  }
   const kind = form.querySelector("#ticketUpdateKind")?.value || "comment";
   const message = form.querySelector("#ticketUpdateMessage")?.value.trim() || "";
   const newStatus = form.querySelector("#ticketUpdateStatus")?.value || "";
+  const visibility = form.querySelector("#ticketUpdateInternal")?.checked ? "internal" : "public";
   if (!message) return;
   try {
     const saved = await api(`/api/tickets/${ticketId}/updates`, {
       method: "POST",
-      body: JSON.stringify({ kind, message, newStatus: newStatus || undefined })
+      body: JSON.stringify({ kind, message, newStatus: newStatus || undefined, visibility })
     });
     upsertTicket(saved);
+    clearTicketUpdateDraft(ticketId);
+    document.activeElement?.blur?.();
     renderTickets();
     showToast("Atualizacao adicionada", "O historico do chamado foi atualizado.");
   } catch (error) {
@@ -8590,8 +9552,31 @@ function bindEvents() {
     button.addEventListener("click", (event) => {
       event.preventDefault();
       if (button.hidden) return;
+      if (button.dataset.view === "tickets") {
+        openTicketQueue();
+        setActiveView("tickets", { push: false });
+        return;
+      }
       setActiveView(button.dataset.view);
     });
+  });
+
+  els.reportGroupSelect?.addEventListener("change", () => {
+    state.report.groupId = els.reportGroupSelect.value;
+    state.report.data = null;
+    state.report.loadedKey = "";
+    void loadCompanyReport({ force: true });
+  });
+
+  els.reportPeriodSelect?.addEventListener("change", () => {
+    state.report.days = Number(els.reportPeriodSelect.value) || 30;
+    state.report.data = null;
+    state.report.loadedKey = "";
+    void loadCompanyReport({ force: true });
+  });
+
+  els.refreshReportButton?.addEventListener("click", () => {
+    void loadCompanyReport({ force: true });
   });
 
   document.querySelectorAll("[data-view-link]").forEach((card) => {
@@ -9031,6 +10016,35 @@ function bindEvents() {
     const button = eventClosest(event, "[data-remove-group-contract]");
     if (button) removeGroupContractInput(button);
   });
+  els.addGroupProduct?.addEventListener("click", addGroupProductInput);
+  els.groupProductsList?.addEventListener("click", (event) => {
+    const button = eventClosest(event, "[data-remove-group-product]");
+    if (button) removeGroupProductInput(button);
+  });
+  els.groupSearch?.addEventListener("input", () => {
+    state.groupSearchQuery = els.groupSearch.value || "";
+    renderGroups();
+  });
+  els.toggleGroupExpiryFilter?.addEventListener("click", () => {
+    state.groupExpiringOnly = !state.groupExpiringOnly;
+    renderGroups();
+  });
+  document.querySelectorAll("[data-group-management-view]").forEach((button) => {
+    button.addEventListener("click", () => {
+      state.groupManagementView = button.dataset.groupManagementView === "catalog" ? "catalog" : "companies";
+      renderGroups();
+    });
+  });
+  els.productCatalogForm?.addEventListener("submit", submitProductCatalog);
+  els.cancelProductCatalogEdit?.addEventListener("click", resetProductCatalogForm);
+  els.productCatalogList?.addEventListener("click", (event) => {
+    const button = eventClosest(event, "[data-product-catalog-action]");
+    if (!button) return;
+    const product = state.productCatalog.find((item) => item.id === button.dataset.id);
+    if (!product) return;
+    if (button.dataset.productCatalogAction === "edit") editProductCatalog(product);
+    if (button.dataset.productCatalogAction === "delete") deleteProductCatalog(product);
+  });
 
   els.toggleProbeToken?.addEventListener("click", () => {
     const showToken = els.probeTokenValue.type === "password";
@@ -9357,6 +10371,14 @@ function bindEvents() {
     });
   });
   els.alertSettingsForm?.addEventListener("submit", submitAlertSettings);
+  els.ticketSlaSettingsForm?.addEventListener("submit", submitTicketSlaSettings);
+  els.ticketAutomationSettingsForm?.addEventListener("submit", submitTicketAutomationSettings);
+  els.expirySettingsForm?.addEventListener("submit", submitExpirySettings);
+  els.ticketPriority?.addEventListener("change", () => {
+    if (!els.ticketId?.value && els.ticketResolutionDueAt) {
+      els.ticketResolutionDueAt.value = defaultTicketResolutionDateTime(els.ticketPriority.value);
+    }
+  });
   els.cloudBackupSettingsForm?.addEventListener("submit", submitCloudBackupSettings);
   els.proxmoxSettingsForm?.addEventListener("submit", submitProxmoxSettings);
   els.unifiSettingsForm?.addEventListener("submit", submitUnifiSettings);
@@ -9453,6 +10475,28 @@ function bindEvents() {
   });
 
   document.querySelector("#openTicketForm")?.addEventListener("click", () => openTicketDialog());
+  els.clientNewTicket?.addEventListener("click", () => {
+    state.clientSupportMode = "new";
+    renderClientSupport();
+  });
+  document.querySelector("#changePasswordButton")?.addEventListener("click", requirePasswordChange);
+  els.clientSupportContent?.addEventListener("click", (event) => {
+    const ticketRow = eventClosest(event, "[data-client-ticket]");
+    if (ticketRow) {
+      selectTicket(ticketRow.dataset.clientTicket);
+      return;
+    }
+    const action = eventClosest(event, "[data-client-action]");
+    if (!action) return;
+    if (action.dataset.clientAction === "back") {
+      openTicketQueue();
+    }
+    if (action.dataset.clientAction === "close") closeClientTicket(action.dataset.ticketId);
+  });
+  els.clientSupportContent?.addEventListener("submit", (event) => {
+    if (event.target?.id === "clientTicketForm") submitClientTicket(event);
+    if (event.target?.id === "clientReplyForm") submitClientReply(event);
+  });
   els.closeTicketDialog?.addEventListener("click", closeTicketDialog);
   els.cancelTicketForm?.addEventListener("click", closeTicketDialog);
   els.ticketForm?.addEventListener("submit", submitTicket);
@@ -9462,16 +10506,35 @@ function bindEvents() {
     if (row) selectTicket(row.dataset.ticketId);
   });
 
-  els.ticketDetailPanel?.addEventListener("click", (event) => {
+  els.ticketWorkspacePanel?.addEventListener("click", (event) => {
     const button = eventClosest(event, "[data-ticket-action]");
     if (!button) return;
+    if (button.dataset.ticketAction === "back") {
+      openTicketQueue();
+      return;
+    }
     const ticket = state.tickets.find((item) => item.id === button.dataset.id);
+    if (ticket && button.dataset.ticketAction === "toggle-update") {
+      const current = ticketUpdateDraftFor(ticket.id);
+      state.ticketUpdateDraft = current.open ? null : { ...current, open: true };
+      renderTicketWorkspace(ticket);
+      if (state.ticketUpdateDraft?.open) {
+        requestAnimationFrame(() => els.ticketWorkspacePanel?.querySelector("#ticketUpdateMessage")?.focus());
+      }
+      return;
+    }
     if (ticket && button.dataset.ticketAction === "edit") openTicketDialog(ticket);
     if (ticket && button.dataset.ticketAction === "delete") deleteTicket(ticket);
   });
 
-  els.ticketDetailPanel?.addEventListener("submit", (event) => {
+  els.ticketWorkspacePanel?.addEventListener("submit", (event) => {
     if (event.target?.id === "ticketUpdateForm") submitTicketUpdate(event);
+  });
+  els.ticketWorkspacePanel?.addEventListener("input", (event) => {
+    if (event.target?.closest("#ticketUpdateForm")) captureTicketUpdateDraft();
+  });
+  els.ticketWorkspacePanel?.addEventListener("change", (event) => {
+    if (event.target?.closest("#ticketUpdateForm")) captureTicketUpdateDraft();
   });
 
   els.ticketGroupFilter?.addEventListener("change", () => {
@@ -9484,6 +10547,21 @@ function bindEvents() {
   });
   els.ticketPriorityFilter?.addEventListener("change", () => {
     state.ticketFilters.priority = els.ticketPriorityFilter.value;
+    renderTickets();
+  });
+  els.ticketAssigneeFilter?.addEventListener("change", () => {
+    state.ticketFilters.assignee = els.ticketAssigneeFilter.value;
+    renderTickets();
+  });
+  els.ticketSearch?.addEventListener("input", () => {
+    state.ticketFilters.query = els.ticketSearch.value;
+    renderTickets();
+  });
+  els.ticketQuickFilters?.addEventListener("click", (event) => {
+    const button = eventClosest(event, "[data-ticket-quick]");
+    if (!button) return;
+    state.ticketFilters.quick = button.dataset.ticketQuick || "all";
+    els.ticketQuickFilters.querySelectorAll("[data-ticket-quick]").forEach((item) => item.classList.toggle("active", item === button));
     renderTickets();
   });
 

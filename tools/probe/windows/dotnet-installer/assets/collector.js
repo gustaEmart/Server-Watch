@@ -5,12 +5,11 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const DEFAULT_CONFIG = new URL("./config.json", import.meta.url);
-const VERSION = "0.6.10";
+const VERSION = "0.6.8";
 const DEFAULT_QUEUE_MAX_BATCHES = 1000;
 const HOST_METRICS_CACHE_MS = 60 * 1000;
 const HOST_METRICS_TIMEOUT_MS = 7000;
 const REQUEST_TIMEOUT_MS = 15000;
-const LOOP_WATCHDOG_MS = 90 * 1000;
 const PUBLIC_IP_ENDPOINTS = [
   "https://api.ipify.org",
   "https://ifconfig.me/ip",
@@ -148,18 +147,7 @@ function runCommand(command, args, timeoutMs = 2500) {
     let stderr = "";
     let finished = false;
     const timeout = setTimeout(() => {
-      if (finished) return;
-      finished = true;
-      try {
-        if (os.platform() === "win32") {
-          spawn("taskkill.exe", ["/PID", String(child.pid), "/T", "/F"], { stdio: "ignore" }).unref();
-        } else {
-          child.kill("SIGKILL");
-        }
-      } catch {
-        try { child.kill(); } catch {}
-      }
-      reject(new Error(`${command} timed out after ${timeoutMs}ms`));
+      if (!finished) child.kill();
     }, timeoutMs);
 
     child.stdout.on("data", (chunk) => {
@@ -170,7 +158,6 @@ function runCommand(command, args, timeoutMs = 2500) {
     });
     child.on("error", (error) => {
       clearTimeout(timeout);
-      if (finished) return;
       finished = true;
       reject(error);
     });
@@ -182,31 +169,6 @@ function runCommand(command, args, timeoutMs = 2500) {
       else reject(new Error(stderr.trim() || `${command} exited with ${code}`));
     });
   });
-}
-
-function installProcessGuards(config) {
-  process.on("unhandledRejection", (error) => {
-    console.error(`[${new Date().toISOString()}] Unhandled rejection: ${error?.stack || error?.message || error}`);
-    process.exit(21);
-  });
-  process.on("uncaughtException", (error) => {
-    console.error(`[${new Date().toISOString()}] Uncaught exception: ${error?.stack || error?.message || error}`);
-    process.exit(22);
-  });
-
-  let lastProgressAt = Date.now();
-  const touch = (label = "progress") => {
-    lastProgressAt = Date.now();
-    if (label) process.env.SERVERWATCH_PROBE_LAST_PROGRESS = label;
-  };
-  const watchdog = setInterval(() => {
-    const staleMs = Date.now() - lastProgressAt;
-    if (staleMs <= LOOP_WATCHDOG_MS) return;
-    console.error(`[${new Date().toISOString()}] Probe loop watchdog exceeded ${Math.round(staleMs / 1000)}s for ${config.probeId}. Exiting for supervisor restart.`);
-    process.exit(23);
-  }, 30 * 1000);
-  watchdog.unref?.();
-  return touch;
 }
 
 function runPowerShell(command, timeoutMs = 2500) {
@@ -939,7 +901,7 @@ async function detectPublicIp(timeoutMs) {
   return null;
 }
 
-async function requestJsonOnce(config, path, options = {}) {
+async function requestJson(config, path, options = {}) {
   const { timeoutMs = REQUEST_TIMEOUT_MS, headers = {}, ...fetchOptions } = options;
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
@@ -967,18 +929,6 @@ async function requestJsonOnce(config, path, options = {}) {
   const body = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(body.error || `HTTP ${response.status}`);
   return body;
-}
-
-async function requestJson(config, path, options = {}) {
-  try {
-    return await requestJsonOnce(config, path, options);
-  } catch (error) {
-    // Blips de rede passageiros (link instavel, NAT, wifi) derrubam uma unica
-    // tentativa; uma segunda tentativa quase imediata evita marcar o probe
-    // como "sem contato" por causa de uma falha isolada.
-    await new Promise((resolve) => setTimeout(resolve, 1500));
-    return requestJsonOnce(config, path, options);
-  }
 }
 
 async function readQueue(config) {
@@ -1154,25 +1104,11 @@ async function handleLinuxUpdateRequest(config, request) {
 async function handleWindowsUpdateRequest(config, request) {
   await reportUpdateStatus(config, request, "running");
   try {
-    const installDir = dirname(fileURLToPath(import.meta.url));
-    const installerPath = resolve(installDir, "Install-Probe-Headless.ps1");
-    await downloadToFile(config, "/downloads/probe/windows-ps1-installer", installerPath);
-    const updateTaskName = `ServerWatch Probe Collector Update`;
-    const escapedInstaller = installerPath.replace(/'/g, "''");
-    const escapedTaskName = updateTaskName.replace(/'/g, "''");
-    const psCmd = [
-      `$taskName = '${escapedTaskName}'`,
-      `$script = '${escapedInstaller}'`,
-      `$execute = Join-Path $env:SystemRoot 'System32\\WindowsPowerShell\\v1.0\\powershell.exe'`,
-      `$argument = '-NoProfile -ExecutionPolicy Bypass -File "' + $script + '" -Update'`,
-      `$action = New-ScheduledTaskAction -Execute $execute -Argument $argument`,
-      `$trigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddSeconds(20)`,
-      `$principal = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -RunLevel Highest`,
-      `$settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -ExecutionTimeLimit (New-TimeSpan -Minutes 20)`,
-      `Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Force | Out-Null`,
-      `Start-ScheduledTask -TaskName $taskName`
-    ].join("; ");
-    spawnDetached("powershell.exe", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-WindowStyle", "Hidden", "-Command", psCmd]);
+    const tempDir = resolve(os.tmpdir(), `serverwatch-probe-update-${Date.now()}`);
+    await mkdir(tempDir, { recursive: true });
+    const exePath = resolve(tempDir, "ServerWatchProbeSetup.exe");
+    await downloadToFile(config, "/downloads/probe/windows-installer", exePath);
+    spawnDetached(exePath, ["--silent-repair"]);
     console.log(`Scheduled probe update ${request.id} to ${request.targetVersion || "latest"}`);
   } catch (error) {
     await reportUpdateStatus(config, request, "failed", error.message);
@@ -1198,7 +1134,6 @@ async function handleUpdateRequest(config, request) {
 }
 
 async function runLoop(config) {
-  const touchWatchdog = installProcessGuards(config);
   const nextChecks = new Map();
   const nextNetworkChecks = new Map();
   let cachedTargets = [];
@@ -1206,10 +1141,8 @@ async function runLoop(config) {
   let offlineSince = null;
   console.log(`ServerWatch Probe ${VERSION} started as ${config.probeId}`);
   for (;;) {
-    touchWatchdog("loop-start");
     try {
       const payload = await getTargets(config);
-      touchWatchdog("targets");
       cachedTargets = Array.isArray(payload.targets) ? payload.targets : [];
       cachedNetworkLinks = Array.isArray(payload.networkLinks) ? payload.networkLinks : [];
       if (payload.updateRequest) {
@@ -1228,7 +1161,6 @@ async function runLoop(config) {
       try {
         const flushed = await flushQueue(config);
         if (flushed) console.log(`Flushed ${flushed} queued result(s)`);
-        touchWatchdog("queue");
       } catch (error) {
         if (!offlineSince) offlineSince = new Date();
         console.error(`[${new Date().toISOString()}] Queue flush failed: ${error.message}`);
@@ -1248,7 +1180,6 @@ async function runLoop(config) {
           ...result
         });
         nextChecks.set(target.id, Date.now() + Math.max(3, target.checkInterval || config.intervalSeconds) * 1000);
-        touchWatchdog("target-check");
       }
       const dueNetworkLinks = cachedNetworkLinks.filter((target) => {
         const dueAt = nextNetworkChecks.get(target.id) || 0;
@@ -1259,11 +1190,9 @@ async function runLoop(config) {
       for (const target of dueNetworkLinks) {
         networkResults.push(await pingNetworkLink({ ...target, observedPublicIp }, config.timeoutMs));
         nextNetworkChecks.set(target.id, Date.now() + Math.max(10, target.checkInterval || 10) * 1000);
-        touchWatchdog("network-check");
       }
       try {
         await sendResults(config, results, networkResults);
-        touchWatchdog("send");
         if (results.length || networkResults.length) {
           console.log(`Sent ${results.length} server result(s) and ${networkResults.length} network result(s)`);
         }
@@ -1291,7 +1220,6 @@ async function runLoop(config) {
             ...result
           });
           nextChecks.set(target.id, Date.now() + Math.max(3, target.checkInterval || config.intervalSeconds) * 1000);
-          touchWatchdog("fallback-target-check");
         }
         const dueNetworkLinks = cachedNetworkLinks.filter((target) => {
           const dueAt = nextNetworkChecks.get(target.id) || 0;
@@ -1302,13 +1230,10 @@ async function runLoop(config) {
         for (const target of dueNetworkLinks) {
           networkResults.push(await pingNetworkLink({ ...target, observedPublicIp }, config.timeoutMs));
           nextNetworkChecks.set(target.id, Date.now() + Math.max(10, target.checkInterval || 10) * 1000);
-          touchWatchdog("fallback-network-check");
         }
         await queueResults(config, results, error.message, networkResults);
-        touchWatchdog("fallback-queue");
       }
     }
-    touchWatchdog("loop-end");
     await new Promise((resolve) => setTimeout(resolve, Math.min(10, Math.max(3, config.intervalSeconds)) * 1000));
   }
 }

@@ -29,19 +29,18 @@ function unifiRequest(config, path) {
           "X-API-KEY": config.apiKey,
           Accept: "application/json"
         },
-        rejectUnauthorized: !expectedFingerprint
+        rejectUnauthorized: !expectedFingerprint,
+        checkServerIdentity: expectedFingerprint
+          ? (_hostname, cert) => {
+              const actual = normalizedFingerprint(cert.fingerprint256);
+              if (actual !== expectedFingerprint) {
+                return new Error("Certificado do UniFi nao corresponde ao fingerprint configurado.");
+              }
+              return undefined;
+            }
+          : undefined
       },
       (res) => {
-        if (expectedFingerprint) {
-          const certificate = res.socket.getPeerCertificate();
-          const actualFingerprint = normalizedFingerprint(certificate?.fingerprint256);
-          if (!actualFingerprint || actualFingerprint !== expectedFingerprint) {
-            res.resume();
-            reject(new Error("Certificado do UniFi nao corresponde ao fingerprint configurado."));
-            return;
-          }
-        }
-
         let raw = "";
         let size = 0;
         res.setEncoding("utf8");

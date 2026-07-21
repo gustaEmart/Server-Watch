@@ -6,12 +6,13 @@ export function createSettingsHandler({
   setSettings,
   normalizeBranding,
   normalizeAlertSettings,
+  normalizeTicketSlaSettings,
+  normalizeTicketAutomationSettings,
+  normalizeExpirySettings,
   normalizeCloudBackupSettings,
   normalizeProxmoxSettings,
-  normalizeUnifiSettings,
   refreshCloudBackup,
   refreshProxmoxBackup,
-  refreshUnifiNetwork,
   publicSettings,
   scheduleSave,
   broadcastSnapshot
@@ -46,6 +47,30 @@ export function createSettingsHandler({
 
     if (!requireAdmin(req, res)) return true;
 
+    if (req.method === "PUT" && parts[2] === "ticket-sla") {
+      const payload = await readBody(req);
+      setSettings(normalizeTicketSlaSettings(payload, getSettings()));
+      scheduleSave();
+      broadcastSnapshot();
+      return sendJson(res, 200, publicSettings(session.user));
+    }
+
+    if (req.method === "PUT" && parts[2] === "ticket-automation") {
+      const payload = await readBody(req);
+      setSettings(normalizeTicketAutomationSettings(payload, getSettings()));
+      scheduleSave();
+      broadcastSnapshot();
+      return sendJson(res, 200, publicSettings(session.user));
+    }
+
+    if (req.method === "PUT" && parts[2] === "expirations") {
+      const payload = await readBody(req);
+      setSettings(normalizeExpirySettings(payload, getSettings()));
+      scheduleSave();
+      broadcastSnapshot();
+      return sendJson(res, 200, publicSettings(session.user));
+    }
+
     if (req.method === "PUT" && parts[2] === "branding") {
       const payload = await readBody(req);
       setSettings(normalizeBranding(payload, getSettings()));
@@ -75,19 +100,6 @@ export function createSettingsHandler({
         await refreshProxmoxBackup();
       } catch {
         // erro ja fica registrado no estado do proxmoxBackup; nao bloqueia o salvamento
-      }
-      broadcastSnapshot();
-      return sendJson(res, 200, publicSettings(session.user));
-    }
-
-    if (req.method === "PUT" && parts[2] === "unifi") {
-      const payload = await readBody(req);
-      setSettings(normalizeUnifiSettings(payload, getSettings()));
-      scheduleSave();
-      try {
-        await refreshUnifiNetwork();
-      } catch {
-        // erro fica registrado no estado do UniFi; credenciais continuam salvas para correcao
       }
       broadcastSnapshot();
       return sendJson(res, 200, publicSettings(session.user));

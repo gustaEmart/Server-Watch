@@ -2,6 +2,16 @@
 
 Resumo das versoes estaveis publicadas do ServerWatch.
 
+## v5.1.0 - 2026-07-21
+
+- Adiciona Relatorios por Empresa em `/relatorios`, com selecao de empresa e periodos de 7, 30 e 90 dias.
+- Consolida servidores, links, backups, chamados, cobertura UniFi e capacidade PBS em uma leitura operacional por empresa.
+- Registra snapshots diarios de backup por empresa para sustentar tendencias de sucesso, atencao e falha sem reprocessar o historico.
+- Exibe tendencias de disponibilidade, excecoes em aberto, contratos/produtos proximos ao vencimento e armazenamento PBS protegido.
+- Ajusta o ritmo visual da tela de relatorios, com espacamento entre secoes, grade de KPIs e paineis de leitura.
+- Atualiza o roadmap: registra modulos ja consolidados e prioriza confiabilidade de dados, relatorios exportaveis, notificacoes, conectividade avancada, inventario e portal do cliente.
+- Inclui na base versionada as entregas em producao posteriores a 5.0.0: portal de clientes/chamados, catalogo de produtos por empresa e ajustes de suporte, alertas, UniFi, probes e instaladores.
+
 ## v5.0.0 - 2026-07-17
 
 - Adiciona o modulo de Suporte (`/suporte`): pagina inteiramente nova e separada, visivel so pra administradores/tecnicos, pra registrar e acompanhar chamados de clientes — cadastro (empresa, prioridade, solicitante, responsavel, descricao), lista filtravel por empresa/status/prioridade com layout mestre-detalhe (mesmo padrao ja usado em Redes), e historico de atendimento por chamado (comentarios, resolucoes e mudancas de status registradas automaticamente).

@@ -5,7 +5,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const DEFAULT_CONFIG = new URL("./config.json", import.meta.url);
-const VERSION = "0.6.10";
+const VERSION = "0.6.9";
 const DEFAULT_QUEUE_MAX_BATCHES = 1000;
 const HOST_METRICS_CACHE_MS = 60 * 1000;
 const HOST_METRICS_TIMEOUT_MS = 7000;
@@ -939,7 +939,7 @@ async function detectPublicIp(timeoutMs) {
   return null;
 }
 
-async function requestJsonOnce(config, path, options = {}) {
+async function requestJson(config, path, options = {}) {
   const { timeoutMs = REQUEST_TIMEOUT_MS, headers = {}, ...fetchOptions } = options;
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
@@ -967,18 +967,6 @@ async function requestJsonOnce(config, path, options = {}) {
   const body = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(body.error || `HTTP ${response.status}`);
   return body;
-}
-
-async function requestJson(config, path, options = {}) {
-  try {
-    return await requestJsonOnce(config, path, options);
-  } catch (error) {
-    // Blips de rede passageiros (link instavel, NAT, wifi) derrubam uma unica
-    // tentativa; uma segunda tentativa quase imediata evita marcar o probe
-    // como "sem contato" por causa de uma falha isolada.
-    await new Promise((resolve) => setTimeout(resolve, 1500));
-    return requestJsonOnce(config, path, options);
-  }
 }
 
 async function readQueue(config) {

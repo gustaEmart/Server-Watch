@@ -15,6 +15,7 @@ import { createHealthHandler } from "./routes/health.js";
 import { createMetaHandler } from "./routes/meta.js";
 import { createNetworkHandler } from "./routes/network.js";
 import { createProbesHandler } from "./routes/probes.js";
+import { createProductCatalogHandler } from "./routes/products.js";
 import { createServerCheckHandler, createServerCreateHandler, createServerMutationHandler, createServerReadHandler } from "./routes/servers.js";
 import { createSettingsHandler } from "./routes/settings.js";
 import { createStaticHandler } from "./routes/static.js";
@@ -190,8 +191,15 @@ const CENTRAL_SNMP_POLL_MS = 60 * 1000;
 const CENTRAL_SNMP_TIMEOUT_MS = 5000;
 // Janela de aviso de vencimento de contrato — checagem de hora em hora e
 // sobra de folga pra uma janela de 10 dias (nao precisa de granularidade fina).
-const CONTRACT_EXPIRY_NOTIFY_DAYS = 10;
+const DEFAULT_EXPIRY_NOTIFY_DAYS = 10;
 const CONTRACT_EXPIRY_CHECK_MS = 60 * 60 * 1000;
+const TICKET_AUTOMATION_CHECK_MS = 60 * 1000;
+const TICKET_AUTOMATION_DEFAULTS = Object.freeze({
+  enabled: false,
+  serverOfflineMinutes: 30,
+  linkOfflineMinutes: 120,
+  backupOverdueHours: 36
+});
 const PROBE_UPDATE_SUPPORTED_PLATFORMS = new Set(["linux", "windows"]);
 
 const sessions = new Map();
@@ -204,6 +212,7 @@ let probeSpeedTestHistorySaveTimer = null;
 let state = {
   servers: [],
   groups: [],
+  productCatalog: [],
   probes: [],
   networkDevices: [],
   networkLinks: [],
@@ -212,10 +221,12 @@ let state = {
   events: [],
   alerts: [],
   tickets: [],
+  ticketSequence: 0,
   probeUpdateRequests: [],
   sessions: [],
   cloudBackup: emptyCloudBackupState(),
   proxmoxBackup: emptyProxmoxBackupState(),
+  backupReportHistory: [],
   unifiNetwork: emptyUnifiNetworkState(),
   settings: {
     defaultInterval: 10,
@@ -238,6 +249,8 @@ let state = {
 let saveTimer = null;
 let probeStalenessCheckRunning = false;
 let unifiRefreshPromise = null;
+let ticketAutomationRunning = false;
+let ticketAutomationLastRunAt = 0;
 let addEvent;
 let addAdministrativeEvent;
 let addProbeEvent;
@@ -736,6 +749,77 @@ function normalizeGroupContracts(contractsPayload, existingContracts = []) {
     .slice(0, 20);
 }
 
+function normalizeProductName(value) {
+  const name = String(value || "").replace(/\s+/g, " ").trim();
+  if (!name) {
+    const error = new Error("Informe o nome do produto.");
+    error.statusCode = 400;
+    throw error;
+  }
+  if (name.length > 120) {
+    const error = new Error("Nome do produto deve ter no maximo 120 caracteres.");
+    error.statusCode = 400;
+    throw error;
+  }
+  return name;
+}
+
+function productNameKey(value) {
+  return String(value || "").replace(/\s+/g, " ").trim().toLocaleLowerCase("pt-BR");
+}
+
+function listedProductCatalog() {
+  return (state.productCatalog || []).filter((product) => !product.deletedAt);
+}
+
+function normalizeGroupProducts(productsPayload, existingProducts = []) {
+  if (!Array.isArray(productsPayload)) return Array.isArray(existingProducts) ? existingProducts : [];
+  const existingById = new Map((existingProducts || []).map((entry) => [entry.id, entry]));
+  const seen = new Set();
+  return productsPayload
+    .map((entry) => {
+      const endDate = String(entry?.endDate || "").trim();
+      if (!SERVICE_CONTRACT_DATE_RE.test(endDate)) return null;
+      const rawName = String(entry?.name || "").trim();
+      if (!rawName) return null;
+      const name = normalizeProductName(rawName);
+      const nameKey = productNameKey(name);
+      if (seen.has(nameKey)) return null;
+      seen.add(nameKey);
+      const id = String(entry?.id || "").trim() || randomUUID();
+      const previous = existingById.get(id);
+      const catalogMatch = listedProductCatalog().find((product) => productNameKey(product.name) === nameKey);
+      return {
+        id,
+        productId: String(entry?.productId || previous?.productId || catalogMatch?.id || randomUUID()),
+        name: catalogMatch?.name || name,
+        endDate,
+        expiryAlertedAt: previous && previous.endDate === endDate ? previous.expiryAlertedAt || null : null
+      };
+    })
+    .filter(Boolean)
+    .slice(0, 40);
+}
+
+function syncProductCatalogFromProducts(products = []) {
+  let changed = false;
+  for (const product of products) {
+    const nameKey = productNameKey(product.name);
+    const existing = listedProductCatalog().find((item) => item.id === product.productId || productNameKey(item.name) === nameKey);
+    if (existing) {
+      if (product.productId !== existing.id || product.name !== existing.name) {
+        product.productId = existing.id;
+        product.name = existing.name;
+        changed = true;
+      }
+      continue;
+    }
+    state.productCatalog.unshift({ id: product.productId, name: product.name, createdAt: nowIso(), updatedAt: nowIso() });
+    changed = true;
+  }
+  return changed;
+}
+
 function normalizeGroup(payload, existing = {}) {
   const name = String(payload.name || existing.name || "").trim();
   const logoDataUrl = String(payload.logoDataUrl ?? existing.logoDataUrl ?? "").trim();
@@ -748,6 +832,7 @@ function normalizeGroup(payload, existing = {}) {
     payload.serviceContracts !== undefined ? payload.serviceContracts : existing.serviceContracts,
     existing.serviceContracts || []
   );
+  const products = normalizeGroupProducts(payload.products !== undefined ? payload.products : existing.products, existing.products || []);
   if (!name) {
     const error = new Error("Informe o nome da empresa/grupo.");
     error.statusCode = 400;
@@ -768,6 +853,7 @@ function normalizeGroup(payload, existing = {}) {
     description: String(payload.description ?? existing.description ?? "").trim(),
     contracts,
     serviceContracts,
+    products,
     logoDataUrl,
     type: String(payload.type || existing.type || "company"),
     cloudBackupClientId:
@@ -861,6 +947,80 @@ function normalizeAlertSettings(payload = {}, existing = {}) {
   };
 }
 
+function normalizeTicketSlaSettings(payload = {}, existing = {}) {
+  const current = existing.ticketSla || {};
+  const incoming = payload.ticketSla || payload;
+  const urgentHours = Number(incoming.urgentHours ?? current.urgentHours ?? 2);
+  const normalHours = Number(incoming.normalHours ?? current.normalHours ?? 24);
+
+  if (!Number.isFinite(urgentHours) || urgentHours < 1 || urgentHours > 168) {
+    const error = new Error("SLA urgente deve ficar entre 1 e 168 horas.");
+    error.statusCode = 400;
+    throw error;
+  }
+  if (!Number.isFinite(normalHours) || normalHours < 1 || normalHours > 720) {
+    const error = new Error("SLA normal deve ficar entre 1 e 720 horas.");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  return {
+    ...existing,
+    ticketSla: {
+      urgentHours: Math.round(urgentHours),
+      normalHours: Math.round(normalHours)
+    }
+  };
+}
+
+function normalizeTicketAutomationSettings(payload = {}, existing = {}) {
+  const current = existing.ticketAutomation || {};
+  const incoming = payload.ticketAutomation || payload;
+  const enabled = Boolean(incoming.enabled ?? current.enabled ?? TICKET_AUTOMATION_DEFAULTS.enabled);
+  const serverOfflineMinutes = Number(incoming.serverOfflineMinutes ?? current.serverOfflineMinutes ?? TICKET_AUTOMATION_DEFAULTS.serverOfflineMinutes);
+  const linkOfflineMinutes = Number(incoming.linkOfflineMinutes ?? current.linkOfflineMinutes ?? TICKET_AUTOMATION_DEFAULTS.linkOfflineMinutes);
+  const backupOverdueHours = Number(incoming.backupOverdueHours ?? current.backupOverdueHours ?? TICKET_AUTOMATION_DEFAULTS.backupOverdueHours);
+
+  if (!Number.isFinite(serverOfflineMinutes) || serverOfflineMinutes < 5 || serverOfflineMinutes > 1440) {
+    const error = new Error("Tempo para servidor offline deve ficar entre 5 e 1440 minutos.");
+    error.statusCode = 400;
+    throw error;
+  }
+  if (!Number.isFinite(linkOfflineMinutes) || linkOfflineMinutes < 15 || linkOfflineMinutes > 10080) {
+    const error = new Error("Tempo para link offline deve ficar entre 15 e 10080 minutos.");
+    error.statusCode = 400;
+    throw error;
+  }
+  if (!Number.isFinite(backupOverdueHours) || backupOverdueHours < 6 || backupOverdueHours > 720) {
+    const error = new Error("Tempo para backup pendente deve ficar entre 6 e 720 horas.");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  return {
+    ...existing,
+    ticketAutomation: {
+      enabled,
+      serverOfflineMinutes: Math.round(serverOfflineMinutes),
+      linkOfflineMinutes: Math.round(linkOfflineMinutes),
+      backupOverdueHours: Math.round(backupOverdueHours),
+      baselineAt: enabled
+        ? (current.enabled === true ? current.baselineAt || nowIso() : nowIso())
+        : null
+    }
+  };
+}
+
+function normalizeExpirySettings(payload = {}, existing = {}) {
+  const expiryNotifyDays = Number(payload.expiryNotifyDays ?? existing.expiryNotifyDays ?? DEFAULT_EXPIRY_NOTIFY_DAYS);
+  if (!Number.isFinite(expiryNotifyDays) || expiryNotifyDays < 1 || expiryNotifyDays > 120) {
+    const error = new Error("Aviso de vencimento deve ficar entre 1 e 120 dias.");
+    error.statusCode = 400;
+    throw error;
+  }
+  return { ...existing, expiryNotifyDays: Math.round(expiryNotifyDays) };
+}
+
 function listedUsers() {
   return (state.users || []).filter((user) => !user.deletedAt);
 }
@@ -887,11 +1047,11 @@ function canAccessGroup(user, groupId) {
   return userGroupIds(user).has(String(groupId));
 }
 
-const ALL_SECTIONS = ["servers", "networks", "backups", "alerts", "history"];
+const ALL_SECTIONS = ["servers", "networks", "backups", "alerts", "history", "support"];
 
 function userAllowedSections(user) {
   if (!user || isAdminUser(user)) return new Set(ALL_SECTIONS);
-  return new Set(Array.isArray(user.allowedSections) ? user.allowedSections.filter((section) => ALL_SECTIONS.includes(section)) : ALL_SECTIONS);
+  return new Set(["servers", "networks", "backups", "support"]);
 }
 
 function canAccessSection(user, section) {
@@ -1356,6 +1516,7 @@ function createSeedState() {
       }
     ],
     groups: [],
+    productCatalog: [],
     networkDevices: [],
     networkLinks: [],
     networkEvents: [],
@@ -1378,28 +1539,62 @@ async function loadState() {
     ...state,
     ...parsed,
     groups: Array.isArray(parsed.groups) ? parsed.groups : [],
+    productCatalog: Array.isArray(parsed.productCatalog) ? parsed.productCatalog : [],
     probes: Array.isArray(parsed.probes) ? parsed.probes : [],
     networkDevices: Array.isArray(parsed.networkDevices) ? parsed.networkDevices : [],
     networkLinks: Array.isArray(parsed.networkLinks) ? parsed.networkLinks : [],
     networkEvents: Array.isArray(parsed.networkEvents) ? parsed.networkEvents : [],
     probeUpdateRequests: Array.isArray(parsed.probeUpdateRequests) ? parsed.probeUpdateRequests : [],
     tickets: Array.isArray(parsed.tickets) ? parsed.tickets : [],
+    backupReportHistory: Array.isArray(parsed.backupReportHistory) ? parsed.backupReportHistory : [],
     users: Array.isArray(parsed.users) ? parsed.users : [],
     settings: { ...state.settings, ...(parsed.settings || {}) }
   };
   let needsSave = false;
+  state.tickets = state.tickets.map((ticket) => {
+    const ticketNumber = ticketReferenceNumber(ticket) || null;
+    if (ticket.ticketNumber !== ticketNumber || ticket.automationKey === undefined || ticket.automationDay === undefined) needsSave = true;
+    return {
+      ...ticket,
+      ticketNumber,
+      automationKey: ticket.automationKey || null,
+      automationDay: ticket.automationDay || null
+    };
+  });
+  state.ticketSequence = Math.max(
+    Number(state.ticketSequence) || 0,
+    ...state.tickets.map((ticket) => ticketReferenceNumber(ticket))
+  );
   if (!state.settings.probeToken) {
     state.settings.probeToken = randomUUID();
     needsSave = true;
   }
   const normalizedSettings = normalizeBranding(state.settings, state.settings);
   const normalizedAlertSettings = normalizeAlertSettings(state.settings, normalizedSettings);
+  const normalizedTicketSlaSettings = normalizeTicketSlaSettings(state.settings, normalizedAlertSettings);
+  const normalizedTicketAutomationSettings = normalizeTicketAutomationSettings(state.settings, normalizedTicketSlaSettings);
+  const normalizedExpirySettings = normalizeExpirySettings(state.settings, normalizedTicketAutomationSettings);
   if (
-    JSON.stringify(normalizedAlertSettings) !== JSON.stringify(state.settings)
+    JSON.stringify(normalizedExpirySettings) !== JSON.stringify(state.settings)
   ) {
     needsSave = true;
   }
-  state.settings = normalizedAlertSettings;
+  state.settings = normalizedExpirySettings;
+  const catalogByKey = new Map();
+  for (const product of state.productCatalog) {
+    const name = String(product?.name || "").replace(/\s+/g, " ").trim();
+    if (!name) continue;
+    const key = productNameKey(name);
+    if (!catalogByKey.has(key)) {
+      catalogByKey.set(key, { id: String(product.id || randomUUID()), name, createdAt: product.createdAt || nowIso(), updatedAt: product.updatedAt || nowIso() });
+    } else {
+      needsSave = true;
+    }
+  }
+  state.productCatalog = [...catalogByKey.values()];
+  for (const group of state.groups) {
+    if (syncProductCatalogFromProducts(group.products || [])) needsSave = true;
+  }
   if (ensureDefaultAdmin()) {
     needsSave = true;
   }
@@ -1849,6 +2044,7 @@ function publicGroup(group) {
     description: group.description,
     contracts: Array.isArray(group.contracts) ? group.contracts : [],
     serviceContracts: Array.isArray(group.serviceContracts) ? group.serviceContracts : [],
+    products: Array.isArray(group.products) ? group.products : [],
     type: group.type || "company",
     serverCount: servers.length,
     activeServerCount: activeServers.length,
@@ -1863,17 +2059,78 @@ function publicGroup(group) {
   };
 }
 
-const TICKET_STATUSES = new Set(["open", "in_progress", "resolved", "closed"]);
-const TICKET_PRIORITIES = new Set(["low", "normal", "high"]);
+const TICKET_STATUSES = new Set(["open", "in_progress", "waiting_customer", "waiting_third_party", "resolved", "closed"]);
+const TICKET_PRIORITIES = new Set(["low", "normal", "high", "critical"]);
 const TICKET_UPDATE_KINDS = new Set(["comment", "resolution", "status_change"]);
+const TICKET_CATEGORIES = new Set(["incident", "request", "access", "backup", "network", "server", "other"]);
+const TICKET_IMPACTS = new Set(["individual", "department", "company", "critical"]);
+const TICKET_SOURCES = new Set(["manual", "customer", "alert", "integration"]);
+
+function ticketDateValue(value, fallback = null) {
+  if (value === undefined) return fallback;
+  if (!value) return null;
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? fallback : parsed.toISOString();
+}
+
+function ticketReferenceNumber(ticket) {
+  const explicit = Number(ticket?.ticketNumber);
+  if (Number.isInteger(explicit) && explicit > 0) return explicit;
+  const match = String(ticket?.code || "").match(/(\d+)\s*$/);
+  return match ? Number(match[1]) : 0;
+}
+
+function ticketReference(ticket) {
+  const number = ticketReferenceNumber(ticket);
+  return number ? `#${String(number).padStart(4, "0")}` : String(ticket?.code || "Sem codigo");
+}
+
+function nextTicketIdentity() {
+  const existingMax = Math.max(0, ...(state.tickets || []).map((ticket) => ticketReferenceNumber(ticket)));
+  const next = Math.max(Number(state.ticketSequence) || 0, existingMax) + 1;
+  state.ticketSequence = next;
+  return {
+    number: next,
+    code: `#${String(next).padStart(4, "0")}`
+  };
+}
 
 function listedTickets() {
   return (state.tickets || []).filter((ticket) => !ticket.deletedAt);
 }
 
-// Modulo de suporte e 100% admin — nao existe visao "cliente" pra chamado
-// ainda (abertura por cliente fica pra depois), entao nao ha scoping por
-// empresa aqui como em listedGroups/scopedServers.
+function groupHasSupportContract(groupId) {
+  const group = listedGroups().find((item) => item.id === groupId);
+  return Boolean(group && Array.isArray(group.contracts) && group.contracts.includes("support"));
+}
+
+function canViewTicket(user, ticket) {
+  if (!user || !ticket || !canAccessSection(user, "support")) return false;
+  if (isAdminUser(user)) return true;
+  return ticket.requesterUserId === user.id && canAccessGroup(user, ticket.groupId);
+}
+
+function scopedTickets(user = null) {
+  if (!user || !canAccessSection(user, "support")) return [];
+  return listedTickets().filter((ticket) => canViewTicket(user, ticket));
+}
+
+function normalizeTicketAttachments(incoming, existing = []) {
+  if (!Array.isArray(incoming)) return Array.isArray(existing) ? existing : [];
+  return incoming.slice(0, 3).map((attachment) => {
+    const name = String(attachment?.name || "anexo").trim().slice(0, 180);
+    const type = String(attachment?.type || "application/octet-stream").trim().slice(0, 120);
+    const dataUrl = String(attachment?.dataUrl || "");
+    const match = dataUrl.match(/^data:([^;,]+);base64,([A-Za-z0-9+/=]+)$/);
+    if (!match || Buffer.byteLength(match[2], "base64") > 2 * 1024 * 1024) {
+      const error = new Error("Cada anexo deve ter no maximo 2 MB.");
+      error.statusCode = 400;
+      throw error;
+    }
+    return { id: randomUUID(), name, type, dataUrl, size: Buffer.byteLength(match[2], "base64") };
+  });
+}
+
 function normalizeTicket(payload, existing = {}) {
   const title = String(payload.title ?? existing.title ?? "").trim().slice(0, 160);
   const groupId = String(payload.groupId ?? existing.groupId ?? "").trim();
@@ -1889,6 +2146,9 @@ function normalizeTicket(payload, existing = {}) {
   }
   const priority = String(payload.priority ?? existing.priority ?? "normal").trim();
   const status = String(payload.status ?? existing.status ?? "open").trim();
+  const category = String(payload.category ?? existing.category ?? "incident").trim();
+  const impact = String(payload.impact ?? existing.impact ?? "individual").trim();
+  const source = String(payload.source ?? existing.source ?? "manual").trim();
   const assignedTo = payload.assignedTo !== undefined ? String(payload.assignedTo || "").trim() || null : existing.assignedTo ?? null;
 
   return {
@@ -1897,29 +2157,75 @@ function normalizeTicket(payload, existing = {}) {
     groupId,
     description: String(payload.description ?? existing.description ?? "").trim().slice(0, 5000),
     requesterName: String(payload.requesterName ?? existing.requesterName ?? "").trim().slice(0, 160),
+    requesterUserId: payload.requesterUserId ?? existing.requesterUserId ?? null,
+    location: String(payload.location ?? existing.location ?? "").trim().slice(0, 180),
     priority: TICKET_PRIORITIES.has(priority) ? priority : "normal",
     status: TICKET_STATUSES.has(status) ? status : "open",
+    category: TICKET_CATEGORIES.has(category) ? category : "incident",
+    impact: TICKET_IMPACTS.has(impact) ? impact : "individual",
+    source: TICKET_SOURCES.has(source) ? source : "manual",
+    assetType: String(payload.assetType ?? existing.assetType ?? "").trim().slice(0, 40),
+    assetName: String(payload.assetName ?? existing.assetName ?? "").trim().slice(0, 160),
+    firstResponseDueAt: ticketDateValue(payload.firstResponseDueAt, existing.firstResponseDueAt ?? null),
+    resolutionDueAt: ticketDateValue(payload.resolutionDueAt, existing.resolutionDueAt ?? null),
+    firstRespondedAt: existing.firstRespondedAt ?? null,
     assignedTo,
+    attachments: normalizeTicketAttachments(payload.attachments, existing.attachments),
     updates: Array.isArray(existing.updates) ? existing.updates : [],
     updatedAt: nowIso()
   };
 }
 
-function publicTicket(ticket) {
+function defaultTicketResolutionDueAt(priority, createdAt = nowIso()) {
+  if (priority === "low") return null;
+  const ticketSla = state.settings.ticketSla || {};
+  const hours = priority === "critical"
+    ? Number(ticketSla.urgentHours || 2)
+    : Number(ticketSla.normalHours || 24);
+  const createdAtMs = new Date(createdAt).getTime();
+  if (!Number.isFinite(createdAtMs) || !Number.isFinite(hours) || hours <= 0) return null;
+  return new Date(createdAtMs + hours * 60 * 60 * 1000).toISOString();
+}
+
+function applyDefaultTicketSla(ticket) {
+  if (!ticket.resolutionDueAt) {
+    ticket.resolutionDueAt = defaultTicketResolutionDueAt(ticket.priority, ticket.createdAt);
+  }
+  return ticket;
+}
+
+function publicTicket(ticket, viewer = null) {
   const group = listedGroups().find((item) => item.id === ticket.groupId);
   const assignee = ticket.assignedTo ? listedUsers().find((user) => user.id === ticket.assignedTo) : null;
   return {
     id: ticket.id,
+    code: ticket.code || "",
+    ticketNumber: ticketReferenceNumber(ticket) || null,
+    reference: ticketReference(ticket),
     groupId: ticket.groupId,
     groupName: group?.name || "",
     title: ticket.title,
     description: ticket.description || "",
     requesterName: ticket.requesterName || "",
+    requesterUserId: ticket.requesterUserId || null,
+    location: ticket.location || "",
     priority: ticket.priority || "normal",
     status: ticket.status || "open",
+    category: ticket.category || "incident",
+    impact: ticket.impact || "individual",
+    source: ticket.source || "manual",
+    automationKey: isAdminUser(viewer) ? ticket.automationKey || null : null,
+    assetType: ticket.assetType || "",
+    assetName: ticket.assetName || "",
+    firstResponseDueAt: ticket.firstResponseDueAt || null,
+    resolutionDueAt: ticket.resolutionDueAt || null,
+    firstRespondedAt: ticket.firstRespondedAt || null,
     assignedTo: ticket.assignedTo || null,
     assignedToName: assignee?.name || "",
-    updates: Array.isArray(ticket.updates) ? ticket.updates : [],
+    attachments: (ticket.attachments || []).map(({ id, name, type, size }) => ({ id, name, type, size })),
+    updates: (Array.isArray(ticket.updates) ? ticket.updates : []).filter(
+      (update) => !viewer || isAdminUser(viewer) || update.visibility !== "internal"
+    ),
     createdAt: ticket.createdAt,
     updatedAt: ticket.updatedAt,
     closedAt: ticket.closedAt || null,
@@ -1932,7 +2238,7 @@ function publicTicket(ticket) {
 // e atualiza o ticket — igual addNetworkEvent faz pra transicao de link, mas
 // aqui as duas coisas (comentario + mudanca de status) podem acontecer juntas
 // no mesmo POST, entao viram duas entradas na mesma chamada.
-function appendTicketUpdate(ticket, payload, actorName) {
+function appendTicketUpdate(ticket, payload, actor) {
   const kind = TICKET_UPDATE_KINDS.has(payload.kind) ? payload.kind : "comment";
   const message = String(payload.message || "").trim().slice(0, 5000);
   if (!message) {
@@ -1941,12 +2247,18 @@ function appendTicketUpdate(ticket, payload, actorName) {
     throw error;
   }
   const now = nowIso();
+  if (!ticket.firstRespondedAt && (kind === "comment" || kind === "resolution")) ticket.firstRespondedAt = now;
+  const actorName = actor?.name || actor || null;
+  const actorUserId = actor?.id || null;
+  const visibility = payload.visibility === "internal" && isAdminUser(actor) ? "internal" : "public";
   const entries = [
     {
       id: randomUUID(),
       kind,
       message,
       authorName: actorName || null,
+      authorUserId: actorUserId,
+      visibility,
       createdAt: now
     }
   ];
@@ -1958,17 +2270,232 @@ function appendTicketUpdate(ticket, payload, actorName) {
       kind: "status_change",
       message: null,
       authorName: actorName || null,
+      authorUserId: actorUserId,
+      visibility,
       createdAt: now,
       fromStatus: ticket.status,
       toStatus: newStatus
     });
     ticket.status = newStatus;
     ticket.closedAt = newStatus === "resolved" || newStatus === "closed" ? now : null;
+    if (!ticket.firstRespondedAt && newStatus === "in_progress") ticket.firstRespondedAt = now;
   }
 
   ticket.updates = [...(ticket.updates || []), ...entries];
   ticket.updatedAt = now;
   return ticket;
+}
+
+function operationalDayKey(value = new Date()) {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/Sao_Paulo",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  }).formatToParts(value instanceof Date ? value : new Date(value));
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `${values.year}-${values.month}-${values.day}`;
+}
+
+function elapsedAtLeast(value, milliseconds) {
+  const timestamp = new Date(value || 0).getTime();
+  return Number.isFinite(timestamp) && timestamp > 0 && Date.now() - timestamp >= milliseconds;
+}
+
+function automaticTicketExists(automationKey, day = operationalDayKey()) {
+  return (state.tickets || []).some(
+    (ticket) => ticket.automationKey === automationKey && ticket.automationDay === day
+  );
+}
+
+function addAutomaticTicket({ automationKey, groupId, title, description, category, impact, assetType, assetName }) {
+  const day = operationalDayKey();
+  if (!groupId || automaticTicketExists(automationKey, day)) return null;
+  const group = listedGroups().find((item) => item.id === groupId);
+  if (!group) return null;
+
+  const now = nowIso();
+  const identity = nextTicketIdentity();
+  const priority = impact === "critical" ? "critical" : "high";
+  const ticket = {
+    id: randomUUID(),
+    ticketNumber: identity.number,
+    code: identity.code,
+    automationKey,
+    automationDay: day,
+    createdAt: now,
+    updatedAt: now,
+    closedAt: null,
+    title: String(title).slice(0, 160),
+    groupId,
+    description: String(description).slice(0, 5000),
+    requesterName: "ServerWatch",
+    requesterUserId: null,
+    location: "Monitoramento automatico",
+    priority,
+    status: "open",
+    category: TICKET_CATEGORIES.has(category) ? category : "incident",
+    impact: TICKET_IMPACTS.has(impact) ? impact : "company",
+    source: "alert",
+    assetType: String(assetType || "").slice(0, 40),
+    assetName: String(assetName || "").slice(0, 160),
+    firstResponseDueAt: null,
+    resolutionDueAt: defaultTicketResolutionDueAt(priority, now),
+    firstRespondedAt: null,
+    assignedTo: null,
+    attachments: [],
+    updates: [
+      {
+        id: randomUUID(),
+        kind: "comment",
+        message: "Chamado aberto automaticamente pelo monitoramento do ServerWatch.",
+        authorName: "ServerWatch",
+        authorUserId: null,
+        visibility: "internal",
+        createdAt: now
+      }
+    ]
+  };
+  state.tickets.unshift(ticket);
+  return ticket;
+}
+
+function cloudBackupOverdue(backupSet) {
+  const status = String(backupSet?.status || "").trim().toLowerCase();
+  if (["", "info", "nomon", "unknown"].includes(status)) return false;
+  const lastSuccessAt = new Date(backupSet?.lastSuccessBackupJobDate || backupSet?.lastBackupJobDate || 0).getTime();
+  if (!Number.isFinite(lastSuccessAt) || lastSuccessAt <= 0) return status !== "success";
+  return Date.now() - lastSuccessAt >= getTicketAutomationSettings().backupOverdueHours * 60 * 60 * 1000;
+}
+
+function getTicketAutomationSettings() {
+  const configured = state.settings.ticketAutomation || {};
+  return {
+    enabled: configured.enabled ?? TICKET_AUTOMATION_DEFAULTS.enabled,
+    serverOfflineMinutes: Number(configured.serverOfflineMinutes ?? TICKET_AUTOMATION_DEFAULTS.serverOfflineMinutes),
+    linkOfflineMinutes: Number(configured.linkOfflineMinutes ?? TICKET_AUTOMATION_DEFAULTS.linkOfflineMinutes),
+    backupOverdueHours: Number(configured.backupOverdueHours ?? TICKET_AUTOMATION_DEFAULTS.backupOverdueHours),
+    baselineAt: configured.baselineAt || null
+  };
+}
+
+function getExpiryNotifyDays() {
+  const configured = Number(state.settings.expiryNotifyDays ?? DEFAULT_EXPIRY_NOTIFY_DAYS);
+  return Number.isFinite(configured) ? Math.min(120, Math.max(1, Math.round(configured))) : DEFAULT_EXPIRY_NOTIFY_DAYS;
+}
+
+function occurredAfterAutomationBaseline(value, automation) {
+  const baselineAt = new Date(automation?.baselineAt || 0).getTime();
+  if (!Number.isFinite(baselineAt) || baselineAt <= 0) return true;
+  const eventAt = new Date(value || 0).getTime();
+  return Number.isFinite(eventAt) && eventAt >= baselineAt;
+}
+
+function formatAutomaticBackupItem(item) {
+  const source = item.source === "pbs" ? "PBS" : "MSP Cloud";
+  const label = item.label || "Backup sem identificacao";
+  const lastAt = item.lastAt ? new Date(item.lastAt).toLocaleString("pt-BR") : "sem sucesso registrado";
+  return `- ${source}: ${label} (ultimo backup: ${lastAt})`;
+}
+
+async function runTicketAutomation({ force = false } = {}) {
+  if (ticketAutomationRunning || (!force && Date.now() - ticketAutomationLastRunAt < TICKET_AUTOMATION_CHECK_MS)) return;
+  ticketAutomationRunning = true;
+  ticketAutomationLastRunAt = Date.now();
+  try {
+    const automation = getTicketAutomationSettings();
+    if (!automation.enabled) return;
+    const created = [];
+    const serverThresholdMs = automation.serverOfflineMinutes * 60 * 1000;
+    for (const server of listedServers()) {
+      if (!server.isActive || server.currentStatus !== "offline" || !server.groupId) continue;
+      if (!occurredAfterAutomationBaseline(server.statusChangedAt, automation)) continue;
+      if (!elapsedAtLeast(server.statusChangedAt, serverThresholdMs)) continue;
+      const ticket = addAutomaticTicket({
+        automationKey: `server-offline:${server.id}`,
+        groupId: server.groupId,
+        title: `Servidor inoperante: ${server.name || server.hostname}`,
+        description: `O servidor ${server.name || server.hostname} permanece offline ha mais de ${automation.serverOfflineMinutes} minutos.\n\nHost: ${server.hostname}\nInicio da indisponibilidade: ${new Date(server.statusChangedAt).toLocaleString("pt-BR")}\nUltima verificacao: ${server.lastCheckedAt ? new Date(server.lastCheckedAt).toLocaleString("pt-BR") : "nao registrada"}\nDetalhe: ${server.lastError || "sem detalhe adicional"}`,
+        category: "server",
+        impact: "company",
+        assetType: "server",
+        assetName: server.name || server.hostname
+      });
+      if (ticket) created.push(ticket);
+    }
+
+    const linkThresholdMs = automation.linkOfflineMinutes * 60 * 1000;
+    for (const link of listedNetworkLinks()) {
+      if (!link.isActive || link.featured === false || !link.groupId) continue;
+      if (publicNetworkLink(link).displayStatus !== "offline") continue;
+      if (!occurredAfterAutomationBaseline(link.statusChangedAt, automation)) continue;
+      if (!elapsedAtLeast(link.statusChangedAt, linkThresholdMs)) continue;
+      const ticket = addAutomaticTicket({
+        automationKey: `network-link-offline:${link.id}`,
+        groupId: link.groupId,
+        title: `Link inoperante: ${link.name}`,
+        description: `O link ${link.name} permanece inoperante ha mais de ${automation.linkOfflineMinutes} minutos.\n\nAlvo monitorado: ${link.targetHost || "nao informado"}\nInicio da indisponibilidade: ${new Date(link.statusChangedAt).toLocaleString("pt-BR")}\nUltima verificacao: ${link.lastCheckedAt ? new Date(link.lastCheckedAt).toLocaleString("pt-BR") : "nao registrada"}\nDetalhe: ${link.lastError || "sem detalhe adicional"}`,
+        category: "network",
+        impact: "company",
+        assetType: "network_link",
+        assetName: link.name
+      });
+      if (ticket) created.push(ticket);
+    }
+
+    const backupIssuesByGroup = new Map();
+    const addBackupIssue = (groupId, item) => {
+      if (!groupId) return;
+      if (!backupIssuesByGroup.has(groupId)) backupIssuesByGroup.set(groupId, []);
+      backupIssuesByGroup.get(groupId).push(item);
+    };
+    for (const client of decorateCloudBackupClients(state.cloudBackup?.clients || [])) {
+      for (const backupSet of client.backupSets || []) {
+        const backupAt = backupSet.lastSuccessBackupJobDate || backupSet.lastBackupJobDate || state.cloudBackup?.fetchedAt;
+        if (!occurredAfterAutomationBaseline(backupAt, automation)) continue;
+        if (!cloudBackupOverdue(backupSet)) continue;
+        addBackupIssue(client.groupId, {
+          source: "msp",
+          label: `${client.name} - ${backupSet.backupSetName || backupSet.loginDescription || "backup"}`,
+          lastAt: backupSet.lastSuccessBackupJobDate || backupSet.lastBackupJobDate || null
+        });
+      }
+    }
+    for (const item of decorateProxmoxItems(state.proxmoxBackup?.items || [])) {
+      const lastAt = item.lastSnapshotAt;
+      if (!occurredAfterAutomationBaseline(lastAt || state.proxmoxBackup?.fetchedAt, automation)) continue;
+      const overdue = !lastAt || elapsedAtLeast(lastAt, automation.backupOverdueHours * 60 * 60 * 1000);
+      const failed = ["failed", "error"].includes(String(item.verifyState || "").toLowerCase());
+      if (!overdue && !failed) continue;
+      addBackupIssue(item.groupId, {
+        source: "pbs",
+        label: item.serverName || item.comment || `${item.namespace || "raiz"} - ${item.backupId}`,
+        lastAt
+      });
+    }
+    for (const [groupId, issues] of backupIssuesByGroup) {
+      if (!issues.length) continue;
+      const group = listedGroups().find((item) => item.id === groupId);
+      const ticket = addAutomaticTicket({
+        automationKey: `backups-overdue:${groupId}`,
+        groupId,
+        title: `Backups pendentes: ${group?.name || "empresa"}`,
+        description: `Foram identificados ${issues.length} backup${issues.length === 1 ? " pendente" : "s pendentes"} ha mais de ${automation.backupOverdueHours} horas.\n\n${issues.slice(0, 40).map(formatAutomaticBackupItem).join("\n")}${issues.length > 40 ? `\n- ... e mais ${issues.length - 40} item(ns)` : ""}`,
+        category: "backup",
+        impact: "company",
+        assetType: "backup",
+        assetName: `${issues.length} backup${issues.length === 1 ? "" : "s"}`
+      });
+      if (ticket) created.push(ticket);
+    }
+
+    if (created.length) {
+      scheduleSave();
+      broadcastSnapshot();
+    }
+  } finally {
+    ticketAutomationRunning = false;
+  }
 }
 
 function listedNetworkDevices() {
@@ -2523,37 +3050,44 @@ function formatBrDate(dateStr) {
   return year && month && day ? `${day}/${month}/${year}` : String(dateStr || "");
 }
 
-// Varre os serviceContracts de todas as empresas e gera um alerta quando a
-// data de fim entra na janela de aviso (10 dias). `expiryAlertedAt` no
-// proprio contrato evita reenviar o mesmo alerta a cada ciclo; se a data foi
-// adiada pra fora da janela, reseta o controle pra permitir um novo alerta
-// caso ela volte a entrar na janela depois.
+// Varre contratos e produtos com validade das empresas. A mesma janela de
+// aviso e o mesmo mecanismo de deduplicacao sao usados para os dois tipos.
 function checkContractExpirations() {
   let changed = false;
+  const notifyDays = getExpiryNotifyDays();
   for (const group of listedGroups()) {
-    for (const contract of group.serviceContracts || []) {
-      const daysLeft = daysUntilDate(contract.endDate);
+    const expiringEntries = [
+      ...(group.serviceContracts || []).map((entry) => ({ ...entry, kind: "contract" })),
+      ...(group.products || []).map((entry) => ({ ...entry, kind: "product" }))
+    ];
+    for (const entry of expiringEntries) {
+      const source = entry.kind === "product"
+        ? (group.products || []).find((item) => item.id === entry.id)
+        : (group.serviceContracts || []).find((item) => item.id === entry.id);
+      if (!source) continue;
+      const daysLeft = daysUntilDate(source.endDate);
       if (daysLeft === null) continue;
-      if (daysLeft > CONTRACT_EXPIRY_NOTIFY_DAYS) {
-        if (contract.expiryAlertedAt) {
-          contract.expiryAlertedAt = null;
+      if (daysLeft > notifyDays) {
+        if (source.expiryAlertedAt) {
+          source.expiryAlertedAt = null;
           changed = true;
         }
         continue;
       }
-      if (contract.expiryAlertedAt) continue;
+      if (source.expiryAlertedAt) continue;
+      const entryLabel = entry.kind === "product" ? "Produto" : "Contrato";
       const message =
         daysLeft < 0
-          ? `${contract.label} de ${group.name} venceu ha ${Math.abs(daysLeft)} dia(s) (${formatBrDate(contract.endDate)}).`
+          ? `${entryLabel} ${source.name || source.label} de ${group.name} venceu ha ${Math.abs(daysLeft)} dia(s) (${formatBrDate(source.endDate)}).`
           : daysLeft === 0
-          ? `${contract.label} de ${group.name} vence hoje (${formatBrDate(contract.endDate)}).`
-          : `${contract.label} de ${group.name} vence em ${daysLeft} dia(s) (${formatBrDate(contract.endDate)}).`;
+          ? `${entryLabel} ${source.name || source.label} de ${group.name} vence hoje (${formatBrDate(source.endDate)}).`
+          : `${entryLabel} ${source.name || source.label} de ${group.name} vence em ${daysLeft} dia(s) (${formatBrDate(source.endDate)}).`;
       const createdAt = nowIso();
       const alert = {
         id: randomUUID(),
         groupId: group.id,
         groupName: group.name,
-        type: "contract_expiring",
+        type: entry.kind === "product" ? "product_expiring" : "contract_expiring",
         severity: daysLeft < 0 ? "critical" : "warning",
         message,
         createdAt,
@@ -2564,7 +3098,7 @@ function checkContractExpirations() {
       };
       state.alerts.unshift(alert);
       state.alerts = state.alerts.slice(0, 200);
-      contract.expiryAlertedAt = createdAt;
+      source.expiryAlertedAt = createdAt;
       changed = true;
       broadcast({ type: "alert", alert });
     }
@@ -2608,12 +3142,13 @@ function snapshot(currentUser = null) {
     summary: summary(currentUser),
     servers: visibleServers.map(publicServer),
     groups: visibleGroups(currentUser).map(publicGroup),
+    productCatalog: isAdminUser(currentUser) ? listedProductCatalog() : [],
     networkDevices: visibleNetworkDevices.map(publicNetworkDevice),
     networkLinks: visibleNetworkLinks.map(publicNetworkLink),
     networkEvents: scopedNetworkEvents(currentUser).slice(0, 100),
     networkDiscoverySuggestions: isAdminUser(currentUser) ? networkDiscoverySuggestions() : [],
     probes: isAdminUser(currentUser) ? (state.probes || []).filter((probe) => !probe.deletedAt).map(publicProbe) : [],
-    tickets: isAdminUser(currentUser) ? listedTickets().map(publicTicket) : [],
+    tickets: scopedTickets(currentUser).map((ticket) => publicTicket(ticket, currentUser)),
     users: isAdminUser(currentUser) ? listedUsers().map(publicUser) : [],
     currentUser: currentUser ? publicUser(currentUser) : null,
     settings: publicSettings(currentUser),
@@ -2915,6 +3450,7 @@ function startMonitor() {
       }
     }
     checkProbeStaleness(now).catch((error) => console.error("Falha ao verificar probes sem contato", error));
+    runTicketAutomation().catch((error) => console.error("Falha ao aplicar regras automaticas de chamados", error));
   }, CHECK_LOOP_MS);
 }
 
@@ -2935,6 +3471,8 @@ async function refreshCloudBackup() {
   }
   try {
     state.cloudBackup = await fetchCloudBackupSummary(apiKey);
+    recordCompanyBackupHistory();
+    await runTicketAutomation({ force: true });
   } catch (error) {
     state.cloudBackup = {
       ...(state.cloudBackup || emptyCloudBackupState()),
@@ -3030,6 +3568,283 @@ function withProxmoxDatastoreHistory(previousState = {}, nextState = {}) {
   };
 }
 
+const BACKUP_REPORT_HISTORY_DAYS = 365;
+
+function reportHistoryDay(value = new Date()) {
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return new Date().toISOString().slice(0, 10);
+  return date.toISOString().slice(0, 10);
+}
+
+function emptyBackupReportCounts() {
+  return { success: 0, warning: 0, error: 0, monitored: 0, unmonitored: 0, total: 0 };
+}
+
+function addBackupReportCounts(target, source = {}) {
+  target.success += Number(source.success) || 0;
+  target.warning += Number(source.warning) || 0;
+  target.error += Number(source.error) || 0;
+  target.monitored += Number(source.monitored) || 0;
+  target.unmonitored += Number(source.unmonitored) || 0;
+  target.total += Number(source.total) || 0;
+  return target;
+}
+
+function cloudBackupReportCounts(client) {
+  const status = client?.status || {};
+  const success = Number(status.success) || 0;
+  const warning = Number(status.warning) || 0;
+  const error = Number(status.error) || 0;
+  const unmonitored = (Number(status.nomon) || 0) + (Number(status.info) || 0);
+  return {
+    success,
+    warning,
+    error,
+    monitored: success + warning + error,
+    unmonitored,
+    total: Number(status.total) || success + warning + error + unmonitored
+  };
+}
+
+function proxmoxBackupReportCounts(items = []) {
+  return items.reduce((counts, item) => {
+    const status = item?.status || proxmoxItemStatus(item);
+    counts.total += 1;
+    counts.monitored += 1;
+    if (status === "success") counts.success += 1;
+    else if (status === "warning" || status === "late") counts.warning += 1;
+    else counts.error += 1;
+    return counts;
+  }, emptyBackupReportCounts());
+}
+
+function currentGroupBackupReport(groupId) {
+  const cloudClients = decorateCloudBackupClients(state.cloudBackup?.clients || []).filter((client) => client.groupId === groupId);
+  const proxmoxItems = decorateProxmoxItems(state.proxmoxBackup?.items || []).filter((item) => item.groupId === groupId);
+  const cloud = cloudClients.reduce((counts, client) => addBackupReportCounts(counts, cloudBackupReportCounts(client)), emptyBackupReportCounts());
+  const proxmox = proxmoxBackupReportCounts(proxmoxItems);
+  const combined = addBackupReportCounts({ ...emptyBackupReportCounts() }, cloud);
+  addBackupReportCounts(combined, proxmox);
+  return { cloud, proxmox, combined, cloudClients, proxmoxItems };
+}
+
+function normalizeBackupReportHistory(entries = []) {
+  if (!Array.isArray(entries)) return [];
+  return entries
+    .map((entry) => ({
+      groupId: String(entry?.groupId || "").trim(),
+      day: String(entry?.day || "").trim(),
+      sampledAt: entry?.sampledAt || null,
+      cloud: { ...emptyBackupReportCounts(), ...(entry?.cloud || {}) },
+      proxmox: { ...emptyBackupReportCounts(), ...(entry?.proxmox || {}) },
+      combined: { ...emptyBackupReportCounts(), ...(entry?.combined || {}) }
+    }))
+    .filter((entry) => entry.groupId && /^\d{4}-\d{2}-\d{2}$/.test(entry.day));
+}
+
+function recordCompanyBackupHistory() {
+  const now = new Date();
+  const day = reportHistoryDay(now);
+  const cutoff = new Date(now);
+  cutoff.setUTCDate(cutoff.getUTCDate() - BACKUP_REPORT_HISTORY_DAYS);
+  const cutoffDay = reportHistoryDay(cutoff);
+  const byKey = new Map(
+    normalizeBackupReportHistory(state.backupReportHistory)
+      .filter((entry) => entry.day >= cutoffDay)
+      .map((entry) => [`${entry.groupId}:${entry.day}`, entry])
+  );
+
+  for (const group of listedGroups()) {
+    const current = currentGroupBackupReport(group.id);
+    if (!current.combined.total) continue;
+    byKey.set(`${group.id}:${day}`, {
+      groupId: group.id,
+      day,
+      sampledAt: now.toISOString(),
+      cloud: current.cloud,
+      proxmox: current.proxmox,
+      combined: current.combined
+    });
+  }
+
+  state.backupReportHistory = [...byKey.values()].sort(
+    (left, right) => left.groupId.localeCompare(right.groupId) || left.day.localeCompare(right.day)
+  );
+}
+
+function reportRangeDays(value) {
+  const days = Number(value);
+  return [7, 30, 90].includes(days) ? days : 30;
+}
+
+function reportDays(days) {
+  const items = [];
+  const now = new Date();
+  for (let offset = days - 1; offset >= 0; offset -= 1) {
+    const date = new Date(now);
+    date.setUTCDate(date.getUTCDate() - offset);
+    items.push(reportHistoryDay(date));
+  }
+  return items;
+}
+
+function reportEventBucket(events, days) {
+  const wanted = new Set(days);
+  const buckets = new Map(days.map((day) => [day, 0]));
+  for (const event of events) {
+    const day = reportHistoryDay(event.createdAt || event.timestamp);
+    if (wanted.has(day)) buckets.set(day, (buckets.get(day) || 0) + 1);
+  }
+  return buckets;
+}
+
+function reportExpiryItems(group) {
+  const now = new Date();
+  const nowMs = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+  const horizonMs = nowMs + getExpiryNotifyDays() * 24 * 60 * 60 * 1000;
+  return [
+    ...(group.serviceContracts || []).map((item) => ({ ...item, type: "Contrato", label: item.label || "Contrato" })),
+    ...(group.products || []).map((item) => ({ ...item, type: "Produto", label: item.name || "Produto" }))
+  ]
+    .map((item) => {
+      const endAt = Date.parse(`${item.endDate}T00:00:00Z`);
+      if (!Number.isFinite(endAt) || endAt > horizonMs) return null;
+      return { ...item, daysLeft: Math.round((endAt - nowMs) / (24 * 60 * 60 * 1000)) };
+    })
+    .filter(Boolean)
+    .sort((left, right) => left.daysLeft - right.daysLeft);
+}
+
+function buildCompanyReport(groupId, rawDays, user) {
+  const group = listedGroups().find((item) => item.id === groupId);
+  if (!group) {
+    const error = new Error("Empresa nao encontrada.");
+    error.statusCode = 404;
+    throw error;
+  }
+  if (!canAccessGroup(user, group.id)) {
+    const error = new Error("Sem acesso a esta empresa.");
+    error.statusCode = 403;
+    throw error;
+  }
+
+  const days = reportRangeDays(rawDays);
+  const dayKeys = reportDays(days);
+  const startedAt = Date.now() - days * 24 * 60 * 60 * 1000;
+  const servers = listedServers().filter((server) => server.groupId === group.id);
+  const activeServers = servers.filter((server) => server.isActive !== false);
+  const publicServers = activeServers.map(publicServer);
+  const links = listedNetworkLinks().filter((link) => link.groupId === group.id && link.isActive !== false && link.featured !== false).map(publicNetworkLink);
+  const unifiSites = decorateUnifiSites(state.unifiNetwork?.sites || []).filter((site) => site.groupId === group.id);
+  const currentBackup = currentGroupBackupReport(group.id);
+
+  const serverEvents = (state.events || [])
+    .filter((event) => event.groupId === group.id && eventTimestampMs(event) >= startedAt && (isServerFailureEvent(event) || isServerRecoveryEvent(event)))
+    .sort((left, right) => eventTimestampMs(right) - eventTimestampMs(left));
+  const networkEvents = (state.networkEvents || [])
+    .filter((event) => event.groupId === group.id && eventTimestampMs(event) >= startedAt)
+    .sort((left, right) => eventTimestampMs(right) - eventTimestampMs(left));
+  const serverFailures = serverEvents.filter(isServerFailureEvent);
+  const serverRecoveries = serverEvents.filter(isServerRecoveryEvent);
+  const linkProblems = networkEvents.filter((event) => ["offline", "degraded"].includes(event.currentStatus));
+
+  const historyByDay = new Map(
+    normalizeBackupReportHistory(state.backupReportHistory)
+      .filter((entry) => entry.groupId === group.id)
+      .map((entry) => [entry.day, entry])
+  );
+  const today = reportHistoryDay();
+  historyByDay.set(today, {
+    groupId: group.id,
+    day: today,
+    cloud: currentBackup.cloud,
+    proxmox: currentBackup.proxmox,
+    combined: currentBackup.combined
+  });
+
+  const serverFailureBuckets = reportEventBucket(serverFailures, dayKeys);
+  const linkProblemBuckets = reportEventBucket(linkProblems, dayKeys);
+  const trend = dayKeys.map((day) => {
+    const entry = historyByDay.get(day);
+    const counts = entry?.combined || emptyBackupReportCounts();
+    return {
+      day,
+      success: Number(counts.success) || 0,
+      warning: Number(counts.warning) || 0,
+      error: Number(counts.error) || 0,
+      monitored: Number(counts.monitored) || 0,
+      serverFailures: serverFailureBuckets.get(day) || 0,
+      linkProblems: linkProblemBuckets.get(day) || 0
+    };
+  });
+
+  const tickets = scopedTickets(user).filter((ticket) => ticket.groupId === group.id);
+  const openTickets = tickets.filter((ticket) => !["resolved", "closed"].includes(ticket.status));
+  const slaOverdue = openTickets.filter((ticket) => ticket.resolutionDueAt && Date.parse(ticket.resolutionDueAt) < Date.now());
+  const backupIssues = [
+    ...currentBackup.cloudClients.flatMap((client) => (client.backupSets || []).filter((job) => ["error", "warning"].includes(String(job.status || "").toLowerCase())).map((job) => ({
+      type: "backup",
+      provider: "MSP Cloud Backup Pro",
+      name: job.name || job.backupSetName || client.name,
+      status: String(job.status || "warning").toLowerCase(),
+      detail: client.name
+    }))),
+    ...currentBackup.proxmoxItems.filter((item) => ["error", "warning", "late"].includes(item.status)).map((item) => ({
+      type: "backup",
+      provider: "Proxmox Backup Server",
+      name: item.serverName || item.comment || item.backupId || item.namespace,
+      status: item.status,
+      detail: item.namespace || ""
+    }))
+  ].slice(0, 12);
+
+  const latestIssues = [
+    ...publicServers.filter((server) => server.currentStatus === "offline").map((server) => ({ type: "server", name: server.name, status: "offline", detail: server.lastError || "Servidor sem resposta" })),
+    ...links.filter((link) => ["offline", "degraded", "probe_unreachable"].includes(link.displayStatus)).map((link) => ({ type: "link", name: link.name, status: link.displayStatus, detail: link.lastError || link.provider || "Link com anomalia" })),
+    ...backupIssues,
+    ...slaOverdue.map((ticket) => ({ type: "ticket", name: ticket.reference || ticket.title, status: "overdue", detail: "SLA de solucao vencido" }))
+  ].slice(0, 16);
+
+  const monitoredBackup = currentBackup.combined.monitored;
+  const backupSuccessRate = monitoredBackup ? Math.round((currentBackup.combined.success / monitoredBackup) * 1000) / 10 : null;
+  return {
+    generatedAt: nowIso(),
+    period: { days, start: new Date(startedAt).toISOString(), end: nowIso() },
+    company: { id: group.id, name: group.name, type: group.type || "company" },
+    coverage: {
+      servers: { total: servers.length, active: activeServers.length, online: publicServers.filter((server) => server.currentStatus === "online").length, offline: publicServers.filter((server) => server.currentStatus === "offline").length, paused: servers.filter((server) => server.isActive === false).length, probe: publicServers.filter((server) => server.checkSource === "probe").length },
+      links: { total: links.length, online: links.filter((link) => link.displayStatus === "online").length, degraded: links.filter((link) => link.displayStatus === "degraded").length, offline: links.filter((link) => link.displayStatus === "offline").length },
+      unifi: { sites: unifiSites.length, devices: unifiSites.reduce((total, site) => total + (site.devices || []).length, 0), online: unifiSites.reduce((total, site) => total + Number(site.summary?.online || 0), 0), offline: unifiSites.reduce((total, site) => total + Number(site.summary?.offline || 0), 0) }
+    },
+    availability: {
+      serverFailures: serverFailures.length,
+      serverRecoveries: serverRecoveries.length,
+      linkProblems: linkProblems.length,
+      currentlyOffline: publicServers.filter((server) => server.currentStatus === "offline").length + links.filter((link) => link.displayStatus === "offline").length
+    },
+    backups: {
+      ...currentBackup.combined,
+      cloud: currentBackup.cloud,
+      proxmox: currentBackup.proxmox,
+      successRate: backupSuccessRate,
+      protectedBytes: currentBackup.proxmoxItems.reduce((total, item) => total + (Number(item.sizeBytes) || 0), 0),
+      issueCount: backupIssues.length
+    },
+    support: { open: openTickets.length, slaOverdue: slaOverdue.length, total: tickets.length },
+    trends: trend,
+    exceptions: latestIssues,
+    expirations: reportExpiryItems(group),
+    recentEvents: [...serverEvents, ...networkEvents].sort((left, right) => eventTimestampMs(right) - eventTimestampMs(left)).slice(0, 12).map((event) => ({
+      id: event.id,
+      type: event.category === "network" ? "link" : "server",
+      name: event.serverName || event.linkName || "Ativo monitorado",
+      status: event.currentStatus || event.kind || "evento",
+      detail: event.message || "Alteracao de estado registrada",
+      createdAt: event.createdAt
+    }))
+  };
+}
+
 function getUnifiConfig() {
   const baseUrl = String(process.env.UNIFI_BASE_URL || state.settings.unifiBaseUrl || "").trim().replace(/\/+$/, "");
   const apiKey = String(process.env.UNIFI_API_KEY || state.settings.unifiApiKey || "").trim();
@@ -3098,6 +3913,8 @@ async function refreshProxmoxBackup() {
     const previousProxmoxBackup = state.proxmoxBackup || emptyProxmoxBackupState();
     const nextProxmoxBackup = await fetchProxmoxBackupSummary(config);
     state.proxmoxBackup = withProxmoxDatastoreHistory(previousProxmoxBackup, nextProxmoxBackup);
+    recordCompanyBackupHistory();
+    await runTicketAutomation({ force: true });
   } catch (error) {
     state.proxmoxBackup = {
       ...(state.proxmoxBackup || emptyProxmoxBackupState()),
@@ -3237,6 +4054,12 @@ function publicSettings(currentUser = null) {
       staging: state.settings.alertSeverityByEnvironment?.staging || "warning",
       development: state.settings.alertSeverityByEnvironment?.development || "info"
     },
+    ticketSla: {
+      urgentHours: Number(state.settings.ticketSla?.urgentHours || 2),
+      normalHours: Number(state.settings.ticketSla?.normalHours || 24)
+    },
+    ticketAutomation: isAdminUser(currentUser) ? getTicketAutomationSettings() : null,
+    expiryNotifyDays: isAdminUser(currentUser) ? getExpiryNotifyDays() : null,
     probeToken: isAdminUser(currentUser) ? getProbeToken() : "",
     probeTokenSource: process.env.SERVERWATCH_PROBE_TOKEN ? "environment" : "generated",
     cloudBackupConfigured: Boolean(getCloudBackupApiKey()),
@@ -4249,6 +5072,15 @@ async function handleApi(req, res) {
 
     if (handleMeta(req, res, { parts, session })) return;
 
+    if (req.method === "GET" && parts[1] === "reports" && parts[2] === "company" && parts[3]) {
+      try {
+        const groupId = decodeURIComponent(parts[3]);
+        return sendJson(res, 200, { report: buildCompanyReport(groupId, url.searchParams.get("days"), session.user) });
+      } catch (error) {
+        return sendJson(res, error.statusCode || 500, { error: error.message || "Falha ao gerar relatorio." });
+      }
+    }
+
     if (parts[1] === "probes") {
       if (handleProbes(req, res, { parts, session })) return;
     }
@@ -4263,6 +5095,10 @@ async function handleApi(req, res) {
 
     if (parts[1] === "groups") {
       if (await handleGroups(req, res, { parts, session })) return;
+    }
+
+    if (parts[1] === "product-catalog") {
+      if (await handleProductCatalog(req, res, { parts, session })) return;
     }
 
     if (parts[1] === "tickets") {
@@ -4349,6 +5185,9 @@ const handleSettings = createSettingsHandler({
   },
   normalizeBranding,
   normalizeAlertSettings,
+  normalizeTicketSlaSettings,
+  normalizeTicketAutomationSettings,
+  normalizeExpirySettings,
   normalizeCloudBackupSettings,
   normalizeProxmoxSettings,
   normalizeUnifiSettings,
@@ -4388,6 +5227,34 @@ const handleGroups = createGroupsHandler({
   publicGroup,
   normalizeGroup,
   addGroup: (group) => state.groups.unshift(group),
+  syncProductCatalogFromProducts,
+  scheduleSave,
+  broadcastSnapshot
+});
+const handleProductCatalog = createProductCatalogHandler({
+  randomId: randomUUID,
+  nowIso,
+  readBody,
+  sendJson,
+  notFound,
+  requireAdmin,
+  listedProducts: listedProductCatalog,
+  normalizeProductName,
+  addProduct: (product) => state.productCatalog.unshift(product),
+  updateProduct: (product, previousName) => {
+    for (const group of listedGroups()) {
+      for (const assignment of group.products || []) {
+        if (assignment.productId === product.id || productNameKey(assignment.name) === productNameKey(previousName)) {
+          assignment.productId = product.id;
+          assignment.name = product.name;
+        }
+      }
+    }
+  },
+  removeProduct: (id) => {
+    state.productCatalog = state.productCatalog.filter((product) => product.id !== id);
+  },
+  productUsageCount: (id) => listedGroups().filter((group) => (group.products || []).some((product) => product.productId === id)).length,
   scheduleSave,
   broadcastSnapshot
 });
@@ -4398,9 +5265,16 @@ const handleTickets = createTicketsHandler({
   sendJson,
   notFound,
   requireAdmin,
+  isAdminUser,
+  canAccessGroup,
+  canViewTicket,
+  groupHasSupportContract,
   listedTickets,
+  scopedTickets,
   publicTicket,
   normalizeTicket,
+  applyDefaultTicketSla,
+  nextTicketIdentity,
   addTicket: (ticket) => state.tickets.unshift(ticket),
   appendTicketUpdate,
   scheduleSave,

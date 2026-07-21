@@ -9,7 +9,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="/styles.css?v=20260710-remove-legacy-probes-1" />
+    <link rel="stylesheet" href="/styles.css?v=20260721-company-reports-spacing-2" />
   </head>
   <body>
     <section class="bootstrap-screen" id="bootScreen" aria-label="Carregando ServerWatch">
@@ -52,7 +52,7 @@
           </div>
         </div>
 
-        <nav class="nav-tabs" aria-label="Navegacao principal">
+        <nav class="nav-tabs admin-only" aria-label="Navegacao administrativa">
           <span class="sidebar-section-title">Monitoramento</span>
           <a class="nav-tab active" href="/dashboard" data-view="dashboard"><svg class="nav-tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="9" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/><rect x="14" y="12" width="7" height="9" rx="1"/><rect x="3" y="16" width="7" height="5" rx="1"/></svg><span>Dashboard</span></a>
           <a class="nav-tab" href="/servidores" data-view="servers"><svg class="nav-tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="6" rx="1.4"/><rect x="3" y="14" width="18" height="6" rx="1.4"/><circle cx="7" cy="7" r="0.6" fill="currentColor" stroke="none"/><circle cx="7" cy="17" r="0.6" fill="currentColor" stroke="none"/></svg><span>Servidores</span></a>
@@ -61,8 +61,9 @@
           <span class="sidebar-section-title">Registros</span>
           <a class="nav-tab" href="/alertas" data-view="alerts"><svg class="nav-tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 8a6 6 0 1 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg><span>Alertas</span></a>
           <a class="nav-tab" href="/historico" data-view="history"><svg class="nav-tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15.5 14"/></svg><span>Historico</span></a>
-          <span class="sidebar-section-title admin-only">Suporte</span>
-          <a class="nav-tab admin-only" href="/suporte" data-view="tickets"><svg class="nav-tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 13a8 8 0 0 1 16 0"/><path d="M4 13v4a2 2 0 0 0 2 2h1v-6H5a1 1 0 0 0-1 1Z"/><path d="M20 13v4a2 2 0 0 1-2 2h-1v-6h1a1 1 0 0 1 2 1Z"/><path d="M9 19a3 3 0 0 0 6 0"/></svg><span>Suporte</span></a>
+          <a class="nav-tab admin-only" href="/relatorios" data-view="reports"><svg class="nav-tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 20V10"/><path d="M12 20V4"/><path d="M19 20v-7"/><path d="M3 20h18"/></svg><span>Relatorios</span></a>
+          <span class="sidebar-section-title">Suporte</span>
+          <a class="nav-tab" href="/suporte" data-view="tickets"><svg class="nav-tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 13a8 8 0 0 1 16 0"/><path d="M4 13v4a2 2 0 0 0 2 2h1v-6H5a1 1 0 0 0-1 1Z"/><path d="M20 13v4a2 2 0 0 1-2 2h-1v-6h1a1 1 0 0 1 2 1Z"/><path d="M9 19a3 3 0 0 0 6 0"/></svg><span>Suporte</span></a>
           <span class="sidebar-section-title admin-only">Administracao</span>
           <a class="nav-tab admin-only" href="/empresas" data-view="groups"><svg class="nav-tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="3" width="14" height="18" rx="1"/><rect x="8" y="7" width="2" height="2"/><rect x="14" y="7" width="2" height="2"/><rect x="8" y="13" width="2" height="2"/><rect x="14" y="13" width="2" height="2"/></svg><span>Empresas/Clientes</span></a>
           <a class="nav-tab admin-only" href="/probes" data-view="probes"><svg class="nav-tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="2"/><path d="M16.24 7.76a6 6 0 0 1 0 8.49"/><path d="M7.76 16.24a6 6 0 0 1 0-8.49"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/><path d="M4.93 19.07a10 10 0 0 1 0-14.14"/></svg><span>Probes</span></a>
@@ -70,6 +71,17 @@
           <a class="nav-tab admin-only" href="/integracoes" data-view="integrations"><svg class="nav-tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 12h8"/><path d="M12 8v8"/><path d="M7 3v4"/><path d="M17 3v4"/><path d="M7 17v4"/><path d="M17 17v4"/><rect x="4" y="7" width="16" height="10" rx="3"/></svg><span>Integracoes</span></a>
           <a class="nav-tab route-only admin-only" href="/admin" data-view="admin"><svg class="nav-tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="3" width="14" height="18" rx="1"/><rect x="8" y="7" width="2" height="2"/><rect x="14" y="7" width="2" height="2"/><rect x="8" y="13" width="2" height="2"/><rect x="14" y="13" width="2" height="2"/></svg><span>Administracao</span></a>
           <span class="sidebar-section-title">Sistema</span>
+          <a class="nav-tab" href="/configuracoes" data-view="settings"><svg class="nav-tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 13a7.97 7.97 0 0 0 0-2l2-1.5-2-3.4-2.4.9a8 8 0 0 0-1.7-1l-.3-2.5h-4l-.3 2.5a8 8 0 0 0-1.7 1l-2.4-.9-2 3.4 2 1.5a7.97 7.97 0 0 0 0 2l-2 1.5 2 3.4 2.4-.9c.5.4 1.1.8 1.7 1l.3 2.5h4l.3-2.5a8 8 0 0 0 1.7-1l2.4.9 2-3.4Z"/></svg><span>Configuracoes</span></a>
+        </nav>
+
+        <nav class="nav-tabs client-only" aria-label="Portal do cliente" hidden>
+          <span class="sidebar-section-title">Atendimento</span>
+          <a class="nav-tab" href="/suporte" data-view="tickets"><svg class="nav-tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 13a8 8 0 0 1 16 0"/><path d="M4 13v4a2 2 0 0 0 2 2h1v-6H5a1 1 0 0 0-1 1Z"/><path d="M20 13v4a2 2 0 0 1-2 2h-1v-6h1a1 1 0 0 1 2 1Z"/><path d="M9 19a3 3 0 0 0 6 0"/></svg><span>Suporte</span></a>
+          <span class="sidebar-section-title">Minha empresa</span>
+          <a class="nav-tab" href="/servidores" data-view="servers"><svg class="nav-tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="6" rx="1.4"/><rect x="3" y="14" width="18" height="6" rx="1.4"/></svg><span>Servidores</span></a>
+          <a class="nav-tab" href="/redes" data-view="networks"><svg class="nav-tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="6" cy="6" r="2.2"/><circle cx="18" cy="6" r="2.2"/><circle cx="12" cy="18" r="2.2"/><line x1="7.8" y1="7.2" x2="10.6" y2="16.2"/><line x1="16.2" y1="7.2" x2="13.4" y2="16.2"/></svg><span>Redes</span></a>
+          <a class="nav-tab" href="/backups" data-view="backups"><svg class="nav-tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v6c0 1.66 3.58 3 8 3s8-1.34 8-3V5"/><path d="M4 11v6c0 1.66 3.58 3 8 3s8-1.34 8-3v-6"/></svg><span>Backups</span></a>
+          <span class="sidebar-section-title">Conta</span>
           <a class="nav-tab" href="/configuracoes" data-view="settings"><svg class="nav-tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 13a7.97 7.97 0 0 0 0-2l2-1.5-2-3.4-2.4.9a8 8 0 0 0-1.7-1l-.3-2.5h-4l-.3 2.5a8 8 0 0 0-1.7 1l-2.4-.9-2 3.4 2 1.5a7.97 7.97 0 0 0 0 2l-2 1.5 2 3.4 2.4-.9c.5.4 1.1.8 1.7 1l.3 2.5h4l.3-2.5a8 8 0 0 0 1.7-1l2.4.9 2-3.4Z"/></svg><span>Configuracoes</span></a>
         </nav>
 
@@ -89,7 +101,7 @@
             <h1 id="topbarTitle">Disponibilidade dos servidores</h1>
           </div>
           <div class="topbar-actions">
-            <details class="notification-menu" id="notificationMenu">
+            <details class="notification-menu admin-only" id="notificationMenu">
               <summary class="ghost-button notification-toggle" id="notifyButton">
                 <span>Notificacoes</span>
                 <strong id="notificationBadge">0</strong>
@@ -249,8 +261,8 @@
                 <span id="networkLinkCount">0 links monitorados</span>
               </div>
               <div class="panel-title-actions admin-only">
-                <button class="ghost-button compact" id="openNetworkDeviceForm" type="button">Adicionar dispositivo</button>
-                <button class="primary-button compact" id="openNetworkLinkForm" type="button">Adicionar link</button>
+                  <button class="ghost-button compact admin-only" id="openNetworkDeviceForm" type="button">Adicionar dispositivo</button>
+                  <button class="primary-button compact admin-only" id="openNetworkLinkForm" type="button">Adicionar link</button>
               </div>
             </div>
 
@@ -598,67 +610,143 @@
                 <h2>Cadastro de empresas/clientes</h2>
                 <span id="groupCount">0 empresas</span>
               </div>
-              <button class="primary-button compact admin-only" id="openGroupForm" type="button">Adicionar empresa</button>
             </div>
-            <div class="groups-list" id="groupsList"></div>
+            <div class="company-management-tabs" role="tablist" aria-label="Gestao de empresas">
+              <button class="company-management-tab active" type="button" data-group-management-view="companies" role="tab" aria-selected="true">Empresas</button>
+              <button class="company-management-tab" type="button" data-group-management-view="catalog" role="tab" aria-selected="false">Catalogo de produtos</button>
+            </div>
+            <section id="groupsDirectoryPanel">
+              <div class="groups-toolbar">
+                <label class="groups-search-field">
+                  <span>Buscar empresa</span>
+                  <input id="groupSearch" type="search" autocomplete="off" placeholder="Nome da empresa ou cliente" />
+                </label>
+                <button class="ghost-button compact" id="toggleGroupExpiryFilter" type="button" aria-pressed="false">Vencimentos proximos</button>
+                <button class="primary-button compact admin-only" id="openGroupForm" type="button">Adicionar empresa</button>
+              </div>
+              <div class="groups-list" id="groupsList"></div>
+            </section>
+            <section class="product-catalog-panel" id="productCatalogPanel" hidden>
+              <div class="panel-title compact-title">
+                <div>
+                  <h3>Catalogo de produtos</h3>
+                  <span>Evite nomes duplicados e reutilize os produtos entre empresas.</span>
+                </div>
+                <span id="productCatalogCount">0 produtos</span>
+              </div>
+              <form class="product-catalog-form" id="productCatalogForm">
+                <input id="productCatalogId" type="hidden" />
+                <label>
+                  Nome do produto
+                  <input id="productCatalogName" required maxlength="120" placeholder="Ex: Antivírus Kaspersky" />
+                </label>
+                <div class="dialog-actions">
+                  <button class="primary-button compact" type="submit" id="saveProductCatalog">Adicionar produto</button>
+                  <button class="ghost-button compact" type="button" id="cancelProductCatalogEdit" hidden>Cancelar</button>
+                </div>
+              </form>
+              <div class="product-catalog-list" id="productCatalogList"></div>
+            </section>
           </div>
         </section>
 
-        <section class="view admin-only" id="ticketsView">
-          <section class="simple-dashboard network-dashboard" aria-label="Chamados de suporte">
-            <div class="panel-title">
+        <section class="view" id="ticketsView">
+          <section class="client-support-portal client-only" id="clientSupportPortal" hidden aria-label="Portal de suporte">
+            <header class="client-support-header">
               <div>
-                <h2>Chamados de suporte</h2>
-                <span id="ticketCount">0 chamados</span>
+                <p class="eyebrow">Portal do cliente</p>
+                <h2>Como podemos ajudar?</h2>
+                <p>Acompanhe suas solicitacoes e converse com a equipe de suporte.</p>
               </div>
-              <div class="panel-title-actions">
-                <button class="primary-button compact" id="openTicketForm" type="button">Adicionar chamado</button>
+              <button class="primary-button" id="clientNewTicket" type="button">Abrir chamado</button>
+            </header>
+            <div class="client-company-context" id="clientCompanyContext"></div>
+            <div class="client-support-content" id="clientSupportContent"></div>
+          </section>
+
+          <section class="simple-dashboard support-workbench admin-only" aria-label="Chamados de suporte">
+            <div id="ticketQueueScreen">
+              <div class="panel-title">
+                <div>
+                  <p class="eyebrow">Central de suporte</p>
+                  <h2>Fila de chamados</h2>
+                  <span id="ticketCount">0 chamados</span>
+                </div>
+                <div class="panel-title-actions">
+                  <button class="primary-button compact" id="openTicketForm" type="button">Adicionar chamado</button>
+                </div>
               </div>
-            </div>
 
-            <div class="alert-filters">
-              <label>
-                Empresa
-                <select id="ticketGroupFilter">
-                  <option value="all">Todas empresas</option>
-                </select>
-              </label>
-              <label>
-                Status
-                <select id="ticketStatusFilter">
-                  <option value="all">Todos status</option>
-                  <option value="open">Aberto</option>
-                  <option value="in_progress">Em andamento</option>
-                  <option value="resolved">Resolvido</option>
-                  <option value="closed">Fechado</option>
-                </select>
-              </label>
-              <label>
-                Prioridade
-                <select id="ticketPriorityFilter">
-                  <option value="all">Todas prioridades</option>
-                  <option value="low">Baixa</option>
-                  <option value="normal">Normal</option>
-                  <option value="high">Alta</option>
-                </select>
-              </label>
-            </div>
+              <div class="support-toolbar" aria-label="Filtros da fila">
+                <label class="support-search">
+                  Buscar
+                  <input id="ticketSearch" type="search" placeholder="Codigo, titulo, solicitante ou ativo" />
+                </label>
+                <label>
+                  Empresa
+                  <select id="ticketGroupFilter">
+                    <option value="all">Todas empresas</option>
+                  </select>
+                </label>
+                <label>
+                  Status
+                  <select id="ticketStatusFilter">
+                    <option value="all">Todos status</option>
+                    <option value="open">Aberto</option>
+                    <option value="in_progress">Em andamento</option>
+                    <option value="waiting_customer">Aguardando cliente</option>
+                    <option value="waiting_third_party">Aguardando terceiro</option>
+                    <option value="resolved">Resolvido</option>
+                    <option value="closed">Fechado</option>
+                  </select>
+                </label>
+                <label>
+                  Prioridade
+                  <select id="ticketPriorityFilter">
+                    <option value="all">Todas prioridades</option>
+                    <option value="low">Baixa</option>
+                    <option value="normal">Normal</option>
+                    <option value="high">Alta</option>
+                    <option value="critical">Urgente</option>
+                  </select>
+                </label>
+                <label>
+                  Responsavel
+                  <select id="ticketAssigneeFilter">
+                    <option value="all">Todos responsaveis</option>
+                  </select>
+                </label>
+              </div>
 
-            <div class="network-layout">
-              <section class="network-list-panel">
+              <div class="ticket-quick-filters" id="ticketQuickFilters" role="group" aria-label="Atalhos da fila">
+                <button class="ghost-button compact active" type="button" data-ticket-quick="all">Todos</button>
+                <button class="ghost-button compact" type="button" data-ticket-quick="attention">Em atendimento</button>
+                <button class="ghost-button compact" type="button" data-ticket-quick="overdue">SLA vencido</button>
+                <button class="ghost-button compact" type="button" data-ticket-quick="unassigned">Sem responsavel</button>
+              </div>
+
+              <section class="support-queue-panel">
                 <div class="panel-title compact-title">
-                  <h3>Chamados</h3>
+                  <h3>Chamados em atendimento</h3>
                   <span id="ticketListCount">0 chamados</span>
                 </div>
-                <div class="network-link-list" id="ticketsList"></div>
-              </section>
-
-              <aside class="network-detail-panel" id="ticketDetailPanel">
-                <div class="empty-state compact-empty">
-                  <strong>Nenhum chamado selecionado</strong>
-                  <span>Selecione um chamado para ver detalhes, historico e adicionar atualizacoes.</span>
+                <div class="ticket-table-head" aria-hidden="true">
+                  <span></span><span>Chamado</span><span>Empresa</span><span>Responsavel</span><span>Prioridade</span><span>Status</span><span>SLA</span>
                 </div>
-              </aside>
+                <div class="ticket-table-list" id="ticketsList"></div>
+              </section>
+            </div>
+
+            <div class="ticket-workspace-screen" id="ticketWorkspaceScreen" hidden>
+              <div class="support-layout">
+                <main class="ticket-workspace-panel" id="ticketWorkspacePanel"></main>
+              <aside class="support-detail-panel" id="ticketDetailPanel">
+                <div class="empty-state compact-empty">
+                    <strong>Resumo do chamado</strong>
+                    <span>Os tempos e dados operacionais aparecem aqui.</span>
+                  </div>
+                </aside>
+              </div>
             </div>
           </section>
         </section>
@@ -793,6 +881,33 @@
           </div>
         </section>
 
+        <section class="view" id="reportsView">
+          <div class="reports-workspace">
+            <section class="report-toolbar" aria-label="Filtros do relatorio">
+              <div>
+                <span class="eyebrow">Relatorios operacionais</span>
+                <h2>Saude por empresa</h2>
+              </div>
+              <div class="report-toolbar-controls">
+                <label>
+                  Empresa
+                  <select id="reportGroupSelect"></select>
+                </label>
+                <label>
+                  Periodo
+                  <select id="reportPeriodSelect">
+                    <option value="7">Ultimos 7 dias</option>
+                    <option value="30" selected>Ultimos 30 dias</option>
+                    <option value="90">Ultimos 90 dias</option>
+                  </select>
+                </label>
+                <button class="ghost-button compact" id="refreshReportButton" type="button">Atualizar</button>
+              </div>
+            </section>
+            <div id="reportContent" aria-live="polite"></div>
+          </div>
+        </section>
+
         <section class="view" id="usersView">
           <div class="wide-panel">
             <div class="panel-title">
@@ -877,7 +992,7 @@
               </div>
             </form>
 
-            <form class="settings-form settings-block" id="alertSettingsForm">
+            <form class="settings-form settings-block admin-only" id="alertSettingsForm">
               <div class="panel-title compact-title">
                 <div>
                   <h2>Alertas</h2>
@@ -938,6 +1053,83 @@
                 <button class="primary-button" type="submit">Salvar alertas</button>
               </div>
             </form>
+            <form class="settings-form settings-block admin-only" id="ticketSlaSettingsForm">
+              <div class="panel-title compact-title">
+                <div>
+                  <h2>SLA dos chamados</h2>
+                  <span>Prazos padrao para resolucao</span>
+                </div>
+              </div>
+              <div class="form-grid">
+                <label>
+                  Urgente (horas)
+                  <input id="ticketSlaUrgentHours" type="number" min="1" max="168" step="1" />
+                </label>
+                <label>
+                  Normal e alta (horas)
+                  <input id="ticketSlaNormalHours" type="number" min="1" max="720" step="1" />
+                </label>
+              </div>
+              <p class="settings-copy">Chamados de baixa prioridade permanecem sem SLA. Os novos chamados recebem o prazo automaticamente conforme a prioridade.</p>
+              <div class="dialog-actions">
+                <button class="primary-button" type="submit">Salvar SLA</button>
+              </div>
+            </form>
+            <form class="settings-form settings-block admin-only" id="ticketAutomationSettingsForm">
+              <div class="panel-title compact-title">
+                <div>
+                  <h2>Abertura automatica de chamados</h2>
+                  <span>Crie chamados somente para indisponibilidades persistentes</span>
+                </div>
+              </div>
+              <div class="toggle-grid">
+                <label class="toggle-row">
+                  <input id="ticketAutomationEnabled" type="checkbox" />
+                  <span>Ativar abertura automatica</span>
+                </label>
+              </div>
+              <div class="form-grid">
+                <label>
+                  Servidor offline (minutos)
+                  <input id="ticketAutomationServerMinutes" type="number" min="5" max="1440" step="1" />
+                </label>
+                <label>
+                  Link offline (minutos)
+                  <input id="ticketAutomationLinkMinutes" type="number" min="15" max="10080" step="1" />
+                </label>
+                <label>
+                  Backup pendente (horas)
+                  <input id="ticketAutomationBackupHours" type="number" min="6" max="720" step="1" />
+                </label>
+              </div>
+              <p class="settings-copy">Cada ativo ou empresa gera no maximo um chamado automatico por dia. Ao ativar, somente novas ocorrencias entram na fila; incidentes anteriores ficam fora da nova base.</p>
+              <div class="dialog-actions">
+                <button class="primary-button" type="submit">Salvar automacao</button>
+              </div>
+            </form>
+            <form class="settings-form settings-block admin-only" id="expirySettingsForm">
+              <div class="panel-title compact-title">
+                <div>
+                  <h2>Vencimentos</h2>
+                  <span>Alertas de contratos e produtos com validade.</span>
+                </div>
+              </div>
+              <div class="form-grid">
+                <label>
+                  Avisar com antecedencia de (dias)
+                  <input id="expiryNotifyDays" type="number" min="1" max="120" step="1" />
+                </label>
+              </div>
+              <p class="settings-copy">O aviso e enviado uma unica vez por ciclo. Renovar ou alterar a data libera um novo alerta quando o item entrar novamente na janela definida.</p>
+              <div class="dialog-actions">
+                <button class="primary-button" type="submit">Salvar vencimentos</button>
+              </div>
+            </form>
+            <section class="settings-form settings-block client-only" hidden>
+              <div class="panel-title compact-title"><div><h2>Conta</h2><span>Seguranca do acesso</span></div></div>
+              <p class="settings-copy">Mantenha sua senha atualizada. As empresas disponiveis sao definidas pela equipe administrativa.</p>
+              <div class="dialog-actions"><button class="ghost-button" id="changePasswordButton" type="button">Alterar senha</button></div>
+            </section>
           </div>
         </section>
 
@@ -1483,6 +1675,14 @@
           <button class="ghost-button compact" type="button" id="addGroupContract">Adicionar contrato</button>
         </fieldset>
 
+        <fieldset class="group-contracts-fieldset">
+          <legend>Produtos com validade</legend>
+          <p>Escolha um item do catalogo ou informe um novo produto. A data de vencimento e obrigatoria e exclusiva desta empresa.</p>
+          <datalist id="productCatalogSuggestions"></datalist>
+          <div id="groupProductsList"></div>
+          <button class="ghost-button compact" type="button" id="addGroupProduct">Adicionar produto</button>
+        </fieldset>
+
         <section class="group-logo-editor">
           <div class="brand-preview compact">
             <span class="brand-mark" id="groupLogoPreview" aria-hidden="true">
@@ -1536,6 +1736,31 @@
               <option value="low">Baixa</option>
               <option value="normal" selected>Normal</option>
               <option value="high">Alta</option>
+              <option value="critical">Urgente</option>
+            </select>
+          </label>
+        </div>
+
+        <div class="form-grid">
+          <label>
+            Categoria
+            <select id="ticketCategory">
+              <option value="incident">Incidente</option>
+              <option value="request">Solicitacao</option>
+              <option value="access">Acesso</option>
+              <option value="backup">Backup</option>
+              <option value="network">Rede</option>
+              <option value="server">Servidor</option>
+              <option value="other">Outro</option>
+            </select>
+          </label>
+          <label>
+            Impacto
+            <select id="ticketImpact">
+              <option value="individual">Individual</option>
+              <option value="department">Departamento</option>
+              <option value="company">Empresa inteira</option>
+              <option value="critical">Critico</option>
             </select>
           </label>
         </div>
@@ -1552,6 +1777,45 @@
             </select>
           </label>
         </div>
+
+        <div class="form-grid">
+          <label>
+            Tipo de ativo
+            <select id="ticketAssetType">
+              <option value="">Nao vinculado</option>
+              <option value="server">Servidor</option>
+              <option value="network_link">Link de rede</option>
+              <option value="network_device">Dispositivo de rede</option>
+              <option value="backup">Backup</option>
+              <option value="other">Outro</option>
+            </select>
+          </label>
+          <label>
+            Ativo relacionado
+            <input id="ticketAssetName" placeholder="Ex: SRV-APP ou Link internet" />
+          </label>
+        </div>
+
+        <div class="form-grid">
+          <label>
+            Origem
+            <select id="ticketSource">
+              <option value="manual">Abertura manual</option>
+              <option value="customer">Solicitacao do cliente</option>
+              <option value="alert">Alerta do monitoramento</option>
+              <option value="integration">Integracao</option>
+            </select>
+          </label>
+          <label>
+            Prazo da primeira resposta
+            <input id="ticketFirstResponseDueAt" type="datetime-local" />
+          </label>
+        </div>
+
+        <label>
+          Prazo de solucao
+          <input id="ticketResolutionDueAt" type="datetime-local" />
+        </label>
 
         <label>
           Descricao
@@ -1709,6 +1973,6 @@
     </dialog>
 
     <div class="toast-stack" id="toastStack" aria-live="polite"></div>
-    <script src="/app.js?v=20260710-remove-legacy-probes-1" type="module"></script>
+    <script src="/app.js?v=20260721-company-reports-1" type="module"></script>
   </body>
 </html>

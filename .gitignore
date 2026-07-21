@@ -8,7 +8,13 @@ dist/
 downloads/node-v*-win-x64.zip
 downloads/node-v*-linux-*.tar.xz
 tools/probe/windows/dotnet-installer/assets/node.exe
-.codex_ssh/
-.serverwatch.pid
 tools/probe/windows/*/bin/
 tools/probe/windows/*/obj/
+tools/probe/windows/*/publish/
+tools/linkprobe/windows/*/bin/
+tools/linkprobe/windows/*/obj/
+tools/linkprobe/windows/*/publish/
+*.bak-*
+*.root
+.codex_ssh/
+.serverwatch.pid

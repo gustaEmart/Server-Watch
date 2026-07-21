@@ -562,48 +562,6 @@ Recomendacao:
 9. Validar tudo em Docker com MongoDB.
 10. So depois iniciar SNMP generico.
 
-## Solucao de problemas - Network Probe (SNMP)
-
-### O dispositivo detectado automaticamente nao e o equipamento certo (gateway padrao != IP do roteador SNMP)
-
-**Sintoma:** o probe se registra normalmente e reporta `discoveredGatewayIp`, mas esse IP nao e o roteador/firewall que voce quer monitorar via SNMP. Ou o dispositivo cadastrado a partir da sugestao automatica nunca fica `SNMP OK`.
-
-**Causa:** o Network Probe detecta apenas a **rota padrao** (`0.0.0.0/0`) da maquina onde ele esta instalado, via `ip route`/`Get-NetRoute`. Isso e so uma sugestao de conveniencia para o banner de descoberta - nao e um requisito do sistema. Em maquinas com mais de uma interface de rede, ou quando o equipamento SNMP nao e o gateway padrao da maquina do probe (por exemplo, um servidor cujo trafego de internet sai por um firewall, mas que tambem enxerga um MikroTik de gerenciamento em outra sub-rede), o IP detectado nao bate com o IP real do equipamento.
-
-**Como confirmar:** compare o `discoveredGatewayIp` mostrado no cadastro do probe com o IP real do equipamento (`/ip address print` no RouterOS, por exemplo). Se forem diferentes, esse e o problema.
-
-**Correcao:** cadastre o dispositivo de rede manualmente em `Redes -> Adicionar dispositivo`, usando o IP real do equipamento no campo "IP de gerenciamento" - ignore a sugestao automatica. Nada no backend exige que esse IP corresponda ao gateway detectado; a unica exigencia real e que a maquina onde o Network Probe esta instalado consiga alcançar esse IP via UDP `161`.
-
-**Antes de cadastrar, valide a conectividade UDP** (nao TCP - `Test-NetConnection -Port 161` sempre falha para SNMP porque testa TCP por padrao, e SNMP e UDP; essa falha nao significa que o SNMP esta bloqueado). Rode no Windows, na maquina onde o probe esta instalado, reaproveitando o Node.js e o cliente SNMP ja instalados junto do probe:
-
-```powershell
-@'
-import { snmpGet } from "C:/ProgramData/ServerWatchNetworkProbe/snmp/client.js";
-
-const host = process.argv[2];
-const community = process.argv[3];
-
-if (!host || !community) {
-  console.log("Uso: node snmp-test-client.mjs <ip> <community>");
-  process.exit(1);
-}
-
-console.log(`Testando SNMP GET sysDescr contra ${host}:161 community=${community}`);
-try {
-  const result = await snmpGet(host, 161, community, ["1.3.6.1.2.1.1.1.0", "1.3.6.1.2.1.1.5.0"], { timeoutMs: 4000, retries: 1 });
-  console.log("OK:", JSON.stringify(result, null, 2));
-} catch (error) {
-  console.log("FALHOU:", error.message);
-}
-'@ | Set-Content -Path "$env:TEMP\snmp-test.mjs" -Encoding UTF8
-
-& "C:\ProgramData\ServerWatchNetworkProbe\node\node.exe" "$env:TEMP\snmp-test.mjs" <IP_DO_EQUIPAMENTO> <COMMUNITY>
-```
-
-No Linux, use o mesmo script trocando o caminho do modulo para `/opt/serverwatch-network-probe/snmp/client.js` e o binario Node para `/opt/serverwatch-network-probe/node/bin/node`.
-
-Se retornar `OK` com o `sysDescr` do equipamento, o cadastro manual no ServerWatch vai funcionar. Se retornar `FALHOU: Timeout`, o problema e conectividade/firewall/community no equipamento - ver a secao de firewall do RouterOS mais abaixo (`/ip firewall filter print`, `/tool sniffer quick port=161`) ou o equivalente no fabricante em questao.
-
 ## Fora do escopo inicial
 
 - configuracao automatica de MikroTik/pfSense/Fortigate;

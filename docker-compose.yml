@@ -26,12 +26,16 @@ services:
       UNIFI_API_KEY: ${UNIFI_API_KEY:-}
       UNIFI_TLS_FINGERPRINT: ${UNIFI_TLS_FINGERPRINT:-}
       UNIFI_API_BASE_PATH: ${UNIFI_API_BASE_PATH:-/proxy/network/integration}
+      NODE_OPTIONS: "--max-old-space-size=512"
+    mem_limit: 768m
     ports:
       - "${SERVERWATCH_PORT:-3000}:3000"
       - "${SERVERWATCH_HTTP_PORT:-80}:3000"
     volumes:
       - serverwatch_data:/app/data
       - ./downloads:/app/downloads:ro
+      - ./public:/app/public:ro
+      - ./server.js:/app/server.js:ro
     depends_on:
       mongodb:
         condition: service_healthy
@@ -53,6 +57,8 @@ services:
     environment:
       MONGO_INITDB_ROOT_USERNAME: ${MONGO_INITDB_ROOT_USERNAME:-serverwatch}
       MONGO_INITDB_ROOT_PASSWORD: ${MONGO_INITDB_ROOT_PASSWORD:-troque-essa-senha}
+    command: mongod --wiredTigerCacheSizeGB 0.25
+    mem_limit: 768m
     volumes:
       - mongodb_data:/data/db
     healthcheck:

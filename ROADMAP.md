@@ -1,246 +1,121 @@
-# Roadmap e backlog
+# Roadmap do ServerWatch
 
-Este roadmap lista apenas evolucoes ainda pendentes para o ServerWatch. Itens ja implementados, como login, MongoDB, cadastro de usuarios, empresas, probes basicos, instaladores, white label, tema claro/escuro e rotas da interface foram removidos daqui.
+Este documento acompanha apenas evolucoes futuras. As entregas concluidas ficam
+registradas no changelog e servem como base para as proximas prioridades.
 
-## Prioridade 1 - Confianca operacional
+## Entregas consolidadas
 
-### Estado do probe separado do estado do servidor
+- Plataforma Docker com MongoDB, autenticacao, usuarios e permissoes por empresa.
+- Gestao de empresas, contratos, produtos com validade, logos e identidade white label.
+- Probes de servidores para Windows e Linux, instaladores, comandos guiados, atualizacao e
+  coleta de inventario/metricas do host.
+- Distincao entre estado do servidor, estado do probe e verificacoes auxiliares de rede.
+- Hierarquia manual de hosts, virtualizadores e VMs.
+- Monitoramento de links por LinkProbe, scripts RouterOS/MikroTik e Network Probe SNMP,
+  incluindo Fortigate SD-WAN e status por empresa.
+- Integracao UniFi Network com sites, dispositivos e vinculo administrativo por empresa.
+- Monitoramento de backups MSP Cloud Backup Pro e Proxmox Backup Server (PBS).
+- Modulo de suporte com chamados, SLA, atualizacoes internas/publicas e regras automaticas.
+- Relatorios operacionais por empresa com cobertura, disponibilidade, excecoes, vencimentos
+  e tendencia diaria de backups.
 
-Objetivo:
+## Prioridade 1 - Confiabilidade de dados e operacao
 
-- Diferenciar claramente falha do servidor monitorado e falha do Probe Collector.
-- Exibir estados como `Online`, `Offline`, `Probe sem contato`, `Pausado` e `Sem status`.
-- Evitar que o operador confunda uma maquina desligada com uma falha de rede ou falha do collector.
+### Backup, restore e retencao do MongoDB
 
-Funcionalidades sugeridas:
+Objetivo: reduzir o risco operacional do banco em producao e tornar a recuperacao auditavel.
 
-- Card de detalhe mostrando `Status do servidor` e `Status do probe`.
-- Historico separado para eventos do probe: ultimo contato, perda de contato e retorno.
-- Alertas com mensagens diferentes para:
-  - servidor nao respondeu ao ping;
-  - probe collector ficou sem contato;
-  - probe collector voltou a se comunicar;
-  - servidor voltou a responder.
-- Filtro especifico para `Probes sem contato`.
+- Backup manual pelo painel e rotina automatica agendada.
+- Retencao configuravel, download controlado e procedimento de restore testado.
+- Exportacao de configuracoes essenciais para contingencia.
+- Registro do resultado de cada backup e alerta quando a rotina falhar.
 
-## Prioridade 2 - Operacao multi-cliente
+### Historico e desempenho em escala
 
-### Permissoes por empresa
+Objetivo: manter consultas e dashboards confiaveis com crescimento de clientes, probes e eventos.
 
-Objetivo:
+- Separar eventos, alertas, metricas e snapshots em colecoes proprias quando necessario.
+- Criar indices por empresa, ativo, probe, origem e data.
+- Definir retencao/compactacao para eventos de alto volume.
+- Revisar idempotencia das regras automaticas de chamados para evitar duplicidades.
+- Criar testes de regressao para permissao por empresa e calculos de disponibilidade/SLA.
 
-- Permitir que usuarios nao administradores vejam apenas empresas autorizadas.
+## Prioridade 2 - Relatorios profissionais
 
-Funcionalidades sugeridas:
+### Entrega e automacao
 
-- Vincular usuarios a uma ou mais empresas.
-- Perfis:
-  - administrador global;
-  - operador global;
-  - operador por empresa;
-  - somente leitura.
-- Restringir dashboard, servidores, historico e alertas por empresa.
-- Impedir acesso direto por URL a dados fora do escopo do usuario.
+Objetivo: transformar a tela de relatorios em material pronto para uso interno e com clientes.
 
-### Configuracoes por empresa
+- Exportacao em PDF e HTML com identidade visual da empresa.
+- Exportacao CSV dos dados de apoio.
+- Agendamento mensal/trimestral por empresa.
+- Envio por e-mail quando a integracao SMTP estiver configurada.
+- Seletor de periodo com comparacao ao periodo anterior.
 
-Objetivo:
+### Analise e capacidade
 
-- Tornar cada cliente mais autonomo dentro do ServerWatch.
+Objetivo: evoluir de indicadores atuais para recomendacoes baseadas em tendencia.
 
-Campos sugeridos:
+- Variacao de uso do PBS e previsao de capacidade.
+- Tendencias de CPU, memoria, disco e indisponibilidade por ativo.
+- Destaques automaticos de piora, recuperacao e recorrencia.
+- Sumario executivo e sumario tecnico no mesmo relatorio.
 
-- Nome da empresa.
-- Logo da empresa.
-- Contatos tecnicos.
-- E-mails de alerta.
-- Intervalo padrao de checagem.
-- Limite padrao de falhas.
-- Probes vinculados.
-- Observacoes contratuais ou operacionais.
+## Prioridade 3 - Notificacoes e integracoes externas
 
-## Prioridade 3 - Probe Collector
+### Canais de notificacao
 
-### Monitoramento de redes e links
+- SMTP por configuracao administrativa, com teste de envio.
+- Destinatarios por empresa e regras por severidade.
+- Resumo diario/semanal de disponibilidade, links e backups.
+- Webhook generico para Teams, Discord, Slack ou automacoes externas.
+- Integracao WhatsApp por provedor/API homologada, com controle de volume e horario.
 
-Objetivo:
+### Integracoes operacionais
 
-- Criar uma pagina separada para redes, links de internet e equipamentos como MikroTik, pfSense, Fortigate e roteadores genericos.
-- Coletar primeiro disponibilidade, latencia, perda de pacotes e jitter via Probe Collector.
-- Evoluir depois para SNMP generico e templates por fabricante.
-- Manter diferenca clara entre `link offline`, `link degradado` e `probe sem contato`.
+- Integracao com RMM para abrir acesso remoto a partir de um ativo.
+- Webhooks ou integracao com GLPI para sincronizacao de chamados quando aplicavel.
+- Documentar credenciais, escopos e auditoria de cada integracao.
 
-Escopo inicial:
+## Prioridade 4 - Redes e conectividade avancada
 
-- Cadastro de dispositivos de rede por empresa.
-- Cadastro de links por dispositivo.
-- Checagem de links pelo probe local.
-- Historico de falhas e recuperacoes.
-- Cards e graficos simples na rota `/networks`.
-- Validacao da funcionalidade em Docker com MongoDB antes da transferencia para outro servidor.
+### SNMP e equipamentos genericos
 
-Documento tecnico:
+- Perfis SNMP reutilizaveis para MikroTik, pfSense, Fortigate e equipamentos genericos.
+- Descoberta assistida de interfaces WAN e health-checks configurados no equipamento.
+- Historico de perda, latencia, jitter, utilizacao e troca de link ativo.
+- Separar claramente estado administrativo, link fisico e navegacao validada.
 
-- `docs/NETWORK_MONITORING.md`
+### Topologia de rede
 
-### Metricas avancadas pelo probe
+- Vinculo entre equipamentos, links, servidores e empresas.
+- Visualizacao de dependencia para distinguir falha de uplink, firewall e ativo interno.
+- Mapa logico simples por empresa, sem substituir a leitura operacional por lista.
 
-Objetivo:
+## Prioridade 5 - Probe Collector e inventario avancado
 
-- Evoluir alem do ping e das metricas basicas de host ja coletadas pelo collector.
+### Metricas configuraveis
 
-Coletas implementadas em validacao:
+- Transformar servicos/processos criticos em configuracao por empresa ou servidor.
+- Separar top processos por consumo de processos efetivamente criticos.
+- Regras de alerta por volume, servico, porta, evento e limite especifico do ambiente.
+- Coleta opcional de SNMP dentro da LAN por probe autorizado.
 
-- Particoes/volumes de disco.
-- Portas TCP locais em escuta.
-- Servicos conhecidos.
-- Processos principais.
-- Eventos criticos recentes.
-- Inventario basico de virtualizacao quando o host expor Hyper-V ou Proxmox.
+### Descoberta de infraestrutura
 
-Ajustes pendentes para a proxima iteracao:
+- Descoberta assistida de hosts, virtualizadores, VMs e clusters.
+- Sugestoes de vinculo de host pai baseadas em inventario Proxmox, Hyper-V ou VMware.
+- Visao em arvore com filtro por plataforma, tipo de no e impacto de dependencia.
 
-- Definir e documentar o criterio de "servicos criticos". A coleta atual usa uma lista fixa de nomes conhecidos, mas isso precisa virar configuracao por ambiente/empresa/servidor.
-- Revisar "processos principais": hoje a coleta lista processos por consumo, mas isso nao significa criticidade operacional. Separar "top processos" de "processos criticos configurados".
+## Prioridade 6 - Operacao multiempresa e portal do cliente
 
-Coletas futuras:
+- Aperfeicoar a visao restrita do cliente com foco em ativos, links, backups e chamados da
+  propria empresa.
+- Contatos tecnicos, destinatarios de alerta e observacoes operacionais por empresa.
+- Importacao/exportacao CSV com pre-visualizacao, validacao de linhas e atualizacao em massa.
+- Auditoria administrativa de alteracoes relevantes em empresas, contratos e acessos.
 
-- SNMP dentro da LAN do cliente.
-- Status de servicos especificos.
+## Criterio para novas entregas
 
-### Relatorios operacionais automaticos
-
-Objetivo:
-
-- Gerar, a partir do historico de metricas (disco, CPU, memoria, quedas e backups), relatorios profissionais por empresa com conclusoes prontas para o cliente final, em vez de apenas graficos brutos.
-
-Estado atual:
-
-- Botao "Relatorio" adicionado na aba Empresas (`public/app.js`, `renderGroups`) como placeholder — hoje apenas exibe um aviso de que a geracao automatica ainda esta em desenvolvimento, sem gerar nenhum relatorio real.
-
-Funcionalidades sugeridas:
-
-- Selecao de periodo (ultimos 7/30/60 dias) por empresa.
-- Conclusoes automaticas geradas a partir do historico ja coletado, por exemplo:
-  - "O processador do servidor X gera picos de uso durante o horario comercial (media Y% entre HHh-HHh)".
-  - "Servidor X registrou mais quedas neste periodo se comparado ao anterior (N vs M ocorrencias)".
-  - Particoes que cruzaram o limite de alerta de disco durante o periodo.
-  - Janelas de backup fora do esperado.
-- Exportacao em PDF/HTML com identidade visual (white label) da empresa.
-- Agendamento opcional de envio periodico (mensal) por e-mail, dependente da futura integracao de notificacoes por e-mail (Prioridade 5).
-
-## Prioridade 4 - Dados, backup e retencao
-
-### Backup e restore
-
-Objetivo:
-
-- Reduzir risco operacional com MongoDB em producao.
-
-Funcionalidades sugeridas:
-
-- Backup manual pelo painel.
-- Rotina automatica de backup.
-- Download do backup.
-- Restore documentado.
-- Retencao configuravel dos backups.
-- Exportacao de configuracoes principais em JSON.
-
-### Exportacao e importacao CSV
-
-Objetivo:
-
-- Facilitar carga inicial e manutencao em massa.
-
-Escopo sugerido:
-
-- Exportar empresas.
-- Exportar servidores.
-- Importar servidores em massa.
-- Atualizar servidores existentes por identificador, hostname ou nome.
-- Pre-visualizar mudancas antes de aplicar.
-- Validar linhas com erro sem cancelar toda a importacao.
-- Criar empresas automaticamente apenas com confirmacao.
-
-Campos sugeridos para CSV de servidores:
-
-```text
-name,hostname,company,environment,location,tags,check_source,probe_id,check_interval,failure_threshold,is_active
-```
-
-### Historico em colecoes proprias
-
-Objetivo:
-
-- Preparar o MongoDB para crescimento.
-
-Melhorias sugeridas:
-
-- Separar eventos e alertas em colecoes proprias.
-- Criar indices por servidor, empresa, probe e data.
-- Definir politica de retencao de eventos.
-- Manter snapshot atual separado do historico.
-- Criar rotina de compactacao/limpeza.
-
-## Prioridade 5 - Notificacoes externas
-
-### Notificacoes por e-mail
-
-Objetivo:
-
-- Enviar incidentes e resumo diario para responsaveis.
-
-Funcionalidades sugeridas:
-
-- Configurar SMTP.
-- Destinatarios por empresa.
-- Eventos enviados: offline, recuperacao, probe sem contato.
-- Resumo diario com disponibilidade.
-- Teste de envio pela interface.
-
-### Integrações futuras
-
-Opcoes:
-
-- Telegram.
-- Discord.
-- Slack.
-- Microsoft Teams.
-- Webhook generico.
-- GLPI para abertura de chamado.
-
-## Prioridade 6 - Hierarquia de infraestrutura
-
-### Topologia manual de hosts, virtualizadores e VMs
-
-Objetivo:
-
-- Registrar relacoes de dependencia entre servidores, VMs e seus hosts/virtualizadores.
-- Evitar leitura errada quando uma VM aparece indisponivel porque o host pai esta offline ou com probe sem contato.
-
-Funcionalidades implementadas:
-
-- Tipo do item: servidor, host fisico, virtualizador, VM ou servico.
-- Plataforma de infraestrutura: Proxmox, VMware, Hyper-V, bare metal, cloud ou outra.
-- Host pai/virtualizador manual no cadastro do servidor.
-- Indicador no dashboard quando um item esta afetado pelo host pai.
-- Visualizacao expansivel no dashboard para abrir um virtualizador/host pai e ver as VMs dependentes.
-
-### Descoberta automatica e topologia avancada
-
-Objetivo:
-
-- Evoluir a topologia manual para descoberta automatica e visualizacao mais completa.
-
-Modelo futuro:
-
-- `node_type`: `physical`, `hypervisor`, `cluster`, `vm`, `service`.
-- `platform`: `proxmox`, `vmware`, `hyper-v`, `bare-metal`, `cloud`.
-- `dependency_status`: calculado com base no status do item e dos pais.
-
-UI sugerida:
-
-- Visao em arvore.
-- Agrupamento por cluster ou host.
-- Indicador quando uma VM esta offline porque o host pai caiu.
-- Filtro por plataforma e tipo de node.
+Uma funcionalidade so entra como concluida quando estiver validada na VM Docker, respeitar
+permissoes por empresa, nao regredir os modulos existentes e possuir registro no changelog/tag.
