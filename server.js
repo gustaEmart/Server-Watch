@@ -6,6 +6,7 @@ import { join, resolve } from "node:path";
 import os from "node:os";
 import { createAlertsHandler } from "./routes/alerts.js";
 import { createBackupsHandler } from "./routes/backups.js";
+import { createDatabaseBackupsHandler } from "./routes/databaseBackups.js";
 import { createProxmoxBackupsHandler } from "./routes/proxmoxBackups.js";
 import { createUnifiNetworkHandler } from "./routes/unifiNetwork.js";
 import { createDownloadHandler } from "./routes/downloads.js";
@@ -25,6 +26,17 @@ import { createAlertService } from "./services/alert.js";
 import { emptyCloudBackupState, fetchCloudBackupSummary } from "./services/cloudBackup.js";
 import { emptyProxmoxBackupState, fetchProxmoxBackupSummary, proxmoxItemStatus, normalizeMatchKey } from "./services/proxmoxBackup.js";
 import { emptyUnifiNetworkState, fetchUnifiNetworkSummary } from "./services/unifiNetwork.js";
+import {
+  databaseBackupFailureMessage,
+  databaseBackupInfo,
+  databaseBackupSettings,
+  ensureDatabaseBackupWorkspace,
+  normalizeDatabaseBackupSettings,
+  queueDatabaseBackup,
+  queueDatabaseRestore,
+  resolveDatabaseBackupArchive,
+  writeDatabaseBackupWorkerConfig
+} from "./services/databaseBackup.js";
 import { pollDevice } from "./probe/snmp/poller.js";
 import {
   clearSessionCookie,
@@ -43,6 +55,7 @@ const PORT = Number(process.env.PORT || 3000);
 const HOST = process.env.HOST || "0.0.0.0";
 const DATA_DIR = resolve(process.env.DATA_DIR || "data");
 const DATA_FILE = join(DATA_DIR, "serverwatch.json");
+const DATABASE_BACKUPS_DIR = resolve(process.env.DATABASE_BACKUPS_DIR || join(DATA_DIR, "db-backups"));
 const METRICS_HISTORY_FILE = join(DATA_DIR, "metrics-history.json");
 const METRICS_SHORT_INTERVAL_MS = 60_000;
 const METRICS_LONG_INTERVAL_MS = 60 * 60_000;
@@ -251,6 +264,8 @@ let probeStalenessCheckRunning = false;
 let unifiRefreshPromise = null;
 let ticketAutomationRunning = false;
 let ticketAutomationLastRunAt = 0;
+let databaseBackupRuntime = { settings: databaseBackupSettings(), backups: [], activity: [], currentJob: null, lastSuccess: null, lastFailure: null };
+let databaseBackupStatusSignature = "";
 let addEvent;
 let addAdministrativeEvent;
 let addProbeEvent;
@@ -1021,6 +1036,10 @@ function normalizeExpirySettings(payload = {}, existing = {}) {
   return { ...existing, expiryNotifyDays: Math.round(expiryNotifyDays) };
 }
 
+function normalizeDatabaseBackupSettingsForState(payload = {}, existing = {}) {
+  return normalizeDatabaseBackupSettings(payload, existing);
+}
+
 function listedUsers() {
   return (state.users || []).filter((user) => !user.deletedAt);
 }
@@ -1574,12 +1593,13 @@ async function loadState() {
   const normalizedTicketSlaSettings = normalizeTicketSlaSettings(state.settings, normalizedAlertSettings);
   const normalizedTicketAutomationSettings = normalizeTicketAutomationSettings(state.settings, normalizedTicketSlaSettings);
   const normalizedExpirySettings = normalizeExpirySettings(state.settings, normalizedTicketAutomationSettings);
+  const normalizedDatabaseBackupSettings = normalizeDatabaseBackupSettingsForState(state.settings, normalizedExpirySettings);
   if (
-    JSON.stringify(normalizedExpirySettings) !== JSON.stringify(state.settings)
+    JSON.stringify(normalizedDatabaseBackupSettings) !== JSON.stringify(state.settings)
   ) {
     needsSave = true;
   }
-  state.settings = normalizedExpirySettings;
+  state.settings = normalizedDatabaseBackupSettings;
   const catalogByKey = new Map();
   for (const product of state.productCatalog) {
     const name = String(product?.name || "").replace(/\s+/g, " ").trim();
@@ -3156,7 +3176,8 @@ function snapshot(currentUser = null) {
     events: scopedEvents(currentUser).slice(0, 100),
     cloudBackup: scopedCloudBackup(currentUser),
     proxmoxBackup: scopedProxmoxBackup(currentUser),
-    unifiNetwork: scopedUnifiNetwork(currentUser)
+    unifiNetwork: scopedUnifiNetwork(currentUser),
+    databaseBackup: isAdminUser(currentUser) ? databaseBackupRuntime : null
   };
 }
 
@@ -4060,6 +4081,7 @@ function publicSettings(currentUser = null) {
     },
     ticketAutomation: isAdminUser(currentUser) ? getTicketAutomationSettings() : null,
     expiryNotifyDays: isAdminUser(currentUser) ? getExpiryNotifyDays() : null,
+    databaseBackup: isAdminUser(currentUser) ? databaseBackupSettings(state.settings) : null,
     probeToken: isAdminUser(currentUser) ? getProbeToken() : "",
     probeTokenSource: process.env.SERVERWATCH_PROBE_TOKEN ? "environment" : "generated",
     cloudBackupConfigured: Boolean(getCloudBackupApiKey()),
@@ -4086,6 +4108,40 @@ function publicSettings(currentUser = null) {
       ? state.settings.unifiApiBasePath || process.env.UNIFI_API_BASE_PATH || "/proxy/network/integration"
       : ""
   };
+}
+
+async function refreshDatabaseBackupRuntime({ notify = true } = {}) {
+  await ensureDatabaseBackupWorkspace(DATABASE_BACKUPS_DIR);
+  const next = await databaseBackupInfo(DATABASE_BACKUPS_DIR, databaseBackupSettings(state.settings));
+  const signature = JSON.stringify(next);
+  const changed = signature !== databaseBackupStatusSignature;
+  databaseBackupRuntime = next;
+  databaseBackupStatusSignature = signature;
+
+  const failure = next.lastFailure;
+  const failureIsCurrent = failure?.at && (!next.lastSuccess?.at || new Date(failure.at) > new Date(next.lastSuccess.at));
+  if (notify && failureIsCurrent && state.settings.databaseBackupLastAlertedFailureAt !== failure.at) {
+    const alert = {
+      id: randomUUID(),
+      serverId: null,
+      serverName: "Backup do MongoDB",
+      type: "database_backup_failed",
+      severity: "critical",
+      message: databaseBackupFailureMessage(failure),
+      createdAt: nowIso(),
+      read: false,
+      acknowledgedAt: null,
+      acknowledgedBy: null,
+      acknowledgmentNote: ""
+    };
+    state.alerts.unshift(alert);
+    state.alerts = state.alerts.slice(0, 200);
+    state.settings.databaseBackupLastAlertedFailureAt = failure.at;
+    scheduleSave();
+    broadcast({ type: "alert", alert });
+  }
+  if (changed) broadcastSnapshot();
+  return next;
 }
 
 function normalizeProbeAddresses(value) {
@@ -5089,6 +5145,10 @@ async function handleApi(req, res) {
       if (await handleSettings(req, res, { parts, session })) return;
     }
 
+    if (parts[1] === "database-backups") {
+      if (await handleDatabaseBackups(req, res, { parts, session })) return;
+    }
+
     if (parts[1] === "users") {
       if (await handleUsers(req, res, { parts, session })) return;
     }
@@ -5188,6 +5248,11 @@ const handleSettings = createSettingsHandler({
   normalizeTicketSlaSettings,
   normalizeTicketAutomationSettings,
   normalizeExpirySettings,
+  normalizeDatabaseBackupSettings: normalizeDatabaseBackupSettingsForState,
+  syncDatabaseBackupWorkerConfig: async (settings) => {
+    await writeDatabaseBackupWorkerConfig(DATABASE_BACKUPS_DIR, databaseBackupSettings(settings));
+    await refreshDatabaseBackupRuntime();
+  },
   normalizeCloudBackupSettings,
   normalizeProxmoxSettings,
   normalizeUnifiSettings,
@@ -5197,6 +5262,24 @@ const handleSettings = createSettingsHandler({
   publicSettings,
   scheduleSave,
   broadcastSnapshot
+});
+const handleDatabaseBackups = createDatabaseBackupsHandler({
+  readBody,
+  sendJson,
+  notFound,
+  requireAdmin,
+  getInfo: () => databaseBackupInfo(DATABASE_BACKUPS_DIR, databaseBackupSettings(state.settings)),
+  queueBackup: async () => {
+    const request = await queueDatabaseBackup(DATABASE_BACKUPS_DIR);
+    await refreshDatabaseBackupRuntime();
+    return request;
+  },
+  queueRestore: async (filename) => {
+    const request = await queueDatabaseRestore(DATABASE_BACKUPS_DIR, filename);
+    await refreshDatabaseBackupRuntime();
+    return request;
+  },
+  resolveArchive: (filename) => resolveDatabaseBackupArchive(DATABASE_BACKUPS_DIR, filename)
 });
 const handleUsers = createUsersHandler({
   randomId: randomUUID,
@@ -5459,6 +5542,8 @@ await loadState();
 await loadMetricsHistory();
 await loadNetworkLinkBpsHistory();
 await loadProbeSpeedTestHistory();
+await writeDatabaseBackupWorkerConfig(DATABASE_BACKUPS_DIR, databaseBackupSettings(state.settings));
+await refreshDatabaseBackupRuntime({ notify: false });
 startMonitor();
 refreshCloudBackup().catch((error) => console.error("Falha ao buscar backups na inicializacao", error));
 refreshProxmoxBackup().catch((error) => console.error("Falha ao buscar Proxmox Backup Server na inicializacao", error));
@@ -5478,4 +5563,7 @@ setInterval(() => {
   runCentralSnmpCycle().catch((error) => console.error("Falha na coleta SNMP central", error));
 }, CENTRAL_SNMP_POLL_MS);
 setInterval(checkContractExpirations, CONTRACT_EXPIRY_CHECK_MS);
+setInterval(() => {
+  refreshDatabaseBackupRuntime().catch((error) => console.error("Falha ao atualizar status do backup MongoDB", error));
+}, 15_000);
 server.listen(PORT, HOST, printStartup);

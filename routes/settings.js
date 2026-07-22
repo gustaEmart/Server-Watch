@@ -9,6 +9,8 @@ export function createSettingsHandler({
   normalizeTicketSlaSettings,
   normalizeTicketAutomationSettings,
   normalizeExpirySettings,
+  normalizeDatabaseBackupSettings,
+  syncDatabaseBackupWorkerConfig,
   normalizeCloudBackupSettings,
   normalizeProxmoxSettings,
   refreshCloudBackup,
@@ -66,6 +68,16 @@ export function createSettingsHandler({
     if (req.method === "PUT" && parts[2] === "expirations") {
       const payload = await readBody(req);
       setSettings(normalizeExpirySettings(payload, getSettings()));
+      scheduleSave();
+      broadcastSnapshot();
+      return sendJson(res, 200, publicSettings(session.user));
+    }
+
+    if (req.method === "PUT" && parts[2] === "database-backups") {
+      const payload = await readBody(req);
+      const settings = normalizeDatabaseBackupSettings(payload, getSettings());
+      setSettings(settings);
+      await syncDatabaseBackupWorkerConfig(settings);
       scheduleSave();
       broadcastSnapshot();
       return sendJson(res, 200, publicSettings(session.user));

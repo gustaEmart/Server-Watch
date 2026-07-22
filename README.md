@@ -78,7 +78,7 @@ SERVERWATCH_ADMIN_PASSWORD=uma-senha-inicial-forte
 SERVERWATCH_PROBE_TOKEN=um-token-forte-para-os-probes
 ```
 
-O Compose cria os volumes `serverwatch_data` e `mongodb_data`. Em deploys novos, os dados da aplicacao ficam no MongoDB. A pasta local `downloads/` e montada em `/app/downloads` para servir artefatos grandes do Probe Collector, como o instalador Windows e runtimes Node.js, sem precisar rebuildar a imagem.
+O Compose cria os volumes `serverwatch_data`, `mongodb_data` e `serverwatch_db_backups`. Em deploys novos, os dados da aplicacao ficam no MongoDB. A pasta local `downloads/` e montada em `/app/downloads` para servir artefatos grandes do Probe Collector, como o instalador Windows e runtimes Node.js, sem precisar rebuildar a imagem. O volume `serverwatch_db_backups` guarda archives compactados criados pela rotina administrativa de backup do MongoDB; veja `docs/DATABASE_BACKUPS.md`.
 
 Comandos uteis:
 

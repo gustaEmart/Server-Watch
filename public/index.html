@@ -599,6 +599,37 @@
                   <button class="primary-button compact" type="submit">Salvar integracao UniFi</button>
                 </div>
               </form>
+
+              <form class="integration-card" id="databaseBackupSettingsForm">
+                <div class="integration-card-header">
+                  <div>
+                    <span class="integration-kicker">Confiabilidade</span>
+                    <h3>Backup do MongoDB</h3>
+                  </div>
+                  <span class="integration-status" id="databaseBackupStatusLabel">Aguardando rotina</span>
+                </div>
+                <p>Cria archives compactados do banco em volume separado. A restauracao sempre gera um ponto de seguranca antes de alterar os dados.</p>
+                <div class="form-grid">
+                  <label>
+                    Horario diario
+                    <input id="databaseBackupScheduleHour" type="number" min="0" max="23" step="1" />
+                  </label>
+                  <label>
+                    Retencao (dias)
+                    <input id="databaseBackupRetentionDays" type="number" min="1" max="365" step="1" />
+                  </label>
+                </div>
+                <label class="toggle-row compact-toggle">
+                  <input id="databaseBackupEnabled" type="checkbox" />
+                  <span>Executar backup automatico todos os dias</span>
+                </label>
+                <p class="integration-runtime-copy" id="databaseBackupRuntimeMeta">Nenhum backup concluido ainda.</p>
+                <div class="dialog-actions">
+                  <button class="ghost-button compact" type="button" id="manageDatabaseBackups">Gerenciar backups</button>
+                  <button class="ghost-button compact" type="button" id="runDatabaseBackup">Gerar agora</button>
+                  <button class="primary-button compact" type="submit">Salvar rotina</button>
+                </div>
+              </form>
             </div>
           </div>
         </section>
@@ -1171,6 +1202,35 @@
         </section>
       </main>
     </div>
+
+    <dialog class="server-dialog database-backup-dialog" id="databaseBackupDialog">
+      <section class="dialog-form" aria-labelledby="databaseBackupDialogTitle">
+        <div class="dialog-header">
+          <div>
+            <p class="eyebrow">Confiabilidade</p>
+            <h2 id="databaseBackupDialogTitle">Backups do MongoDB</h2>
+            <p id="databaseBackupDialogMeta">Archives disponiveis para download e restauracao.</p>
+          </div>
+          <button class="icon-button" id="closeDatabaseBackupDialog" type="button" aria-label="Fechar">x</button>
+        </div>
+        <div class="database-backup-list" id="databaseBackupList"></div>
+        <details class="database-restore-panel" id="databaseRestorePanel">
+          <summary>Restaurar um backup</summary>
+          <p>Esta operacao substitui o conteudo atual do MongoDB. Antes de restaurar, o ServerWatch cria um archive de seguranca do estado atual.</p>
+          <label>
+            Archive para restaurar
+            <select id="databaseRestoreFile"></select>
+          </label>
+          <label>
+            Confirmacao
+            <input id="databaseRestoreConfirmation" autocomplete="off" placeholder="Digite RESTAURAR" />
+          </label>
+          <div class="dialog-actions">
+            <button class="danger-button" id="restoreDatabaseBackup" type="button">Restaurar banco</button>
+          </div>
+        </details>
+      </section>
+    </dialog>
 
     <dialog class="server-dialog" id="serverDialog">
       <form id="serverForm">

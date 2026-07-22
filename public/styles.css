@@ -2724,7 +2724,92 @@ textarea:focus {
   color: var(--text-muted);
 }
 
+.integration-status.failure {
+  border-color: color-mix(in srgb, var(--color-danger) 46%, var(--border-muted));
+  background: color-mix(in srgb, var(--color-danger) 14%, var(--bg-surface));
+  color: var(--color-danger);
+}
+
 .integration-card > p {
+  margin: 0;
+  color: var(--text-secondary);
+  line-height: 1.45;
+}
+
+.integration-runtime-copy {
+  min-height: 2.9em;
+  padding: 10px 12px;
+  border: 1px solid var(--border-muted);
+  border-radius: 6px;
+  background: var(--bg-surface);
+  color: var(--text-secondary) !important;
+  font-size: 0.82rem;
+}
+
+.database-backup-dialog {
+  width: min(780px, calc(100vw - 24px));
+}
+
+.database-backup-dialog .dialog-form {
+  padding: 22px;
+  display: grid;
+  gap: 14px;
+}
+
+.database-backup-list {
+  display: grid;
+  gap: 8px;
+  max-height: min(42vh, 360px);
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding-right: 3px;
+}
+
+.database-backup-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 12px;
+  border: 1px solid var(--border-muted);
+  border-radius: 6px;
+  background: var(--bg-elevated);
+}
+
+.database-backup-row > div {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.database-backup-row strong,
+.database-backup-row span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.database-backup-row span {
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+}
+
+.database-restore-panel {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid color-mix(in srgb, var(--color-danger) 34%, var(--border-muted));
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--color-danger) 5%, var(--bg-surface));
+}
+
+.database-restore-panel summary {
+  cursor: pointer;
+  color: var(--text-primary);
+  font-weight: 800;
+}
+
+.database-restore-panel p {
   margin: 0;
   color: var(--text-secondary);
   line-height: 1.45;

@@ -35,6 +35,7 @@ const state = {
   networkDeviceExpanded: new Set(),
   selectedBackupClientId: null,
   backupProvider: "msp",
+  databaseBackup: null,
   report: { groupId: "", days: 30, data: null, loadedKey: "", loading: false, error: "" },
   networkProvider: "connectivity",
   unifiExpandedSites: new Set(),
@@ -140,7 +141,8 @@ function snapshotFingerprint(payload) {
       events: payload.events,
       cloudBackup: payload.cloudBackup,
       proxmoxBackup: payload.proxmoxBackup,
-      unifiNetwork: payload.unifiNetwork
+      unifiNetwork: payload.unifiNetwork,
+      databaseBackup: payload.databaseBackup
     })
   );
 }
@@ -357,6 +359,21 @@ const els = {
   unifiApiKeyInput: document.querySelector("#unifiApiKeyInput"),
   unifiTlsFingerprintInput: document.querySelector("#unifiTlsFingerprintInput"),
   unifiSourceLabel: document.querySelector("#unifiSourceLabel"),
+  databaseBackupSettingsForm: document.querySelector("#databaseBackupSettingsForm"),
+  databaseBackupScheduleHour: document.querySelector("#databaseBackupScheduleHour"),
+  databaseBackupRetentionDays: document.querySelector("#databaseBackupRetentionDays"),
+  databaseBackupEnabled: document.querySelector("#databaseBackupEnabled"),
+  databaseBackupStatusLabel: document.querySelector("#databaseBackupStatusLabel"),
+  databaseBackupRuntimeMeta: document.querySelector("#databaseBackupRuntimeMeta"),
+  manageDatabaseBackups: document.querySelector("#manageDatabaseBackups"),
+  runDatabaseBackup: document.querySelector("#runDatabaseBackup"),
+  databaseBackupDialog: document.querySelector("#databaseBackupDialog"),
+  closeDatabaseBackupDialog: document.querySelector("#closeDatabaseBackupDialog"),
+  databaseBackupDialogMeta: document.querySelector("#databaseBackupDialogMeta"),
+  databaseBackupList: document.querySelector("#databaseBackupList"),
+  databaseRestoreFile: document.querySelector("#databaseRestoreFile"),
+  databaseRestoreConfirmation: document.querySelector("#databaseRestoreConfirmation"),
+  restoreDatabaseBackup: document.querySelector("#restoreDatabaseBackup"),
   brandNameInput: document.querySelector("#brandNameInput"),
   brandSubtitleInput: document.querySelector("#brandSubtitleInput"),
   brandLogoInput: document.querySelector("#brandLogoInput"),
@@ -1197,6 +1214,7 @@ function applySnapshot(payload) {
   state.cloudBackup = payload.cloudBackup || null;
   state.proxmoxBackup = payload.proxmoxBackup || null;
   state.unifiNetwork = payload.unifiNetwork || null;
+  state.databaseBackup = payload.databaseBackup || null;
   if (state.selectedServerId && !state.servers.some((server) => server.id === state.selectedServerId)) {
     state.selectedServerId = null;
   }
@@ -5951,6 +5969,170 @@ function renderBackupIntegrationSettingsForm() {
       els.unifiTlsFingerprintInput.value = state.settings.unifiTlsFingerprint || "";
     }
   }
+  renderDatabaseBackupSettingsForm();
+}
+
+function databaseBackupConfiguration() {
+  const current = state.settings.databaseBackup || state.databaseBackup?.settings || {};
+  return {
+    enabled: current.enabled !== false,
+    scheduleHour: Number.isFinite(Number(current.scheduleHour)) ? Number(current.scheduleHour) : 2,
+    retentionDays: Number.isFinite(Number(current.retentionDays)) ? Number(current.retentionDays) : 14
+  };
+}
+
+function databaseBackupStatus(info = state.databaseBackup) {
+  if (info?.currentJob) return { label: "Em execucao", type: "active" };
+  if (databaseBackupFailureIsCurrent(info)) return { label: "Requer atencao", type: "failure" };
+  if (databaseBackupConfiguration().enabled) return { label: "Rotina ativa", type: "active" };
+  return { label: "Rotina pausada", type: "inactive" };
+}
+
+function databaseBackupFailureIsCurrent(info = state.databaseBackup) {
+  if (info?.lastFailure?.status !== "failed") return false;
+  if (!info.lastSuccess?.at) return true;
+  return new Date(info.lastFailure.at).getTime() > new Date(info.lastSuccess.at).getTime();
+}
+
+function databaseBackupRuntimeCopy(info = state.databaseBackup) {
+  if (!info) return "Carregando o estado dos backups do MongoDB...";
+  if (info.currentJob) {
+    const action = info.currentJob.type === "restore" ? "Restauracao" : "Backup";
+    return `${action} em andamento desde ${formatDate(info.currentJob.requestedAt)}.`;
+  }
+  if (databaseBackupFailureIsCurrent(info)) {
+    return `Ultima falha: ${info.lastFailure.message || "consulte os logs da rotina"}.`;
+  }
+  if (info.lastSuccess?.at) {
+    const archive = info.backups?.find((item) => item.filename === info.lastSuccess.file);
+    return `Ultima operacao concluida em ${formatDate(info.lastSuccess.at)}${archive ? ` (${formatBytes(archive.size)})` : ""}.`;
+  }
+  return "Nenhum backup concluido ainda. Gere o primeiro archive para habilitar restauracao e download.";
+}
+
+function renderDatabaseBackupSettingsForm() {
+  if (!els.databaseBackupSettingsForm || !isAdmin()) return;
+  const config = databaseBackupConfiguration();
+  const status = databaseBackupStatus();
+  if (els.databaseBackupStatusLabel) {
+    els.databaseBackupStatusLabel.textContent = status.label;
+    els.databaseBackupStatusLabel.className = `integration-status ${status.type}`;
+  }
+  if (document.activeElement !== els.databaseBackupScheduleHour) {
+    els.databaseBackupScheduleHour.value = config.scheduleHour;
+  }
+  if (document.activeElement !== els.databaseBackupRetentionDays) {
+    els.databaseBackupRetentionDays.value = config.retentionDays;
+  }
+  if (document.activeElement !== els.databaseBackupEnabled) {
+    els.databaseBackupEnabled.checked = config.enabled;
+  }
+  if (els.databaseBackupRuntimeMeta) els.databaseBackupRuntimeMeta.textContent = databaseBackupRuntimeCopy();
+  if (els.runDatabaseBackup) els.runDatabaseBackup.disabled = Boolean(state.databaseBackup?.currentJob);
+}
+
+function renderDatabaseBackupDialog() {
+  if (!els.databaseBackupList) return;
+  const info = state.databaseBackup;
+  const backups = Array.isArray(info?.backups) ? info.backups : [];
+  if (els.databaseBackupDialogMeta) {
+    els.databaseBackupDialogMeta.textContent = `${backups.length} archive${backups.length === 1 ? "" : "s"} disponivel${backups.length === 1 ? "" : "is"}. ${databaseBackupRuntimeCopy(info)}`;
+  }
+  els.databaseBackupList.innerHTML = backups.length
+    ? backups.map((backup) => `
+        <article class="database-backup-row">
+          <div>
+            <strong>${escapeHtml(backup.filename)}</strong>
+            <span>${formatDate(backup.createdAt)} · ${formatBytes(backup.size)}</span>
+          </div>
+          <a class="ghost-button compact" href="/api/database-backups/download/${encodeURIComponent(backup.filename)}">Baixar</a>
+        </article>
+      `).join("")
+    : '<p class="empty-state">Nenhum archive disponivel ainda.</p>';
+  if (els.databaseRestoreFile) {
+    const selected = els.databaseRestoreFile.value;
+    els.databaseRestoreFile.innerHTML = backups.length
+      ? backups.map((backup) => `<option value="${escapeHtml(backup.filename)}">${escapeHtml(backup.filename)} · ${formatDate(backup.createdAt)}</option>`).join("")
+      : '<option value="">Nenhum backup disponivel</option>';
+    if (backups.some((backup) => backup.filename === selected)) els.databaseRestoreFile.value = selected;
+  }
+  if (els.restoreDatabaseBackup) els.restoreDatabaseBackup.disabled = !backups.length || Boolean(info?.currentJob);
+}
+
+async function refreshDatabaseBackupInfo({ renderDialog = false } = {}) {
+  if (!isAdmin()) return null;
+  const info = await api("/api/database-backups");
+  state.databaseBackup = info;
+  renderDatabaseBackupSettingsForm();
+  if (renderDialog || els.databaseBackupDialog?.open) renderDatabaseBackupDialog();
+  return info;
+}
+
+function scheduleDatabaseBackupRefresh(attempts = 4) {
+  if (attempts <= 0 || !isAdmin()) return;
+  window.setTimeout(async () => {
+    try {
+      await refreshDatabaseBackupInfo();
+    } catch {
+      // O proximo snapshot tambem atualiza o painel; nao interrompe o fluxo do admin.
+    }
+    scheduleDatabaseBackupRefresh(attempts - 1);
+  }, 2500);
+}
+
+async function submitDatabaseBackupSettings(event) {
+  event.preventDefault();
+  try {
+    const settings = await api("/api/settings/database-backups", {
+      method: "PUT",
+      body: JSON.stringify({
+        enabled: els.databaseBackupEnabled.checked,
+        scheduleHour: Number(els.databaseBackupScheduleHour.value),
+        retentionDays: Number(els.databaseBackupRetentionDays.value)
+      })
+    });
+    state.settings = { ...state.settings, ...settings };
+    await refreshDatabaseBackupInfo();
+    showToast("Rotina de backup salva", "A configuracao ja foi enviada ao worker do MongoDB.");
+  } catch (error) {
+    showToast("Falha ao salvar rotina", error.message);
+  }
+}
+
+async function runDatabaseBackupNow() {
+  try {
+    const response = await api("/api/database-backups/run", { method: "POST" });
+    state.databaseBackup = response.info || state.databaseBackup;
+    renderDatabaseBackupSettingsForm();
+    renderDatabaseBackupDialog();
+    scheduleDatabaseBackupRefresh();
+    showToast("Backup enfileirado", "O archive sera criado pelo worker em alguns segundos.");
+  } catch (error) {
+    showToast("Falha ao gerar backup", error.message);
+  }
+}
+
+async function restoreDatabaseBackupNow() {
+  const filename = els.databaseRestoreFile?.value || "";
+  if (!filename) return;
+  if (String(els.databaseRestoreConfirmation?.value || "").trim().toUpperCase() !== "RESTAURAR") {
+    showToast("Confirmacao necessaria", 'Digite "RESTAURAR" para liberar a operacao.');
+    return;
+  }
+  try {
+    const response = await api("/api/database-backups/restore", {
+      method: "POST",
+      body: JSON.stringify({ filename, confirmation: els.databaseRestoreConfirmation.value })
+    });
+    state.databaseBackup = response.info || state.databaseBackup;
+    els.databaseRestoreConfirmation.value = "";
+    renderDatabaseBackupSettingsForm();
+    renderDatabaseBackupDialog();
+    scheduleDatabaseBackupRefresh(8);
+    showToast("Restauracao enfileirada", "Um ponto de seguranca sera criado antes de restaurar o archive selecionado.");
+  } catch (error) {
+    showToast("Falha ao solicitar restauracao", error.message);
+  }
 }
 
 async function submitCloudBackupSettings(event) {
@@ -10382,6 +10564,21 @@ function bindEvents() {
   els.cloudBackupSettingsForm?.addEventListener("submit", submitCloudBackupSettings);
   els.proxmoxSettingsForm?.addEventListener("submit", submitProxmoxSettings);
   els.unifiSettingsForm?.addEventListener("submit", submitUnifiSettings);
+  els.databaseBackupSettingsForm?.addEventListener("submit", submitDatabaseBackupSettings);
+  els.runDatabaseBackup?.addEventListener("click", runDatabaseBackupNow);
+  els.manageDatabaseBackups?.addEventListener("click", async () => {
+    try {
+      await refreshDatabaseBackupInfo({ renderDialog: true });
+      els.databaseBackupDialog?.showModal();
+    } catch (error) {
+      showToast("Falha ao consultar backups", error.message);
+    }
+  });
+  els.closeDatabaseBackupDialog?.addEventListener("click", () => els.databaseBackupDialog?.close());
+  els.databaseBackupDialog?.addEventListener("click", (event) => {
+    if (event.target === els.databaseBackupDialog) els.databaseBackupDialog.close();
+  });
+  els.restoreDatabaseBackup?.addEventListener("click", restoreDatabaseBackupNow);
   els.refreshUnifiButton?.addEventListener("click", refreshUnifiData);
   els.unifiContent?.addEventListener("change", (event) => {
     const select = event.target.closest("[data-unifi-link-site]");
