@@ -25,7 +25,7 @@ const state = {
   selectedNetworkLinkId: null,
   selectedNetworkGroupId: null,
   companyScopeQuery: "",
-  dashboardMode: localStorage.getItem("serverwatch.dashboardMode") === "complete" ? "complete" : "simple",
+  dashboardMode: localStorage.getItem("serverwatch.dashboardMode.v2") === "simple" ? "simple" : "complete",
   groupLogoDraft: "",
   groupManagementView: "companies",
   groupSearchQuery: "",
@@ -64,6 +64,7 @@ const state = {
     status: "all",
     type: "all"
   },
+  alertExpandedStacks: new Set(),
   ticketFilters: {
     groupId: "all",
     status: "all",
@@ -146,6 +147,8 @@ function snapshotFingerprint(payload) {
     })
   );
 }
+
+import { renderVaultClient } from "./vault-client.js?v=20260806-vault-collections-1";
 
 const PROBE_PUBLIC_ORIGIN = "http://sw.grupoinsideti.com.br:3000";
 const DEFAULT_BRAND_LOGO = "/assets/brand/serverwatch-mark-transparent-256.png?v=20260619-newlogo";
@@ -280,6 +283,9 @@ const els = {
   alertStatusFilter: document.querySelector("#alertStatusFilter"),
   alertTypeFilter: document.querySelector("#alertTypeFilter"),
   alertsList: document.querySelector("#alertsList"),
+  alertDetailsDialog: document.querySelector("#alertDetailsDialog"),
+  alertDetailsContent: document.querySelector("#alertDetailsContent"),
+  closeAlertDetailsDialog: document.querySelector("#closeAlertDetailsDialog"),
   ticketCount: document.querySelector("#ticketCount"),
   ticketListCount: document.querySelector("#ticketListCount"),
   ticketGroupFilter: document.querySelector("#ticketGroupFilter"),
@@ -341,7 +347,7 @@ const els = {
   ticketAutomationEnabled: document.querySelector("#ticketAutomationEnabled"),
   ticketAutomationServerMinutes: document.querySelector("#ticketAutomationServerMinutes"),
   ticketAutomationLinkMinutes: document.querySelector("#ticketAutomationLinkMinutes"),
-  ticketAutomationBackupHours: document.querySelector("#ticketAutomationBackupHours"),
+  ticketAutomationRecoveryMinutes: document.querySelector("#ticketAutomationRecoveryMinutes"),
   expirySettingsForm: document.querySelector("#expirySettingsForm"),
   expiryNotifyDays: document.querySelector("#expiryNotifyDays"),
   cloudBackupSettingsForm: document.querySelector("#cloudBackupSettingsForm"),
@@ -359,6 +365,16 @@ const els = {
   unifiApiKeyInput: document.querySelector("#unifiApiKeyInput"),
   unifiTlsFingerprintInput: document.querySelector("#unifiTlsFingerprintInput"),
   unifiSourceLabel: document.querySelector("#unifiSourceLabel"),
+  vaultwardenSettingsForm: document.querySelector("#vaultwardenSettingsForm"),
+  vaultwardenPublicUrlInput: document.querySelector("#vaultwardenPublicUrlInput"),
+  vaultwardenGatewayUrlInput: document.querySelector("#vaultwardenGatewayUrlInput"),
+  vaultwardenEnabledInput: document.querySelector("#vaultwardenEnabledInput"),
+  vaultwardenSourceLabel: document.querySelector("#vaultwardenSourceLabel"),
+  vaultwardenRuntimeMeta: document.querySelector("#vaultwardenRuntimeMeta"),
+  vaultOverviewStatus: document.querySelector("#vaultOverviewStatus"),
+  vaultOverviewDescription: document.querySelector("#vaultOverviewDescription"),
+  openVaultwardenButton: document.querySelector("#openVaultwardenButton"),
+  vaultClientApp: document.querySelector("#vaultClientApp"),
   databaseBackupSettingsForm: document.querySelector("#databaseBackupSettingsForm"),
   databaseBackupScheduleHour: document.querySelector("#databaseBackupScheduleHour"),
   databaseBackupRetentionDays: document.querySelector("#databaseBackupRetentionDays"),
@@ -464,6 +480,9 @@ const els = {
   probeOptions: document.querySelector("#probeOptions"),
   serverProbeId: document.querySelector("#serverProbeId"),
   serverProbeHint: document.querySelector("#serverProbeHint"),
+  vaultCredentialOptions: document.querySelector("#vaultCredentialOptions"),
+  serverVaultCredentialLabel: document.querySelector("#serverVaultCredentialLabel"),
+  serverVaultCredentialUrl: document.querySelector("#serverVaultCredentialUrl"),
   serverTags: document.querySelector("#serverTags"),
   serverDescription: document.querySelector("#serverDescription"),
   backupsHero: document.querySelector("#backupsHero"),
@@ -518,6 +537,7 @@ const VIEW_ROUTES = {
   probes: "/probes",
   users: "/usuarios",
   integrations: "/integracoes",
+  vault: "/cofre",
   settings: "/configuracoes",
   history: "/historico",
   alerts: "/alertas",
@@ -605,13 +625,21 @@ function ticketAutomationSettings() {
   return {
     enabled: current.enabled === true,
     serverOfflineMinutes: Number(current.serverOfflineMinutes || 30),
-    linkOfflineMinutes: Number(current.linkOfflineMinutes || 120),
-    backupOverdueHours: Number(current.backupOverdueHours || 36)
+    linkOfflineMinutes: Number(current.linkOfflineMinutes || 60),
+    recoveryStableMinutes: Number(current.recoveryStableMinutes || 60)
   };
 }
 
 function expirationSettings() {
   return { expiryNotifyDays: expiryNotifyDays() };
+}
+
+function vaultwardenSettings() {
+  return {
+    publicUrl: String(state.settings.vaultwardenPublicUrl || "").trim().replace(/\/+$/, ""),
+    gatewayUrl: String(state.settings.vaultwardenGatewayUrl || "").trim().replace(/\/+$/, ""),
+    enabled: state.settings.vaultwardenEnabled === true
+  };
 }
 
 function brandInitials(name) {
@@ -1336,6 +1364,7 @@ function updateTopbarContext() {
     probes: ["Instalacao e coleta", "Probe Collector"],
     users: ["Controle de acesso", "Usuarios"],
     integrations: ["Conexoes externas", "Integracoes"],
+    vault: ["Acesso protegido", "Cofre de senhas"],
     settings: ["Identidade do sistema", "Configuracoes"],
     history: ["Auditoria operacional", "Historico de eventos"],
     alerts: ["Incidentes e recuperacoes", "Historico de alertas"],
@@ -2083,6 +2112,61 @@ function isRecoveryEvent(event) {
   );
 }
 
+const SERVER_INCIDENT_WINDOW_MS = 10 * 60 * 1000;
+
+function summarizedServerIncidentEvents(events = []) {
+  const episodes = [];
+  const latestByServer = new Map();
+  const ordered = events
+    .filter((event) => isFailureEvent(event) || isRecoveryEvent(event))
+    .slice()
+    .sort((left, right) => eventTimestamp(left) - eventTimestamp(right));
+
+  for (const event of ordered) {
+    const key = String(event.serverId || event.serverName || event.hostname || event.address || event.id || "");
+    if (!key) continue;
+    const timestamp = eventTimestamp(event);
+    const previous = latestByServer.get(key);
+    const gapMs = previous ? timestamp - previous.lastAt : -1;
+    if (previous && gapMs >= 0 && gapMs <= SERVER_INCIDENT_WINDOW_MS) {
+      previous.events.push(event);
+      previous.lastAt = timestamp;
+      continue;
+    }
+    const episode = { events: [event], lastAt: timestamp };
+    episodes.push(episode);
+    latestByServer.set(key, episode);
+  }
+
+  return {
+    failures: episodes.map((episode) => episode.events.find(isFailureEvent)).filter(Boolean),
+    recoveries: episodes.map((episode) => episode.events.slice().reverse().find(isRecoveryEvent)).filter(Boolean)
+  };
+}
+
+function recentBackupFailureEvents(groupId, windowStart) {
+  const failures = [];
+  const groupMatches = (itemGroupId) => groupIdMatches(groupId, itemGroupId);
+  for (const client of state.cloudBackup?.clients || []) {
+    if (!groupMatches(client.groupId)) continue;
+    for (const backupSet of client.backupSets || []) {
+      const status = String(backupSet.status || "").toLowerCase();
+      if (!status.includes("error") && !status.includes("fail") && !status.includes("nao realiz")) continue;
+      const timestamp = Date.parse(backupSet.lastBackupJobDate || "");
+      if (Number.isFinite(timestamp) && timestamp >= windowStart) failures.push({ createdAt: new Date(timestamp).toISOString() });
+    }
+  }
+  for (const item of state.proxmoxBackup?.items || []) {
+    if (!groupMatches(item.groupId) || item.status !== "error") continue;
+    const snapshotAt = Date.parse(item.lastSnapshotAt || "");
+    if (!Number.isFinite(snapshotAt)) continue;
+    const verificationFailed = ["failed", "error"].includes(String(item.verifyState || "").toLowerCase());
+    const failureAt = verificationFailed ? snapshotAt : snapshotAt + 26 * 60 * 60 * 1000;
+    if (failureAt >= windowStart && failureAt <= Date.now()) failures.push({ createdAt: new Date(failureAt).toISOString() });
+  }
+  return failures;
+}
+
 function updateDashboardModeControls() {
   if (!els.dashboardModeToggle) return;
   els.dashboardModeToggle.querySelectorAll("[data-dashboard-mode]").forEach((button) => {
@@ -2107,15 +2191,16 @@ function sumBackupStatus(statuses) {
 }
 
 function dashboardBackupStatsForGroup(groupId) {
+  const includeAllGroups = groupId === "all";
   const cloudClients = Array.isArray(state.cloudBackup?.clients) ? state.cloudBackup.clients : [];
   const cloud = sumBackupStatus(
     cloudClients
-      .filter((client) => String(client.groupId || "") === String(groupId || ""))
+      .filter((client) => includeAllGroups || String(client.groupId || "") === String(groupId || ""))
       .map((client) => client.status || {})
   );
   const pbsItems = Array.isArray(state.proxmoxBackup?.items) ? state.proxmoxBackup.items : [];
   const pbs = pbsItems
-    .filter((item) => String(item.groupId || "") === String(groupId || ""))
+    .filter((item) => includeAllGroups || String(item.groupId || "") === String(groupId || ""))
     .reduce(
       (acc, item) => {
         // Atencao (perto do limite de 26h) ainda conta como sucesso monitorado
@@ -2128,12 +2213,33 @@ function dashboardBackupStatsForGroup(groupId) {
       },
       { success: 0, warning: 0, error: 0, total: 0 }
     );
+  const cloudMonitored = backupClientMonitoredTotal(cloud);
+  const cloudUnmonitored = backupClientUnmonitoredTotal(cloud);
   return {
     success: cloud.success + pbs.success,
     warning: cloud.warning + pbs.warning,
+    attention: cloud.warning,
     error: cloud.error + pbs.error,
-    monitored: backupClientMonitoredTotal(cloud) + pbs.total,
-    unmonitored: backupClientUnmonitoredTotal(cloud)
+    monitored: cloudMonitored + pbs.total,
+    unmonitored: cloudUnmonitored,
+    sources: {
+      msp: {
+        configured: backupProviderConfigured("msp"),
+        success: cloud.success,
+        warning: cloud.warning,
+        error: cloud.error,
+        monitored: cloudMonitored,
+        unmonitored: cloudUnmonitored
+      },
+      pbs: {
+        configured: backupProviderConfigured("proxmox"),
+        success: pbs.success,
+        warning: pbs.warning,
+        error: pbs.error,
+        monitored: pbs.total,
+        unmonitored: 0
+      }
+    }
   };
 }
 
@@ -2419,7 +2525,7 @@ function renderCompleteDashboard() {
   const scrollPositions = captureSimpleDashboardScroll();
   const canServers = canSeeSection("servers");
   const canNetworks = canSeeSection("networks");
-  const canBackups = canSeeSection("backups") && backupProviderConfigured("msp");
+  const canBackups = canSeeSection("backups") && configuredBackupProviders().length > 0;
   const canAlerts = canSeeSection("alerts");
   const scopedServers = state.servers.filter((server) => groupIdMatches(state.filters.groupId, server.groupId));
   const scopedServerIds = new Set(scopedServers.map((server) => server.id));
@@ -2514,27 +2620,76 @@ function renderCompleteDashboard() {
 
   const now = Date.now();
   const recentWindowStart = now - 24 * 60 * 60 * 1000;
-  const serverEvents24h = state.filters.groupId === "all" ? state.summary.serverEvents24h : null;
-  const recentFailures = serverEvents24h ? [] : state.events.filter((event) => eventTimestamp(event) >= recentWindowStart && isFailureEvent(event));
-  const recentRecoveries = serverEvents24h ? [] : state.events.filter((event) => eventTimestamp(event) >= recentWindowStart && isRecoveryEvent(event));
-  const recentFailureCount = Number(serverEvents24h?.failures ?? recentFailures.length);
-  const recentRecoveryCount = Number(serverEvents24h?.recoveries ?? recentRecoveries.length);
-  const failureBuckets = Array.isArray(serverEvents24h?.buckets)
-    ? serverEvents24h.buckets
+  const operationalEvents24h = state.filters.groupId === "all" ? state.summary.operationalEvents24h : null;
+  const scopedRecentServerEvents = operationalEvents24h
+    ? []
+    : state.events.filter((event) => eventTimestamp(event) >= recentWindowStart && scopedServerIds.has(event.serverId));
+  const summarizedServerEvents = summarizedServerIncidentEvents(scopedRecentServerEvents);
+  const recentServerFailures = operationalEvents24h ? [] : summarizedServerEvents.failures;
+  const recentServerRecoveries = operationalEvents24h ? [] : summarizedServerEvents.recoveries;
+  const recentNetworkFailures = operationalEvents24h
+    ? []
+    : (state.networkEvents || []).filter((event) => {
+        const eventStatus = event.currentStatus || "";
+        return (
+          eventTimestamp(event) >= recentWindowStart &&
+          groupIdMatches(state.filters.groupId, event.groupId) &&
+          (event.kind === "network_link_offline" ||
+            event.kind === "network_link_degraded" ||
+            eventStatus === "offline" ||
+            eventStatus === "degraded")
+        );
+      });
+  const recentNetworkRecoveries = operationalEvents24h
+    ? []
+    : (state.networkEvents || []).filter(
+        (event) =>
+          eventTimestamp(event) >= recentWindowStart &&
+          groupIdMatches(state.filters.groupId, event.groupId) &&
+          (event.kind === "network_link_recovered" || event.currentStatus === "online")
+      );
+  const recentServerFailureCount = Number(operationalEvents24h?.server?.failures ?? recentServerFailures.length);
+  const recentServerRecoveryCount = Number(operationalEvents24h?.server?.recoveries ?? recentServerRecoveries.length);
+  const recentNetworkFailureCount = Number(operationalEvents24h?.network?.failures ?? recentNetworkFailures.length);
+  const recentNetworkRecoveryCount = Number(operationalEvents24h?.network?.recoveries ?? recentNetworkRecoveries.length);
+  const recentBackupFailures = operationalEvents24h ? [] : recentBackupFailureEvents(state.filters.groupId, recentWindowStart);
+  const recentBackupFailureCount = Number(operationalEvents24h?.backup?.failures ?? recentBackupFailures.length);
+  const recentFailureCount = recentServerFailureCount + recentNetworkFailureCount + recentBackupFailureCount;
+  const recentRecoveryCount = recentServerRecoveryCount + recentNetworkRecoveryCount;
+  const failureBuckets = Array.isArray(operationalEvents24h?.buckets)
+    ? operationalEvents24h.buckets
     : Array.from({ length: 12 }, (_, index) => {
         const start = now - (12 - index) * 2 * 60 * 60 * 1000;
         const end = start + 2 * 60 * 60 * 1000;
-        return recentFailures.filter((event) => {
+        const inBucket = (event) => {
           const timestamp = eventTimestamp(event);
           return timestamp >= start && timestamp < end;
-        }).length;
+        };
+        return {
+          server: recentServerFailures.filter(inBucket).length,
+          network: recentNetworkFailures.filter(inBucket).length,
+          backup: recentBackupFailures.filter(inBucket).length
+        };
       });
-  const maxFailures = Math.max(1, ...failureBuckets);
+  const maxFailures = Math.max(
+    1,
+    ...failureBuckets.flatMap((bucket) => [Number(bucket.server || 0), Number(bucket.network || 0), Number(bucket.backup || 0)])
+  );
   const failureBars = failureBuckets
-    .map((count, index) => {
+    .map((bucket, index) => {
+      const serverCount = Number(bucket.server || 0);
+      const networkCount = Number(bucket.network || 0);
+      const backupCount = Number(bucket.backup || 0);
       const startHour = new Date(now - (12 - index) * 2 * 60 * 60 * 1000).getHours().toString().padStart(2, "0");
-      const height = Math.max(count ? 12 : 3, Math.round((count / maxFailures) * 100));
-      return `<span class="${count ? "active" : ""}" style="--bar-height:${height}%" title="${count} falha${count === 1 ? "" : "s"} entre ${startHour}h e ${String((Number(startHour) + 2) % 24).padStart(2, "0")}h"><i></i></span>`;
+      const endHour = String((Number(startHour) + 2) % 24).padStart(2, "0");
+      const serverHeight = Math.max(serverCount ? 12 : 3, Math.round((serverCount / maxFailures) * 100));
+      const networkHeight = Math.max(networkCount ? 12 : 3, Math.round((networkCount / maxFailures) * 100));
+      const backupHeight = Math.max(backupCount ? 12 : 3, Math.round((backupCount / maxFailures) * 100));
+      return `<span class="failure-bar-series" title="${serverCount} incidente(s) de servidor, ${networkCount} evento(s) de rede e ${backupCount} falha(s) de backup entre ${startHour}h e ${endHour}h">
+        <i class="server ${serverCount ? "active" : ""}" style="--bar-height:${serverHeight}%"></i>
+        <i class="network ${networkCount ? "active" : ""}" style="--bar-height:${networkHeight}%"></i>
+        <i class="backup ${backupCount ? "active" : ""}" style="--bar-height:${backupHeight}%"></i>
+      </span>`;
     })
     .join("");
   const statusTotal = Math.max(
@@ -2587,17 +2742,31 @@ function renderCompleteDashboard() {
     : `<div class="simple-empty">Todos os links monitorados estao operacionais.</div>`;
 
   const cloudBackup = state.cloudBackup || null;
-  const backupsConfigured = Boolean(cloudBackup?.configured);
-  const backupStatus = cloudBackup?.status || { info: 0, success: 0, warning: 0, error: 0, nomon: 0, total: 0 };
-  const backupsMonitoredTotal = backupClientMonitoredTotal(backupStatus);
-  const backupsUnmonitoredTotal = backupClientUnmonitoredTotal(backupStatus);
-  const backupHealthPct = backupClientHealthPct(backupStatus);
+  const backupStatus = dashboardBackupStatsForGroup(state.filters.groupId);
+  const backupsConfigured = configuredBackupProviders().length > 0;
+  const backupsMonitoredTotal = backupStatus.monitored;
+  const backupsUnmonitoredTotal = backupStatus.unmonitored;
+  const backupHealthPct = backupsMonitoredTotal
+    ? Math.round((backupStatus.success / backupsMonitoredTotal) * 1000) / 10
+    : 0;
   const backupDonutTotal = Math.max(1, backupsMonitoredTotal);
   const backupSuccessDeg = (backupStatus.success / backupDonutTotal) * 360;
   const backupErrorDeg = (backupStatus.error / backupDonutTotal) * 360;
-  const backupWarningDeg = (backupStatus.warning / backupDonutTotal) * 360;
+  // No PBS, itens em atencao ainda sao backups concluidos com sucesso.
+  // Apenas a atencao exclusiva do MSP ocupa uma fatia separada no grafico.
+  const backupWarningDeg = (backupStatus.attention / backupDonutTotal) * 360;
   const backupClients = Array.isArray(cloudBackup?.clients) ? cloudBackup.clients : [];
-  const backupHealthBars = backupsConfigured
+  const backupSourceSummary = [
+    backupStatus.sources.msp.configured
+      ? `MSP ${backupStatus.sources.msp.success}/${backupStatus.sources.msp.monitored}`
+      : "",
+    backupStatus.sources.pbs.configured
+      ? `PBS ${backupStatus.sources.pbs.success}/${backupStatus.sources.pbs.monitored}`
+      : ""
+  ]
+    .filter(Boolean)
+    .join(" · ");
+  const backupHealthBars = backupStatus.sources.msp.configured
     ? backupClients
         .map((client) => ({ client, pct: backupClientHealthPct(client.status), monitored: backupClientMonitoredTotal(client.status) }))
         .filter((item) => item.monitored > 0)
@@ -2619,7 +2788,7 @@ function renderCompleteDashboard() {
     : "";
 
   els.simpleDashboardContent.innerHTML = `
-    <div class="simple-hero ${tone}">
+    <div class="simple-hero dashboard-summary-hero ${tone}">
       <div>
         <span class="simple-kicker">Resumo agora</span>
         <h2>${headline}</h2>
@@ -2629,11 +2798,11 @@ function renderCompleteDashboard() {
     </div>
 
     <div class="simple-kpi-row" aria-label="Resumo principal">
-      ${canServers ? `<article><span>Total</span><strong>${activeServers.length}/${counts.online}</strong><small>monitorados online</small></article>` : ""}
+      ${canServers ? `<article><span>Total</span><strong><b>${counts.online}</b>/${activeServers.length}</strong><small>online agora</small></article>` : ""}
       ${canServers ? `<article class="${counts.offline ? "danger" : "success"}" data-offline-trigger="1"><span>Offline</span><strong>${counts.offline}</strong><small>${staleProbes.length} sem contato</small></article>` : ""}
       ${canAlerts ? `<article class="${openAlerts.length ? "danger" : "success"}" data-simple-view="alerts"><span>Alertas</span><strong>${openAlerts.length}</strong><small>abertos</small></article>` : ""}
-      ${canNetworks ? `<article class="${networkCounts.offline ? "danger" : networkCounts.degraded || networkCounts.probe_unreachable ? "warning" : "success"}"><span>Links</span><strong>${networkLinks.length}</strong><small>${networkCounts.online} online</small></article>` : ""}
-      ${canBackups ? `<article class="${backupsConfigured && backupStatus.error ? "danger" : "success"}"><span>Backups</span><strong>${backupsConfigured ? `${backupStatus.success}/${backupsMonitoredTotal}` : "-"}</strong><small>${backupsConfigured ? "sucesso (monitorados)" : "nao configurado"}</small></article>` : ""}
+      ${canNetworks ? `<article class="${networkCounts.offline ? "danger" : networkCounts.degraded || networkCounts.probe_unreachable ? "warning" : "success"}"><span>Links</span><strong><b>${networkCounts.online}</b>/${networkLinks.length}</strong><small>${networkCounts.offline + networkCounts.degraded + networkCounts.probe_unreachable} com ocorrencia</small></article>` : ""}
+      ${canBackups ? `<article class="${backupStatus.error ? "danger" : backupStatus.warning ? "warning" : "success"}"><span>Backups</span><strong>${backupStatus.success}/${backupsMonitoredTotal}</strong><small>${escapeHtml(backupSourceSummary || "sem dados monitorados")}</small></article>` : ""}
     </div>
 
     <div class="simple-chart-grid" aria-label="Graficos rapidos">
@@ -2641,10 +2810,15 @@ function renderCompleteDashboard() {
       <section class="simple-panel simple-chart-card simple-chart-wide">
         <div class="panel-title compact-title">
           <h2>Falhas nas ultimas 24h</h2>
-          <span>${recentFailureCount} queda${recentFailureCount === 1 ? "" : "s"} · ${recentRecoveryCount} recuperacao${recentRecoveryCount === 1 ? "" : "es"}</span>
+          <span>${recentFailureCount} falha${recentFailureCount === 1 ? "" : "s"} · ${recentRecoveryCount} recuperacao${recentRecoveryCount === 1 ? "" : "es"}</span>
         </div>
         <div class="simple-failure-chart" aria-label="${recentFailureCount} falhas nas ultimas 24 horas">
           ${failureBars}
+        </div>
+        <div class="simple-failure-legend" aria-label="Origem das falhas">
+          <span><i class="server"></i>Servidores <strong>${recentServerFailureCount}</strong></span>
+          <span><i class="network"></i>Rede e links <strong>${recentNetworkFailureCount}</strong></span>
+          <span><i class="backup"></i>Backups <strong>${recentBackupFailureCount}</strong></span>
         </div>
         <div class="simple-chart-foot">
           <span>24h atras</span>
@@ -2703,7 +2877,7 @@ function renderCompleteDashboard() {
       <section class="simple-panel">
         <div class="panel-title compact-title">
           <h2>Estado atual dos backups</h2>
-          <span>${backupsConfigured ? `${backupsMonitoredTotal} monitorados` : "Nao configurado"}</span>
+          <span>${backupsMonitoredTotal} monitorados · ${escapeHtml(backupSourceSummary)}</span>
         </div>
         ${
           backupsConfigured
@@ -2725,11 +2899,11 @@ function renderCompleteDashboard() {
       ${canBackups ? `
       <section class="simple-panel">
         <div class="panel-title compact-title">
-          <h2>Taxa de sucesso dos backups</h2>
-          <span>Prioridade visual</span>
+          <h2>Saude por cliente (MSP)</h2>
+          <span>${backupStatus.sources.msp.configured ? "Prioridade visual" : "MSP nao configurado"}</span>
         </div>
         <div class="simple-health-list simple-scroll-list">
-          ${backupHealthBars || `<div class="simple-empty">${backupsConfigured ? "Nenhum cliente de backup monitorado." : "Configure a API de Cloud Backup para ver os dados."}</div>`}
+          ${backupHealthBars || `<div class="simple-empty">${backupStatus.sources.msp.configured ? "Nenhum cliente MSP monitorado." : "A saude por cliente esta disponivel para o MSP Cloud Backup."}</div>`}
         </div>
       </section>` : ""}
     </div>
@@ -3224,8 +3398,12 @@ function renderServerGroupDetail(group, target = els.detailPanel) {
   const statusChartStyle = `--online-deg:${onlineDegrees}deg; --offline-deg:${offlineDegrees}deg; --attention-deg:${attentionDegrees}deg;`;
   const now = Date.now();
   const recentWindowStart = now - 24 * 60 * 60 * 1000;
-  const recentFailures = state.events.filter((event) => serverIds.has(event.serverId) && eventTimestamp(event) >= recentWindowStart && isFailureEvent(event));
-  const recentRecoveries = state.events.filter((event) => serverIds.has(event.serverId) && eventTimestamp(event) >= recentWindowStart && isRecoveryEvent(event));
+  const recentServerEvents = state.events.filter(
+    (event) => serverIds.has(event.serverId) && eventTimestamp(event) >= recentWindowStart
+  );
+  const summarizedRecentServerEvents = summarizedServerIncidentEvents(recentServerEvents);
+  const recentFailures = summarizedRecentServerEvents.failures;
+  const recentRecoveries = summarizedRecentServerEvents.recoveries;
   const failureBuckets = Array.from({ length: 8 }, (_, index) => {
     const start = now - (8 - index) * 3 * 60 * 60 * 1000;
     const end = start + 3 * 60 * 60 * 1000;
@@ -3572,6 +3750,23 @@ function renderDetail() {
       `
       : "";
   const serverHostMetrics = renderServerHostMetrics(server);
+  const vaultCredentialSection = server.vaultCredential?.itemUrl
+    ? `
+      <section class="detail-section vault-credential-detail">
+        <div class="panel-title compact-title">
+          <h3>Credencial protegida</h3>
+          <span>Vaultwarden</span>
+        </div>
+        <div class="vault-credential-content">
+          <div>
+            <strong>${escapeHtml(server.vaultCredential.label || "Credencial administrativa")}</strong>
+            <small>O Vaultwarden solicitara autenticacao e a senha mestra antes de revelar este item.</small>
+          </div>
+          <a class="ghost-button compact vault-credential-action" href="/cofre?server=${encodeURIComponent(server.id)}">Abrir no cofre</a>
+        </div>
+      </section>
+    `
+    : "";
   const dependencyStats = `
     <div class="detail-stat"><span>Tipo</span><strong>${nodeTypeLabel(server.nodeType)}</strong></div>
     <div class="detail-stat"><span>Plataforma infra</span><strong>${infrastructurePlatformLabel(server.infrastructurePlatform)}</strong></div>
@@ -3613,6 +3808,8 @@ function renderDetail() {
         <div class="detail-stat"><span>MAC</span><strong>${escapeHtml(mac || "-")}</strong></div>
       </div>
     </section>
+
+    ${vaultCredentialSection}
 
     <section class="detail-section">
       <h3>Infraestrutura</h3>
@@ -3735,6 +3932,23 @@ function renderServerProfile() {
     ? `Probe sem contato ha ${liveDurationSpan(server.probeLastSeenAt || server.lastProbeSeenAt)}`
     : `Status desde ${formatDate(server.statusChangedAt)}`;
   const tags = (server.tags || []).map((tag) => `<span class="tag">${escapeHtml(tag)}</span>`).join("");
+  const vaultCredentialProfile = server.vaultCredential?.itemUrl
+    ? `
+      <article class="profile-section vault-credential-section">
+        <div class="panel-title compact-title">
+          <h3>Credencial protegida</h3>
+          <span>Vaultwarden</span>
+        </div>
+        <div class="vault-credential-content">
+          <div>
+            <strong>${escapeHtml(server.vaultCredential.label || "Credencial administrativa")}</strong>
+            <small>Disponivel somente apos autenticar e desbloquear o cofre.</small>
+          </div>
+          <a class="ghost-button compact vault-credential-action" href="/cofre?server=${encodeURIComponent(server.id)}">Abrir no cofre</a>
+        </div>
+      </article>
+    `
+    : "";
   const adminActions = isAdmin()
     ? `
       <div class="profile-actions">
@@ -3779,6 +3993,8 @@ function renderServerProfile() {
         </div>
         ${server.lastError ? `<div class="profile-note"><strong>Ultima observacao</strong><span>${escapeHtml(server.lastError)}</span></div>` : ""}
       </article>
+
+      ${vaultCredentialProfile}
 
       <article class="profile-section">
         <div class="panel-title compact-title">
@@ -3995,48 +4211,230 @@ function alertStatusLabel(alert) {
   return "Recuperado";
 }
 
+function alertServerContext(alert) {
+  const server = serverById(alert.serverId);
+  const groupId = alertGroupId(alert);
+  return {
+    server,
+    company: groupId === "none" ? "Sem empresa" : groupLabel(groupId),
+    location: server?.location || "Localizacao nao informada",
+    hostname: server?.hostname || "Nao informado"
+  };
+}
+
+function alertRecurrence(alert) {
+  if (!alert.serverId) return { down: 0, recovery: 0, total: 0, label: "Sem correlacao de servidor" };
+  const since = Date.now() - 24 * 60 * 60 * 1000;
+  const related = (state.alerts || []).filter(
+    (item) => item.serverId === alert.serverId && Date.parse(item.createdAt || 0) >= since
+  );
+  const down = related.filter((item) => item.type === "down").length;
+  const recovery = related.filter((item) => item.type === "recovery").length;
+  const total = down + recovery;
+  const label = down >= 3 && recovery >= 2
+    ? "Instabilidade recorrente nas ultimas 24h"
+    : down > 1
+    ? "Mais de uma queda registrada nas ultimas 24h"
+    : total
+    ? "Evento isolado nas ultimas 24h"
+    : "Sem recorrencia recente";
+  return { down, recovery, total, label };
+}
+
+function alertDiagnostic(alert, server, recurrence) {
+  if (alert.type === "contract_expiring") return "Vencimento contratual que exige revisao administrativa.";
+  if (!server) return "O servidor vinculado nao esta mais disponivel no inventario atual.";
+  if (server.checkSource === "probe" && server.probeStatus === "stale" && server.currentStatus === "online") {
+    return "Servidor ainda esta online, mas o Probe Collector perdeu contato. Verifique servico, rede ou credenciais do probe.";
+  }
+  if (alert.type === "down" && server.currentStatus === "offline") {
+    return recurrence.down > 1
+      ? "Falha ainda ativa e com repeticao recente. Priorize a verificacao de energia, rede e virtualizador."
+      : "Falha ainda ativa. O servidor continua sem responder no momento.";
+  }
+  if (alert.type === "down" && server.currentStatus === "online") {
+    return "O alerta foi gerado por uma queda anterior, mas o servidor ja voltou a responder.";
+  }
+  if (alert.type === "recovery") return "O servidor voltou a responder. A duracao abaixo considera o ultimo periodo de indisponibilidade conhecido.";
+  return "Consulte o historico recente e o estado atual para confirmar a causa do evento.";
+}
+
+function openAlertDetails(alertId) {
+  const alert = (state.alerts || []).find((item) => item.id === alertId);
+  if (!alert || !els.alertDetailsDialog || !els.alertDetailsContent) return;
+  const { server, company, location, hostname } = alertServerContext(alert);
+  const recurrence = alertRecurrence(alert);
+  const currentStatus = server ? displayStatus(server) : "unknown";
+  const currentStatusLabel = server ? statusLabel(currentStatus) : "Sem inventario";
+  const duration = alert.durationMs
+    ? formatDurationMs(alert.durationMs)
+    : alert.type === "down" && server?.currentStatus !== "online"
+    ? formatDurationMs(Math.max(0, Date.now() - Date.parse(alert.createdAt || Date.now())))
+    : "Nao aplicavel";
+  const source = server?.checkSource === "probe" ? "Probe Collector" : server?.checkSource === "ping" ? "Ping da central" : server?.checkSource || "Nao informada";
+
+  els.alertDetailsContent.innerHTML = `
+    <section class="alert-detail-heading">
+      <div>
+        <p class="eyebrow">Identificacao do incidente</p>
+        <h2>${escapeHtml(alertServerName(alert))}</h2>
+        <span>${escapeHtml(company)} · ${escapeHtml(location)}</span>
+      </div>
+      <span class="status-badge ${alertStatusTone(alert)}">${alertStatusLabel(alert)}</span>
+    </section>
+    <section class="alert-detail-message ${alert.severity || "info"}">
+      <strong>${escapeHtml(alert.message || "Alerta sem descricao adicional.")}</strong>
+      <span>${escapeHtml(alertDiagnostic(alert, server, recurrence))}</span>
+    </section>
+    <section class="alert-detail-grid" aria-label="Dados do servidor">
+      <article><span>Empresa / cliente</span><strong>${escapeHtml(company)}</strong></article>
+      <article class="${server?.location ? "" : "is-missing"}"><span>Local de instalacao</span><strong>${escapeHtml(location)}</strong></article>
+      <article><span>IP ou hostname</span><strong>${escapeHtml(hostname)}</strong></article>
+      <article><span>Estado atual</span><strong class="status-text ${escapeHtml(currentStatus)}">${escapeHtml(currentStatusLabel)}</strong></article>
+      <article><span>Origem da verificacao</span><strong>${escapeHtml(source)}</strong></article>
+      <article><span>Ultima checagem</span><strong>${server?.lastCheckedAt ? formatDate(server.lastCheckedAt) : "Nao informada"}</strong></article>
+      <article><span>Duracao do incidente</span><strong>${escapeHtml(duration)}</strong></article>
+      <article><span>Plataforma</span><strong>${escapeHtml(server ? platformLabel(server.platform) : "Nao informada")}</strong></article>
+    </section>
+    <section class="alert-correlation-panel">
+      <div><span>Leitura inteligente</span><strong>${escapeHtml(recurrence.label)}</strong></div>
+      <div class="alert-correlation-counts"><span><strong>${recurrence.down}</strong> quedas</span><span><strong>${recurrence.recovery}</strong> recuperacoes</span><span>ultimas 24h</span></div>
+    </section>
+    <footer class="alert-detail-footer">
+      <span>Evento registrado em ${formatDate(alert.createdAt)} · ${severityLabel(alert.severity)}</span>
+      ${server ? `<button class="primary-button compact" type="button" data-alert-details-action="open-server" data-server-id="${escapeHtml(server.id)}">Abrir servidor</button>` : ""}
+    </footer>`;
+  els.alertDetailsDialog.showModal();
+}
+
+const ALERT_STACK_WINDOW_MS = 10 * 60 * 1000;
+
+function alertTimestamp(alert) {
+  const value = Date.parse(alert?.createdAt || alert?.timestamp || 0);
+  return Number.isFinite(value) ? value : 0;
+}
+
+function groupAlertEpisodes(alerts) {
+  const episodes = [];
+  const latestEpisodeByServer = new Map();
+  const sorted = alerts.slice().sort((left, right) => alertTimestamp(right) - alertTimestamp(left));
+
+  for (const alert of sorted) {
+    if (!alert.serverId || !["down", "recovery"].includes(alert.type)) {
+      episodes.push({ kind: "single", alerts: [alert], newestAt: alertTimestamp(alert) });
+      continue;
+    }
+    const previousEpisode = latestEpisodeByServer.get(alert.serverId);
+    const previousOldest = previousEpisode?.alerts[previousEpisode.alerts.length - 1];
+    const gapMs = previousEpisode ? alertTimestamp(previousOldest) - alertTimestamp(alert) : -1;
+    if (previousEpisode && gapMs >= 0 && gapMs <= ALERT_STACK_WINDOW_MS) {
+      previousEpisode.alerts.push(alert);
+      previousEpisode.oldestAt = alertTimestamp(alert);
+      continue;
+    }
+    const episode = {
+      kind: "server",
+      serverId: alert.serverId,
+      alerts: [alert],
+      newestAt: alertTimestamp(alert),
+      oldestAt: alertTimestamp(alert)
+    };
+    episodes.push(episode);
+    latestEpisodeByServer.set(alert.serverId, episode);
+  }
+
+  return episodes
+    .map((episode) => ({
+      ...episode,
+      id: episode.kind === "server"
+        ? `alert-stack-${episode.serverId}-${episode.alerts[episode.alerts.length - 1].id}`
+        : `alert-single-${episode.alerts[0].id}`
+    }))
+    .sort((left, right) => right.newestAt - left.newestAt);
+}
+
+function alertDurationLine(alert) {
+  const server = serverById(alert.serverId);
+  const stillDown = alert.type === "down" && server && server.currentStatus !== "online";
+  if (alert.type === "recovery" && alert.durationMs) {
+    return `<small class="alert-duration">Ficou <strong>${formatDurationMs(alert.durationMs)}</strong> sem contato${
+      alert.outageStartedAt ? ` (desde ${formatDate(alert.outageStartedAt)})` : ""
+    }</small>`;
+  }
+  return stillDown
+    ? `<small class="alert-duration">Offline ha <strong>${liveDurationSpan(alert.createdAt)}</strong></small>`
+    : "";
+}
+
+function renderAlertCard(alert, { compact = false } = {}) {
+  const context = alertServerContext(alert);
+  return `
+    <article class="alert-card ${compact ? "alert-card-compact" : ""} ${alert.severity || "info"} ${alert.type !== "down" ? "alert-recovered" : ""} ${alert.read ? "read" : "unread"}" data-alert-id="${escapeHtml(alert.id)}" ${clickableCardAttrs(`Ver detalhes de ${alertServerName(alert)}`)}>
+      <div>
+        <strong>${escapeHtml(alertServerName(alert))}</strong>
+        <div>${escapeHtml(alert.message)}</div>
+        ${compact ? "" : `<small class="alert-context-line"><span>${escapeHtml(context.company)}</span><span>${escapeHtml(context.location)}</span><span>${escapeHtml(context.hostname)}</span></small>`}
+        <small>${formatDate(alert.createdAt)} · ${alert.read ? "reconhecido" : "novo"} · ${severityLabel(alert.severity)}</small>
+        ${compact ? "" : alertDurationLine(alert)}
+        ${
+          !compact && alert.acknowledgedAt
+            ? `<small>Reconhecido por ${escapeHtml(alert.acknowledgedBy || "-")} em ${formatDate(alert.acknowledgedAt)}${alert.acknowledgmentNote ? ` · ${escapeHtml(alert.acknowledgmentNote)}` : ""}</small>`
+            : ""
+        }
+      </div>
+      <div class="alert-actions">
+        <span class="status-badge ${alertStatusTone(alert)}">${alertStatusLabel(alert)}</span>
+        ${!compact && !alert.read ? `<button class="ghost-button compact" type="button" data-alert-action="ack" data-alert-id="${escapeHtml(alert.id)}">Reconhecer</button>` : ""}
+      </div>
+    </article>`;
+}
+
+function renderAlertEpisode(episode) {
+  if (episode.alerts.length === 1) return renderAlertCard(episode.alerts[0]);
+  const newest = episode.alerts[0];
+  const oldest = episode.alerts[episode.alerts.length - 1];
+  const context = alertServerContext(newest);
+  const downCount = episode.alerts.filter((alert) => alert.type === "down").length;
+  const recoveryCount = episode.alerts.filter((alert) => alert.type === "recovery").length;
+  const unreadAlerts = episode.alerts.filter((alert) => !alert.read);
+  const expanded = state.alertExpandedStacks.has(episode.id);
+  const elapsedMs = Math.max(0, alertTimestamp(newest) - alertTimestamp(oldest));
+  const statusTone = alertStatusTone(newest);
+  const statusLabelText = newest.type === "down" ? "Oscilando / offline" : "Recuperado";
+  return `
+    <article class="alert-card alert-stack ${newest.type !== "down" ? "alert-recovered" : "critical"} ${unreadAlerts.length ? "unread" : "read"}">
+      <button class="alert-stack-summary" type="button" data-alert-stack-toggle="${escapeHtml(episode.id)}" aria-expanded="${expanded ? "true" : "false"}">
+        <span class="alert-stack-chevron" aria-hidden="true">›</span>
+        <span class="alert-stack-copy">
+          <strong>${escapeHtml(alertServerName(newest))}</strong>
+          <span>${downCount} ${downCount === 1 ? "queda" : "quedas"} · ${recoveryCount} ${recoveryCount === 1 ? "recuperacao" : "recuperacoes"} em ${formatDurationMs(elapsedMs)}</span>
+          <small class="alert-context-line"><span>${escapeHtml(context.company)}</span><span>${escapeHtml(context.location)}</span><span>${escapeHtml(context.hostname)}</span></small>
+          <small>Ultimo evento em ${formatDate(newest.createdAt)} · ${episode.alerts.length} eventos agrupados</small>
+        </span>
+        <span class="alert-stack-status">
+          <span class="status-badge ${statusTone}">${statusLabelText}</span>
+          ${unreadAlerts.length ? `<small>${unreadAlerts.length} novo${unreadAlerts.length === 1 ? "" : "s"}</small>` : ""}
+        </span>
+      </button>
+      <div class="alert-stack-actions">
+        ${unreadAlerts.length ? `<button class="ghost-button compact" type="button" data-alert-stack-ack="${escapeHtml(episode.id)}">Reconhecer ${unreadAlerts.length}</button>` : ""}
+      </div>
+      <div class="alert-stack-events" ${expanded ? "" : "hidden"}>
+        ${episode.alerts.map((alert) => renderAlertCard(alert, { compact: true })).join("")}
+      </div>
+    </article>`;
+}
+
 function renderAlerts() {
   const alerts = filteredAlerts();
+  const episodes = groupAlertEpisodes(alerts);
   if (els.alertCount) {
     const openCount = alerts.filter((alert) => !alert.read && alert.type === "down").length;
-    els.alertCount.textContent = `${alerts.length} ${alerts.length === 1 ? "alerta" : "alertas"} · ${openCount} ${openCount === 1 ? "aberto" : "abertos"}`;
+    const groupedCount = episodes.filter((episode) => episode.alerts.length > 1).length;
+    els.alertCount.textContent = `${alerts.length} eventos em ${episodes.length} ${episodes.length === 1 ? "incidente" : "incidentes"} · ${openCount} ${openCount === 1 ? "aberto" : "abertos"}${groupedCount ? ` · ${groupedCount} agrupado${groupedCount === 1 ? "" : "s"}` : ""}`;
   }
-  els.alertsList.innerHTML = alerts.length
-    ? alerts
-        .map((alert) => {
-          const server = serverById(alert.serverId);
-          const stillDown = alert.type === "down" && server && server.currentStatus !== "online";
-          const durationLine =
-            alert.type === "recovery" && alert.durationMs
-              ? `<small class="alert-duration">Ficou <strong>${formatDurationMs(alert.durationMs)}</strong> sem contato${
-                  alert.outageStartedAt ? ` (desde ${formatDate(alert.outageStartedAt)})` : ""
-                }</small>`
-              : stillDown
-              ? `<small class="alert-duration">Offline ha <strong>${liveDurationSpan(alert.createdAt)}</strong></small>`
-              : "";
-          return `
-            <article class="alert-card ${alert.severity || "info"} ${alert.type !== "down" ? "alert-recovered" : ""} ${alert.read ? "read" : "unread"}">
-              <div>
-                <strong>${escapeHtml(alertServerName(alert))}</strong>
-                <div>${escapeHtml(alert.message)}</div>
-                <small>${formatDate(alert.createdAt)} · ${alert.read ? "reconhecido" : "novo"} · ${severityLabel(alert.severity)}</small>
-                ${durationLine}
-                ${
-                  alert.acknowledgedAt
-                    ? `<small>Reconhecido por ${escapeHtml(alert.acknowledgedBy || "-")} em ${formatDate(alert.acknowledgedAt)}${alert.acknowledgmentNote ? ` · ${escapeHtml(alert.acknowledgmentNote)}` : ""}</small>`
-                    : ""
-                }
-              </div>
-              <div class="alert-actions">
-                <span class="status-badge ${alertStatusTone(alert)}">
-                  ${alertStatusLabel(alert)}
-                </span>
-                ${alert.read ? "" : `<button class="ghost-button compact" type="button" data-alert-action="ack" data-alert-id="${alert.id}">Reconhecer</button>`}
-              </div>
-            </article>
-          `;
-        })
-        .join("")
+  els.alertsList.innerHTML = episodes.length
+    ? episodes.map(renderAlertEpisode).join("")
     : `<div class="empty-list">Nenhum alerta encontrado para os filtros atuais.</div>`;
   renderNotificationPopup();
 }
@@ -4151,6 +4549,7 @@ function ticketUpdateTitle(update) {
 
 function filteredTickets() {
   return (state.tickets || []).filter((ticket) => {
+    const closedHidden = ticket.status === "closed" && state.ticketFilters.status !== "closed";
     const groupOk = state.ticketFilters.groupId === "all" || ticket.groupId === state.ticketFilters.groupId;
     const statusOk = state.ticketFilters.status === "all" || ticket.status === state.ticketFilters.status;
     const priorityOk = state.ticketFilters.priority === "all" || ticket.priority === state.ticketFilters.priority;
@@ -4164,7 +4563,7 @@ function filteredTickets() {
       || (quick === "attention" && !["resolved", "closed"].includes(ticket.status))
       || (quick === "overdue" && ticketSlaState(ticket).tone === "danger")
       || (quick === "unassigned" && !ticket.assignedTo);
-    return groupOk && statusOk && priorityOk && assigneeOk && searchOk && quickOk;
+    return !closedHidden && groupOk && statusOk && priorityOk && assigneeOk && searchOk && quickOk;
   });
 }
 
@@ -5909,7 +6308,7 @@ function renderTicketAutomationSettingsForm() {
   if (document.activeElement !== els.ticketAutomationEnabled) els.ticketAutomationEnabled.checked = current.enabled;
   if (document.activeElement !== els.ticketAutomationServerMinutes) els.ticketAutomationServerMinutes.value = current.serverOfflineMinutes;
   if (document.activeElement !== els.ticketAutomationLinkMinutes) els.ticketAutomationLinkMinutes.value = current.linkOfflineMinutes;
-  if (document.activeElement !== els.ticketAutomationBackupHours) els.ticketAutomationBackupHours.value = current.backupOverdueHours;
+  if (document.activeElement !== els.ticketAutomationRecoveryMinutes) els.ticketAutomationRecoveryMinutes.value = current.recoveryStableMinutes;
 }
 
 function renderExpirySettingsForm() {
@@ -5969,7 +6368,55 @@ function renderBackupIntegrationSettingsForm() {
       els.unifiTlsFingerprintInput.value = state.settings.unifiTlsFingerprint || "";
     }
   }
+  renderVaultwardenIntegration();
   renderDatabaseBackupSettingsForm();
+}
+
+function renderVaultwardenIntegration() {
+  if (!isAdmin()) return;
+  const vault = vaultwardenSettings();
+  const configured = Boolean(vault.publicUrl);
+  const active = configured && vault.enabled;
+  const source = active ? "configured" : "none";
+  const statusLabel = active ? "Ativo" : configured ? "Configurado" : "Aguardando publicacao";
+  const runtimeCopy = active
+    ? "Gateway nativo ativo. A senha mestra segue diretamente do navegador ao cofre e nunca e armazenada pelo ServerWatch."
+    : configured
+      ? "Endereco salvo. Ative a integracao quando o Vaultwarden estiver publicado e validado em HTTPS."
+      : "Configure o endereco HTTPS quando o Vaultwarden estiver publicado.";
+
+  if (els.vaultwardenSourceLabel) {
+    els.vaultwardenSourceLabel.textContent = statusLabel;
+    els.vaultwardenSourceLabel.className = `integration-status ${source === "none" ? "inactive" : "active"}`;
+  }
+  if (document.activeElement !== els.vaultwardenPublicUrlInput && els.vaultwardenPublicUrlInput) {
+    els.vaultwardenPublicUrlInput.value = vault.publicUrl;
+  }
+  if (document.activeElement !== els.vaultwardenEnabledInput && els.vaultwardenEnabledInput) {
+    els.vaultwardenEnabledInput.checked = vault.enabled;
+  }
+  if (els.vaultwardenGatewayUrlInput) {
+    els.vaultwardenGatewayUrlInput.value = vault.gatewayUrl || (vault.publicUrl ? `${vault.publicUrl}/serverwatch-api` : "");
+  }
+  if (els.vaultwardenRuntimeMeta) els.vaultwardenRuntimeMeta.textContent = runtimeCopy;
+  if (els.vaultOverviewStatus) {
+    els.vaultOverviewStatus.textContent = statusLabel;
+    els.vaultOverviewStatus.className = `integration-status ${source === "none" ? "inactive" : "active"}`;
+  }
+  if (els.vaultOverviewDescription) els.vaultOverviewDescription.textContent = runtimeCopy;
+  if (els.openVaultwardenButton) {
+    els.openVaultwardenButton.href = active ? vault.publicUrl : "#";
+    els.openVaultwardenButton.classList.toggle("is-disabled", !active);
+    els.openVaultwardenButton.setAttribute("aria-disabled", active ? "false" : "true");
+    els.openVaultwardenButton.tabIndex = active ? 0 : -1;
+  }
+  renderVaultClient(els.vaultClientApp, {
+    enabled: active,
+    publicUrl: vault.publicUrl,
+    gatewayUrl: vault.gatewayUrl || (vault.publicUrl ? `${vault.publicUrl}/serverwatch-api` : ""),
+    groups: (state.groups || []).map((group) => ({ id: group.id, name: group.name })),
+    servers: (state.servers || []).filter((server) => !server.deletedAt).map((server) => ({ id: server.id, name: server.name, groupId: server.groupId || "" }))
+  });
 }
 
 function databaseBackupConfiguration() {
@@ -6190,6 +6637,22 @@ async function submitUnifiSettings(event) {
   }
 }
 
+async function submitVaultwardenSettings(event) {
+  event.preventDefault();
+  try {
+    const publicUrl = els.vaultwardenPublicUrlInput.value.trim();
+    const settings = await api("/api/settings/vaultwarden", {
+      method: "PUT",
+      body: JSON.stringify({ publicUrl, enabled: els.vaultwardenEnabledInput.checked })
+    });
+    state.settings = { ...state.settings, ...settings };
+    renderVaultwardenIntegration();
+    showToast("Vaultwarden atualizado", publicUrl ? "A integracao do cofre foi salva." : "A configuracao do cofre foi removida.");
+  } catch (error) {
+    showToast("Falha ao salvar Vaultwarden", error.message);
+  }
+}
+
 function readLogoFile(file) {
   return new Promise((resolve, reject) => {
     if (!file) {
@@ -6292,7 +6755,7 @@ async function submitTicketAutomationSettings(event) {
     enabled: els.ticketAutomationEnabled.checked,
     serverOfflineMinutes: Number(els.ticketAutomationServerMinutes.value),
     linkOfflineMinutes: Number(els.ticketAutomationLinkMinutes.value),
-    backupOverdueHours: Number(els.ticketAutomationBackupHours.value)
+    recoveryStableMinutes: Number(els.ticketAutomationRecoveryMinutes.value)
   };
   try {
     const settings = await api("/api/settings/ticket-automation", { method: "PUT", body: JSON.stringify(payload) });
@@ -7446,6 +7909,195 @@ function networkEventsForLink(linkId) {
   return state.networkEvents.filter((event) => event.linkId === linkId).slice(0, 8);
 }
 
+function networkHistoryRows(events) {
+  const recoveredDurations = new Map();
+  let offlineStartedAt = null;
+  [...events]
+    .sort((left, right) => new Date(left.createdAt).getTime() - new Date(right.createdAt).getTime())
+    .forEach((event) => {
+      if (event.currentStatus === "offline" && event.previousStatus !== "offline") {
+        offlineStartedAt = event.createdAt;
+        return;
+      }
+      if (event.currentStatus === "online" && offlineStartedAt) {
+        const duration = Math.max(0, new Date(event.createdAt).getTime() - new Date(offlineStartedAt).getTime());
+        recoveredDurations.set(event.id, duration);
+        offlineStartedAt = null;
+      }
+    });
+
+  return events.map((event) => ({
+    ...event,
+    durationMs: event.durationMs ?? recoveredDurations.get(event.id) ?? null
+  }));
+}
+
+function networkEventReportStatus(event) {
+  if (event.currentStatus === "offline") return "Indisponivel";
+  if (event.currentStatus === "degraded") return "Degradado";
+  if (event.currentStatus === "online" && event.previousStatus === "offline") return "Recuperado";
+  return networkStatusLabel(event.currentStatus);
+}
+
+function networkEventReportTone(event) {
+  if (event.currentStatus === "offline") return "offline";
+  if (event.currentStatus === "degraded") return "degraded";
+  if (event.currentStatus === "online" && event.previousStatus === "offline") return "recovered";
+  return "neutral";
+}
+
+function networkHistoryReportHtml(link, events) {
+  const rows = networkHistoryRows(events);
+  const group = state.groups.find((item) => item.id === link.groupId);
+  const companyName = group?.name || link.groupName || "Sem empresa vinculada";
+  const companyLogo = group?.logoDataUrl || "";
+  const systemBrand = {
+    name: state.settings.brandName || "ServerWatch",
+    logo: state.settings.logoDataUrl || DEFAULT_BRAND_LOGO
+  };
+  const failures = rows.filter((event) => event.currentStatus === "offline");
+  const recoveries = rows.filter((event) => event.currentStatus === "online" && event.previousStatus === "offline");
+  const totalDowntimeMs = recoveries.reduce((total, event) => total + Number(event.durationMs || 0), 0);
+  const logoHtml = (logo, label) => logo
+    ? `<img src="${escapeHtml(logo)}" alt="${escapeHtml(label)}" />`
+    : `<span>${escapeHtml(brandInitials(label))}</span>`;
+  const tableRows = rows.length
+    ? rows
+        .sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime())
+        .map((event) => {
+          const detail = event.message || event.interfaceName || "Transicao registrada pelo monitoramento.";
+          const performance = [
+            event.latencyMs != null ? `${event.latencyMs} ms` : null,
+            event.packetLossPercent != null ? `${event.packetLossPercent}% perda` : null
+          ].filter(Boolean).join(" · ") || "-";
+          return `
+            <tr>
+              <td>${escapeHtml(formatDate(event.createdAt))}</td>
+              <td><span class="status ${networkEventReportTone(event)}">${escapeHtml(networkEventReportStatus(event))}</span></td>
+              <td>${escapeHtml(detail)}</td>
+              <td>${escapeHtml(event.durationMs != null ? formatDurationMs(event.durationMs) : "-")}</td>
+              <td>${escapeHtml(performance)}</td>
+            </tr>
+          `;
+        })
+        .join("")
+    : `<tr><td colspan="5" class="empty">Nenhuma transicao foi registrada para este link.</td></tr>`;
+
+  return `<!doctype html>
+    <html lang="pt-BR">
+      <head>
+        <meta charset="utf-8" />
+        <title>Historico de link - ${escapeHtml(link.name)}</title>
+        <style>
+          * { box-sizing: border-box; }
+          @page { size: A4 landscape; margin: 12mm; }
+          body { margin: 0; color: #182235; background: #ffffff; font: 12px Arial, sans-serif; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+          .report { border: 1px solid #d9e2ef; border-radius: 12px; overflow: hidden; }
+          .header { display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 22px 24px; background: #101b2d; color: #f8fbff; border-bottom: 4px solid #2774e8; }
+          .brand, .company { display: flex; align-items: center; gap: 12px; min-width: 0; }
+          .mark { width: 44px; height: 44px; flex: 0 0 44px; display: grid; place-items: center; overflow: hidden; border-radius: 9px; background: #1c3152; color: #ffffff; font-weight: 700; }
+          .mark img { width: 100%; height: 100%; object-fit: contain; }
+          .company .mark { background: #eef3f9; color: #1c3152; border: 1px solid #d9e2ef; }
+          .brand strong, .company strong { display: block; font-size: 15px; }
+          .brand small, .company small { display: block; margin-top: 3px; color: #aebfd5; }
+          .company { text-align: right; justify-content: flex-end; }
+          .company small { color: #61718a; }
+          .company strong { color: #17243a; }
+          .company-wrap { background: #ffffff; padding: 8px 12px; border-radius: 9px; }
+          .content { padding: 24px; }
+          h1 { margin: 0; font-size: 25px; letter-spacing: .1px; }
+          .subtitle { margin: 6px 0 0; color: #aebfd5; }
+          .meta { color: #63728a; margin: 0 0 18px; }
+          .summary { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 20px; }
+          .summary-card { min-height: 77px; padding: 14px; border: 1px solid #dbe3ee; border-radius: 8px; background: #f7f9fc; }
+          .summary-card span { display: block; color: #68778f; font-size: 10px; font-weight: 700; letter-spacing: .5px; text-transform: uppercase; }
+          .summary-card strong { display: block; margin-top: 7px; color: #17243a; font-size: 21px; }
+          .summary-card.danger strong { color: #c53232; }
+          .summary-card.good strong { color: #16713a; }
+          table { width: 100%; border-collapse: collapse; table-layout: fixed; border: 1px solid #dbe3ee; border-radius: 8px; overflow: hidden; }
+          th { padding: 10px 11px; text-align: left; background: #ecf1f7; color: #53647d; font-size: 10px; letter-spacing: .45px; text-transform: uppercase; }
+          td { padding: 10px 11px; vertical-align: top; border-top: 1px solid #e4eaf2; color: #26344a; overflow-wrap: anywhere; }
+          tbody tr:nth-child(even) { background: #f8fafc; }
+          th:nth-child(1), td:nth-child(1) { width: 18%; }
+          th:nth-child(2), td:nth-child(2) { width: 13%; }
+          th:nth-child(4), td:nth-child(4) { width: 13%; }
+          th:nth-child(5), td:nth-child(5) { width: 14%; }
+          .status { display: inline-block; padding: 4px 7px; border-radius: 999px; font-size: 10px; font-weight: 700; }
+          .status.offline { color: #a72222; background: #fde8e8; }
+          .status.degraded { color: #8a5b00; background: #fff1cf; }
+          .status.recovered { color: #126936; background: #e0f6e7; }
+          .status.neutral { color: #465875; background: #edf1f6; }
+          .empty { text-align: center; color: #68778f; padding: 26px; }
+          .footer { padding: 14px 24px 20px; color: #68778f; font-size: 10px; }
+          @media print { .report { border-color: #d9e2ef; } }
+        </style>
+      </head>
+      <body>
+        <main class="report">
+          <header class="header">
+            <div class="brand">
+              <div class="mark">${logoHtml(systemBrand.logo, systemBrand.name)}</div>
+              <div><strong>${escapeHtml(systemBrand.name)}</strong><small>Relatorio de conectividade</small></div>
+            </div>
+            <div>
+              <h1>Historico de falhas do link</h1>
+              <p class="subtitle">${escapeHtml(link.name)}${link.interfaceName ? ` · ${escapeHtml(link.interfaceName)}` : ""}</p>
+            </div>
+            <div class="company">
+              <div class="company-wrap"><strong>${escapeHtml(companyName)}</strong><small>Empresa vinculada</small></div>
+              <div class="mark">${logoHtml(companyLogo, companyName)}</div>
+            </div>
+          </header>
+          <section class="content">
+            <p class="meta">Gerado em ${escapeHtml(formatDate(new Date().toISOString()))} · Monitoramento: ${escapeHtml(link.monitorSource === "snmp" ? "SNMP" : link.monitorSource || "Probe")}</p>
+            <div class="summary">
+              <article class="summary-card"><span>Eventos registrados</span><strong>${rows.length}</strong></article>
+              <article class="summary-card danger"><span>Indisponibilidades</span><strong>${failures.length}</strong></article>
+              <article class="summary-card good"><span>Recuperacoes</span><strong>${recoveries.length}</strong></article>
+              <article class="summary-card"><span>Tempo recuperado</span><strong>${totalDowntimeMs ? escapeHtml(formatDurationMs(totalDowntimeMs)) : "-"}</strong></article>
+            </div>
+            <table>
+              <thead><tr><th>Data e hora</th><th>Status</th><th>Detalhe</th><th>Duracao</th><th>Medicao</th></tr></thead>
+              <tbody>${tableRows}</tbody>
+            </table>
+          </section>
+          <footer class="footer">Relatorio gerado pelo ${escapeHtml(systemBrand.name)}. Os registros representam transicoes recebidas pelo monitoramento configurado para este link.</footer>
+        </main>
+        <script>window.addEventListener('load', () => setTimeout(() => window.print(), 180));</script>
+      </body>
+    </html>`;
+}
+
+async function exportNetworkHistoryPdf(link, button) {
+  const reportWindow = window.open("", "_blank", "width=1280,height=820");
+  if (!reportWindow) {
+    showToast("Permita a janela do relatorio", "O navegador bloqueou a abertura necessaria para gerar o PDF.");
+    return;
+  }
+
+  const originalLabel = button?.textContent || "Exportar PDF";
+  if (button) {
+    button.disabled = true;
+    button.textContent = "Gerando PDF...";
+  }
+  reportWindow.document.write("<title>Gerando relatorio...</title><p style='font-family:Arial;padding:24px'>Preparando historico do link...</p>");
+  reportWindow.document.close();
+  try {
+    const response = await api(`/api/network/events?linkId=${encodeURIComponent(link.id)}&limit=5000`);
+    reportWindow.document.open();
+    reportWindow.document.write(networkHistoryReportHtml(link, response.events || []));
+    reportWindow.document.close();
+  } catch (error) {
+    reportWindow.close();
+    showToast("Nao foi possivel gerar o PDF", error.message);
+  } finally {
+    if (button) {
+      button.disabled = false;
+      button.textContent = originalLabel;
+    }
+  }
+}
+
 function renderNetworkDetail(link) {
   if (!els.networkDetailPanel) return;
   if (!link) {
@@ -7629,7 +8281,10 @@ function renderNetworkDetail(link) {
     <section class="profile-section">
       <div class="panel-title compact-title">
         <h3>Historico recente</h3>
-        <span>${events.length} eventos</span>
+        <div class="panel-title-actions">
+          <span>${events.length} eventos</span>
+          <button class="ghost-button compact" type="button" data-network-action="export-history" data-link-id="${escapeHtml(link.id)}">Exportar PDF</button>
+        </div>
       </div>
       <div class="network-event-list">
         ${
@@ -8426,11 +9081,13 @@ function reportChartLabel(day, index, total) {
 }
 
 function renderReportBars(trend = [], mode = "backup") {
-  const values = trend.map((item) => mode === "backup" ? item.success + item.warning + item.error : item.serverFailures + item.linkProblems);
+  const values = trend.map((item) => mode === "backup"
+    ? item.success + item.warning + item.error
+    : item.serverFailures + (item.serverRecoveries || 0) + item.linkProblems);
   const max = Math.max(1, ...values);
   return trend.map((item, index) => {
     const total = values[index];
-    const success = mode === "backup" ? item.success : 0;
+    const success = mode === "backup" ? item.success : (item.serverRecoveries || 0);
     const warning = mode === "backup" ? item.warning : item.linkProblems;
     const error = mode === "backup" ? item.error : item.serverFailures;
     const height = total ? Math.max(8, Math.round((total / max) * 100)) : 2;
@@ -8439,7 +9096,7 @@ function renderReportBars(trend = [], mode = "backup") {
     const errorHeight = Math.max(0, height - successHeight - warningHeight);
     const title = mode === "backup"
       ? `${formatDateOnly(item.day)}: ${success} sucesso, ${warning} atencao, ${error} erro`
-      : `${formatDateOnly(item.day)}: ${item.serverFailures} falhas de servidor, ${item.linkProblems} ocorrencias de link`;
+      : `${formatDateOnly(item.day)}: ${item.serverFailures} quedas, ${item.serverRecoveries || 0} recuperacoes, ${item.linkProblems} ocorrencias de link`;
     return `<div class="report-bar-column" title="${escapeHtml(title)}">
       <div class="report-bar-stack" style="height:${height}%">
         <i class="report-bar-success" style="height:${successHeight}%"></i>
@@ -8463,7 +9120,7 @@ function renderReportMetrics(report) {
     <article class="report-kpi-card"><span>Links</span><strong class="${coverage.links.offline ? "is-bad" : coverage.links.degraded ? "is-warn" : "is-good"}">${linkValue}</strong><small>${coverage.links.degraded ? `${coverage.links.degraded} degradado(s)` : coverage.links.offline ? `${coverage.links.offline} offline` : "operacionais"}</small></article>
     <article class="report-kpi-card"><span>Backups</span><strong class="is-${backupTone}">${backupValue}</strong><small>${backups.monitored ? `${backups.successRate ?? 0}% de sucesso` : "sem coleta monitorada"}</small></article>
     <article class="report-kpi-card"><span>Suporte</span><strong class="${support.slaOverdue ? "is-bad" : support.open ? "is-warn" : "is-good"}">${support.open}</strong><small>${support.slaOverdue ? `${support.slaOverdue} SLA vencido(s)` : "chamados em aberto"}</small></article>
-    <article class="report-kpi-card"><span>Ocorrencias</span><strong class="${availability.currentlyOffline ? "is-bad" : "is-good"}">${availability.serverFailures + availability.linkProblems}</strong><small>no periodo selecionado</small></article>
+    <article class="report-kpi-card"><span>Oscilacoes de servidor</span><strong class="${availability.currentlyOffline ? "is-bad" : availability.serverFailures ? "is-warn" : "is-good"}">${availability.serverFailures + (availability.serverRecoveries || 0)}</strong><small>${availability.serverFailures} quedas / ${availability.serverRecoveries || 0} recuperacoes</small></article>
   </section>`;
 }
 
@@ -8543,7 +9200,7 @@ function renderReports() {
   ${renderReportMetrics(report)}
   <section class="report-visual-grid">
     <article class="report-panel report-chart-panel"><header><div><h3>Saude dos backups</h3><span>Historico diario consolidado</span></div><strong class="is-${report.backups.error ? "bad" : report.backups.warning ? "warn" : "good"}">${backupRate}</strong></header><div class="report-bars">${renderReportBars(report.trends, "backup")}</div><footer><span>Sucesso</span><span>Atencao</span><span>Erro</span></footer></article>
-    <article class="report-panel report-chart-panel"><header><div><h3>Eventos de disponibilidade</h3><span>Falhas e ocorrencias de rede</span></div><strong>${report.availability.serverFailures + report.availability.linkProblems}</strong></header><div class="report-bars report-incident-bars">${renderReportBars(report.trends, "availability")}</div><footer><span>Falhas de servidor</span><span>Ocorrencias de link</span></footer></article>
+    <article class="report-panel report-chart-panel"><header><div><h3>Eventos de disponibilidade</h3><span>Quedas, recuperacoes e ocorrencias de rede</span></div><strong>${report.availability.serverFailures + report.availability.serverRecoveries + report.availability.linkProblems}</strong></header><div class="report-bars report-incident-bars">${renderReportBars(report.trends, "availability")}</div><footer><span>Recuperacoes</span><span>Ocorrencias de link</span><span>Quedas de servidor</span></footer></article>
     <article class="report-panel report-coverage-panel"><header><div><h3>Cobertura monitorada</h3><span>Ativos reconhecidos na empresa</span></div></header><div class="report-coverage-rows"><div><span>Servidores</span><strong>${report.coverage.servers.active}/${report.coverage.servers.total || 0}</strong><small>${report.coverage.servers.probe} por probe</small></div><div><span>Links</span><strong>${report.coverage.links.online}/${report.coverage.links.total || 0}</strong><small>${report.coverage.links.degraded} degradado(s)</small></div><div><span>UniFi</span><strong>${report.coverage.unifi.online}/${report.coverage.unifi.devices || 0}</strong><small>${report.coverage.unifi.sites} site(s)</small></div><div><span>Armazenamento PBS</span><strong>${escapeHtml(protectedStorage)}</strong><small>ultimo inventario protegido</small></div></div></article>
   </section>
   <section class="report-detail-grid">
@@ -8649,6 +9306,12 @@ function openDialog(server = null) {
   els.serverParentId.value = server?.parentId || "";
   els.serverTags.value = (server?.tags || []).join(", ");
   els.serverDescription.value = server?.description || "";
+  if (els.serverVaultCredentialLabel) els.serverVaultCredentialLabel.value = server?.vaultCredential?.label || "";
+  if (els.serverVaultCredentialUrl) els.serverVaultCredentialUrl.value = server?.vaultCredential?.itemUrl || "";
+  if (els.vaultCredentialOptions) {
+    const vault = vaultwardenSettings();
+    els.vaultCredentialOptions.hidden = !isAdmin() || !vault.enabled || !vault.publicUrl;
+  }
   toggleProbeOptions();
   toggleVirtualizerChildrenOptions();
   els.serverDialog.showModal();
@@ -9588,7 +10251,11 @@ async function submitServer(event) {
     checkInterval: Number(els.serverInterval.value),
     failureThreshold: Number(els.serverThreshold.value),
     tags: els.serverTags.value,
-    description: els.serverDescription.value
+    description: els.serverDescription.value,
+    vaultCredential: {
+      label: els.serverVaultCredentialLabel?.value || "",
+      itemUrl: els.serverVaultCredentialUrl?.value || ""
+    }
   };
   if (payload.nodeType === "hypervisor") {
     payload.childIds = selectedVirtualizerChildIds();
@@ -9860,7 +10527,7 @@ function bindEvents() {
     const modeButton = eventClosest(event, "[data-dashboard-mode]");
     if (modeButton?.dataset.dashboardMode) {
       state.dashboardMode = modeButton.dataset.dashboardMode === "complete" ? "complete" : "simple";
-      localStorage.setItem("serverwatch.dashboardMode", state.dashboardMode);
+      localStorage.setItem("serverwatch.dashboardMode.v2", state.dashboardMode);
       renderSimpleDashboard();
       return;
     }
@@ -9960,9 +10627,16 @@ function bindEvents() {
     }
 
     const button = eventClosest(event, "[data-network-action]");
-    if (!button || !isAdmin()) return;
+    if (!button) return;
     const link = state.networkLinks.find((item) => item.id === button.dataset.linkId);
     if (!link) return;
+
+    if (button.dataset.networkAction === "export-history") {
+      await exportNetworkHistoryPdf(link, button);
+      return;
+    }
+
+    if (!isAdmin()) return;
 
     if (button.dataset.networkAction === "edit") {
       openNetworkLinkDialog(link);
@@ -10564,6 +11238,7 @@ function bindEvents() {
   els.cloudBackupSettingsForm?.addEventListener("submit", submitCloudBackupSettings);
   els.proxmoxSettingsForm?.addEventListener("submit", submitProxmoxSettings);
   els.unifiSettingsForm?.addEventListener("submit", submitUnifiSettings);
+  els.vaultwardenSettingsForm?.addEventListener("submit", submitVaultwardenSettings);
   els.databaseBackupSettingsForm?.addEventListener("submit", submitDatabaseBackupSettings);
   els.runDatabaseBackup?.addEventListener("click", runDatabaseBackupNow);
   els.manageDatabaseBackups?.addEventListener("click", async () => {
@@ -10877,8 +11552,53 @@ function bindEvents() {
   });
 
   els.alertsList.addEventListener("click", async (event) => {
+    const stackToggle = eventClosest(event, "[data-alert-stack-toggle]");
+    if (stackToggle) {
+      const stackId = stackToggle.dataset.alertStackToggle;
+      if (state.alertExpandedStacks.has(stackId)) state.alertExpandedStacks.delete(stackId);
+      else state.alertExpandedStacks.add(stackId);
+      renderAlerts();
+      return;
+    }
+    const stackAck = eventClosest(event, "[data-alert-stack-ack]");
+    if (stackAck) {
+      const episode = groupAlertEpisodes(filteredAlerts()).find((item) => item.id === stackAck.dataset.alertStackAck);
+      const pending = episode?.alerts.filter((alert) => !alert.read) || [];
+      if (!pending.length) return;
+      const note = window.prompt(`Observacao para reconhecer ${pending.length} eventos (opcional):`, "") || "";
+      try {
+        const results = await Promise.allSettled(
+          pending.map((alert) => api(`/api/alerts/${encodeURIComponent(alert.id)}/ack`, {
+            method: "POST",
+            body: JSON.stringify({ note })
+          }))
+        );
+        const updatedAlerts = results
+          .filter((result) => result.status === "fulfilled")
+          .map((result) => result.value);
+        const failedCount = results.length - updatedAlerts.length;
+        const updatedById = new Map(updatedAlerts.map((alert) => [alert.id, alert]));
+        state.alerts = state.alerts.map((alert) => updatedById.get(alert.id) || alert);
+        renderAlerts();
+        renderMetrics();
+        renderSimpleDashboard();
+        showToast(
+          failedCount ? "Reconhecimento parcial" : "Oscilacao reconhecida",
+          failedCount
+            ? `${updatedAlerts.length} eventos reconhecidos e ${failedCount} nao puderam ser atualizados.`
+            : `${updatedAlerts.length} eventos foram marcados como tratados.`
+        );
+      } catch (error) {
+        showToast("Falha ao reconhecer os alertas", error.message);
+      }
+      return;
+    }
     const button = eventClosest(event, "[data-alert-action]");
-    if (!button) return;
+    if (!button) {
+      const card = eventClosest(event, "[data-alert-id]");
+      if (card) openAlertDetails(card.dataset.alertId);
+      return;
+    }
     const alert = state.alerts.find((item) => item.id === button.dataset.alertId);
     if (!alert) return;
     if (button.dataset.alertAction === "ack") {
@@ -10899,6 +11619,14 @@ function bindEvents() {
     }
   });
 
+  els.alertsList.addEventListener("keydown", (event) => {
+    if (!["Enter", " "].includes(event.key)) return;
+    const card = eventClosest(event, "[data-alert-id]");
+    if (!card || event.target !== card) return;
+    event.preventDefault();
+    openAlertDetails(card.dataset.alertId);
+  });
+
   els.notificationList?.addEventListener("click", (event) => {
     const item = eventClosest(event, "[data-notification-alert-id]");
     if (!item) return;
@@ -10912,6 +11640,19 @@ function bindEvents() {
     if (els.alertTypeFilter) els.alertTypeFilter.value = state.alertFilters.type;
     if (els.notificationMenu) els.notificationMenu.open = false;
     setActiveView("alerts");
+    requestAnimationFrame(() => openAlertDetails(alert.id));
+  });
+
+  els.closeAlertDetailsDialog?.addEventListener("click", () => forceCloseDialog(els.alertDetailsDialog));
+
+  els.alertDetailsDialog?.addEventListener("click", (event) => {
+    const action = eventClosest(event, "[data-alert-details-action]");
+    if (action?.dataset.alertDetailsAction === "open-server") {
+      forceCloseDialog(els.alertDetailsDialog);
+      selectServer(action.dataset.serverId, { view: "servers" });
+      return;
+    }
+    closeDialogFromBackdrop(event, () => forceCloseDialog(els.alertDetailsDialog));
   });
 
   els.enableBrowserNotifications?.addEventListener("click", requestBrowserNotifications);

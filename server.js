@@ -1,5 +1,6 @@
 import { createServer } from "node:http";
-import { randomUUID } from "node:crypto";
+import { createHmac, randomUUID } from "node:crypto";
+import dns from "node:dns";
 import { spawn } from "node:child_process";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
@@ -21,6 +22,9 @@ import { createServerCheckHandler, createServerCreateHandler, createServerMutati
 import { createSettingsHandler } from "./routes/settings.js";
 import { createStaticHandler } from "./routes/static.js";
 import { createUsersHandler } from "./routes/users.js";
+
+// A VM central nao possui rota IPv6; prioriza IPv4 para integracoes externas.
+dns.setDefaultResultOrder("ipv4first");
 import { createStorage } from "./storage/index.js";
 import { createAlertService } from "./services/alert.js";
 import { emptyCloudBackupState, fetchCloudBackupSummary } from "./services/cloudBackup.js";
@@ -210,8 +214,8 @@ const TICKET_AUTOMATION_CHECK_MS = 60 * 1000;
 const TICKET_AUTOMATION_DEFAULTS = Object.freeze({
   enabled: false,
   serverOfflineMinutes: 30,
-  linkOfflineMinutes: 120,
-  backupOverdueHours: 36
+  linkOfflineMinutes: 60,
+  recoveryStableMinutes: 60
 });
 const PROBE_UPDATE_SUPPORTED_PLATFORMS = new Set(["linux", "windows"]);
 
@@ -354,6 +358,10 @@ function normalizeServer(payload, existing = {}) {
   );
   const rawParentId = payload.parentId ?? payload.parent_id ?? existing.parentId ?? null;
   const parentId = rawParentId && rawParentId !== "none" ? String(rawParentId) : null;
+  const vaultCredential =
+    payload.vaultCredential !== undefined
+      ? normalizeServerVaultCredential(payload.vaultCredential, existing.vaultCredential)
+      : existing.vaultCredential || null;
 
   if (groupId && !listedGroups().some((group) => group.id === groupId)) {
     const error = new Error("Empresa/grupo informado nao existe.");
@@ -418,8 +426,55 @@ function normalizeServer(payload, existing = {}) {
     groupId,
     location: String(payload.location ?? existing.location ?? "").trim(),
     tags: normalizeTags(payload.tags ?? existing.tags ?? []),
+    vaultCredential,
     isActive: Boolean(payload.isActive ?? payload.is_active ?? existing.isActive ?? true),
     updatedAt: nowIso()
+  };
+}
+
+function normalizeServerVaultCredential(value, existing = null) {
+  const payload = value && typeof value === "object" ? value : {};
+  const rawUrl = payload.itemUrl !== undefined ? String(payload.itemUrl || "").trim() : String(existing?.itemUrl || "").trim();
+  const label = payload.label !== undefined ? String(payload.label || "").trim().slice(0, 120) : String(existing?.label || "").trim();
+
+  if (!rawUrl) return null;
+
+  const vaultUrl = String(state.settings.vaultwardenPublicUrl || "").trim().replace(/\/+$/, "");
+  if (!vaultUrl || state.settings.vaultwardenEnabled !== true) {
+    const error = new Error("Configure e ative a integracao Vaultwarden antes de vincular uma credencial.");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  let vault;
+  let item;
+  try {
+    vault = new URL(vaultUrl);
+    item = new URL(rawUrl);
+  } catch {
+    const error = new Error("Informe o link completo do item no Vaultwarden.");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  if (item.protocol !== "https:" || item.origin !== vault.origin) {
+    const error = new Error("A credencial deve apontar para o Vaultwarden configurado em HTTPS.");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const hashQuery = item.hash.includes("?") ? item.hash.slice(item.hash.indexOf("?") + 1) : "";
+  const itemId = item.searchParams.get("itemId") || new URLSearchParams(hashQuery).get("itemId") || item.hash.match(/\/item\/([0-9a-f-]{36})/i)?.[1] || "";
+  if (!/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(itemId)) {
+    const error = new Error("O link do Vaultwarden precisa conter o identificador do item da credencial.");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  return {
+    label: label || "Credencial administrativa",
+    itemId,
+    itemUrl: `${vault.origin}/#/vault?itemId=${itemId}`
   };
 }
 
@@ -994,7 +1049,7 @@ function normalizeTicketAutomationSettings(payload = {}, existing = {}) {
   const enabled = Boolean(incoming.enabled ?? current.enabled ?? TICKET_AUTOMATION_DEFAULTS.enabled);
   const serverOfflineMinutes = Number(incoming.serverOfflineMinutes ?? current.serverOfflineMinutes ?? TICKET_AUTOMATION_DEFAULTS.serverOfflineMinutes);
   const linkOfflineMinutes = Number(incoming.linkOfflineMinutes ?? current.linkOfflineMinutes ?? TICKET_AUTOMATION_DEFAULTS.linkOfflineMinutes);
-  const backupOverdueHours = Number(incoming.backupOverdueHours ?? current.backupOverdueHours ?? TICKET_AUTOMATION_DEFAULTS.backupOverdueHours);
+  const recoveryStableMinutes = Number(incoming.recoveryStableMinutes ?? current.recoveryStableMinutes ?? TICKET_AUTOMATION_DEFAULTS.recoveryStableMinutes);
 
   if (!Number.isFinite(serverOfflineMinutes) || serverOfflineMinutes < 5 || serverOfflineMinutes > 1440) {
     const error = new Error("Tempo para servidor offline deve ficar entre 5 e 1440 minutos.");
@@ -1006,8 +1061,8 @@ function normalizeTicketAutomationSettings(payload = {}, existing = {}) {
     error.statusCode = 400;
     throw error;
   }
-  if (!Number.isFinite(backupOverdueHours) || backupOverdueHours < 6 || backupOverdueHours > 720) {
-    const error = new Error("Tempo para backup pendente deve ficar entre 6 e 720 horas.");
+  if (!Number.isFinite(recoveryStableMinutes) || recoveryStableMinutes < 5 || recoveryStableMinutes > 1440) {
+    const error = new Error("Tempo de estabilidade para fechamento deve ficar entre 5 e 1440 minutos.");
     error.statusCode = 400;
     throw error;
   }
@@ -1018,7 +1073,7 @@ function normalizeTicketAutomationSettings(payload = {}, existing = {}) {
       enabled,
       serverOfflineMinutes: Math.round(serverOfflineMinutes),
       linkOfflineMinutes: Math.round(linkOfflineMinutes),
-      backupOverdueHours: Math.round(backupOverdueHours),
+      recoveryStableMinutes: Math.round(recoveryStableMinutes),
       baselineAt: enabled
         ? (current.enabled === true ? current.baselineAt || nowIso() : nowIso())
         : null
@@ -1395,12 +1450,94 @@ function isServerRecoveryEvent(event) {
   );
 }
 
+const SERVER_INCIDENT_WINDOW_MS = 10 * 60 * 1000;
+
+function serverIncidentKey(event) {
+  return String(event?.serverId || event?.serverName || event?.hostname || event?.address || event?.id || "");
+}
+
+function collapseServerIncidents(events = []) {
+  const episodes = [];
+  const latestByServer = new Map();
+  const ordered = events
+    .filter((event) => isServerFailureEvent(event) || isServerRecoveryEvent(event))
+    .slice()
+    .sort((left, right) => eventTimestampMs(left) - eventTimestampMs(right));
+
+  for (const event of ordered) {
+    const key = serverIncidentKey(event);
+    if (!key) continue;
+    const timestamp = eventTimestampMs(event);
+    const previous = latestByServer.get(key);
+    const gapMs = previous ? timestamp - previous.lastAt : -1;
+    if (previous && gapMs >= 0 && gapMs <= SERVER_INCIDENT_WINDOW_MS) {
+      previous.events.push(event);
+      previous.lastAt = timestamp;
+      continue;
+    }
+    const episode = { key, events: [event], firstAt: timestamp, lastAt: timestamp };
+    episodes.push(episode);
+    latestByServer.set(key, episode);
+  }
+
+  return episodes;
+}
+
+function summarizedServerIncidentEvents(events = []) {
+  const episodes = collapseServerIncidents(events);
+  return {
+    failures: episodes
+      .map((episode) => episode.events.find(isServerFailureEvent))
+      .filter(Boolean),
+    recoveries: episodes
+      .map((episode) => episode.events.slice().reverse().find(isServerRecoveryEvent))
+      .filter(Boolean)
+  };
+}
+
+function backupFailureEvents24h(user = null, windowStart = Date.now() - 24 * 60 * 60 * 1000) {
+  const failures = [];
+  const cloud = scopedCloudBackup(user);
+  for (const client of cloud.clients || []) {
+    for (const backupSet of client.backupSets || []) {
+      const status = String(backupSet.status || "").toLowerCase();
+      if (!status.includes("error") && !status.includes("fail") && !status.includes("nao realiz")) continue;
+      const timestamp = Date.parse(backupSet.lastBackupJobDate || "");
+      if (Number.isFinite(timestamp) && timestamp >= windowStart) {
+        failures.push({
+          kind: "backup_failure",
+          provider: "msp",
+          groupId: client.groupId || null,
+          createdAt: new Date(timestamp).toISOString()
+        });
+      }
+    }
+  }
+
+  const proxmox = scopedProxmoxBackup(user);
+  for (const item of proxmox.items || []) {
+    if ((item.status || proxmoxItemStatus(item)) !== "error") continue;
+    const snapshotAt = Date.parse(item.lastSnapshotAt || "");
+    if (!Number.isFinite(snapshotAt)) continue;
+    const verificationFailed = ["failed", "error"].includes(String(item.verifyState || "").toLowerCase());
+    const failureAt = verificationFailed ? snapshotAt : snapshotAt + 26 * 60 * 60 * 1000;
+    if (failureAt >= windowStart && failureAt <= Date.now()) {
+      failures.push({
+        kind: "backup_failure",
+        provider: "pbs",
+        groupId: item.groupId || null,
+        createdAt: new Date(failureAt).toISOString()
+      });
+    }
+  }
+  return failures;
+}
+
 function serverEvents24hSummary(user = null) {
   const now = Date.now();
   const windowStart = now - 24 * 60 * 60 * 1000;
   const dayEvents = scopedEvents(user).filter((event) => eventTimestampMs(event) >= windowStart);
-  const failures = dayEvents.filter(isServerFailureEvent);
-  const recoveries = dayEvents.filter(isServerRecoveryEvent);
+  const { failures, recoveries } = summarizedServerIncidentEvents(dayEvents);
   const buckets = Array.from({ length: 12 }, (_, index) => {
     const start = now - (12 - index) * 2 * 60 * 60 * 1000;
     const end = start + 2 * 60 * 60 * 1000;
@@ -1413,6 +1550,48 @@ function serverEvents24hSummary(user = null) {
   return {
     failures: failures.length,
     recoveries: recoveries.length,
+    buckets
+  };
+}
+
+function operationalEvents24hSummary(user = null) {
+  const now = Date.now();
+  const windowStart = now - 24 * 60 * 60 * 1000;
+  const serverEvents = scopedEvents(user).filter((event) => eventTimestampMs(event) >= windowStart);
+  const networkEvents = scopedNetworkEvents(user).filter((event) => eventTimestampMs(event) >= windowStart);
+  const { failures: serverFailures, recoveries: serverRecoveries } = summarizedServerIncidentEvents(serverEvents);
+  const backupFailures = backupFailureEvents24h(user, windowStart);
+  const networkFailures = networkEvents.filter(
+    (event) =>
+      event?.kind === "network_link_offline" ||
+      event?.kind === "network_link_degraded" ||
+      event?.currentStatus === "offline" ||
+      event?.currentStatus === "degraded"
+  );
+  const networkRecoveries = networkEvents.filter(
+    (event) => event?.kind === "network_link_recovered" || event?.currentStatus === "online"
+  );
+  const bucketCounts = (events, start, end) =>
+    events.filter((event) => {
+      const timestamp = eventTimestampMs(event);
+      return timestamp >= start && timestamp < end;
+    }).length;
+  const buckets = Array.from({ length: 12 }, (_, index) => {
+    const start = now - (12 - index) * 2 * 60 * 60 * 1000;
+    const end = start + 2 * 60 * 60 * 1000;
+    return {
+      server: bucketCounts(serverFailures, start, end),
+      network: bucketCounts(networkFailures, start, end),
+      backup: bucketCounts(backupFailures, start, end)
+    };
+  });
+
+  return {
+    failures: serverFailures.length + networkFailures.length + backupFailures.length,
+    recoveries: serverRecoveries.length + networkRecoveries.length,
+    server: { failures: serverFailures.length, recoveries: serverRecoveries.length },
+    network: { failures: networkFailures.length, recoveries: networkRecoveries.length },
+    backup: { failures: backupFailures.length },
     buckets
   };
 }
@@ -2018,6 +2197,12 @@ function publicServer(server) {
     groupName: group?.name || null,
     location: server.location,
     tags: server.tags,
+    vaultCredential: server.vaultCredential?.itemUrl
+      ? {
+          label: server.vaultCredential.label || "Credencial administrativa",
+          itemUrl: server.vaultCredential.itemUrl
+        }
+      : null,
     isActive: server.isActive,
     currentStatus: server.currentStatus || "unknown",
     previousStatus: server.previousStatus || "unknown",
@@ -2328,7 +2513,7 @@ function automaticTicketExists(automationKey, day = operationalDayKey()) {
   );
 }
 
-function addAutomaticTicket({ automationKey, groupId, title, description, category, impact, assetType, assetName }) {
+function addAutomaticTicket({ automationKey, groupId, title, description, category, impact, assetType, assetName, automationMeta = null }) {
   const day = operationalDayKey();
   if (!groupId || automaticTicketExists(automationKey, day)) return null;
   const group = listedGroups().find((item) => item.id === groupId);
@@ -2343,6 +2528,7 @@ function addAutomaticTicket({ automationKey, groupId, title, description, catego
     code: identity.code,
     automationKey,
     automationDay: day,
+    automationMeta,
     createdAt: now,
     updatedAt: now,
     closedAt: null,
@@ -2380,21 +2566,13 @@ function addAutomaticTicket({ automationKey, groupId, title, description, catego
   return ticket;
 }
 
-function cloudBackupOverdue(backupSet) {
-  const status = String(backupSet?.status || "").trim().toLowerCase();
-  if (["", "info", "nomon", "unknown"].includes(status)) return false;
-  const lastSuccessAt = new Date(backupSet?.lastSuccessBackupJobDate || backupSet?.lastBackupJobDate || 0).getTime();
-  if (!Number.isFinite(lastSuccessAt) || lastSuccessAt <= 0) return status !== "success";
-  return Date.now() - lastSuccessAt >= getTicketAutomationSettings().backupOverdueHours * 60 * 60 * 1000;
-}
-
 function getTicketAutomationSettings() {
   const configured = state.settings.ticketAutomation || {};
   return {
     enabled: configured.enabled ?? TICKET_AUTOMATION_DEFAULTS.enabled,
     serverOfflineMinutes: Number(configured.serverOfflineMinutes ?? TICKET_AUTOMATION_DEFAULTS.serverOfflineMinutes),
     linkOfflineMinutes: Number(configured.linkOfflineMinutes ?? TICKET_AUTOMATION_DEFAULTS.linkOfflineMinutes),
-    backupOverdueHours: Number(configured.backupOverdueHours ?? TICKET_AUTOMATION_DEFAULTS.backupOverdueHours),
+    recoveryStableMinutes: Number(configured.recoveryStableMinutes ?? TICKET_AUTOMATION_DEFAULTS.recoveryStableMinutes),
     baselineAt: configured.baselineAt || null
   };
 }
@@ -2411,11 +2589,42 @@ function occurredAfterAutomationBaseline(value, automation) {
   return Number.isFinite(eventAt) && eventAt >= baselineAt;
 }
 
-function formatAutomaticBackupItem(item) {
-  const source = item.source === "pbs" ? "PBS" : "MSP Cloud";
-  const label = item.label || "Backup sem identificacao";
-  const lastAt = item.lastAt ? new Date(item.lastAt).toLocaleString("pt-BR") : "sem sucesso registrado";
-  return `- ${source}: ${label} (ultimo backup: ${lastAt})`;
+function openAutomaticTicket(automationKey) {
+  return (state.tickets || []).find(
+    (ticket) =>
+      !ticket.deletedAt &&
+      ticket.automationKey === automationKey &&
+      !["resolved", "closed"].includes(ticket.status)
+  );
+}
+
+function formatAutomationDuration(milliseconds) {
+  const totalMinutes = Math.max(0, Math.round(milliseconds / 60000));
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  if (hours && minutes) return `${hours}h ${minutes}min`;
+  if (hours) return `${hours}h`;
+  return `${minutes} min`;
+}
+
+function closeRecoveredAutomaticTicket(ticket, { recoveredAt, lastOfflineLog, assetLabel }) {
+  const outageStartedAt = ticket.automationMeta?.offlineStartedAt || ticket.createdAt;
+  const outageStartedMs = new Date(outageStartedAt || 0).getTime();
+  const recoveredMs = new Date(recoveredAt || 0).getTime();
+  const duration = Number.isFinite(outageStartedMs) && Number.isFinite(recoveredMs) && recoveredMs > outageStartedMs
+    ? formatAutomationDuration(recoveredMs - outageStartedMs)
+    : "nao calculada";
+  const lastLog = ticket.automationMeta?.lastOfflineLog || lastOfflineLog || "Sem detalhe adicional recebido pelo probe.";
+  const message = `Encerramento automatico confirmado pelo ServerWatch. ${assetLabel} voltou a responder e permaneceu estavel pelo periodo configurado.\n\nInicio da indisponibilidade: ${new Date(outageStartedAt).toLocaleString("pt-BR")}\nRetorno confirmado: ${new Date(recoveredAt).toLocaleString("pt-BR")}\nDuracao observada: ${duration}\nUltimo registro recebido do probe: ${lastLog}`;
+
+  appendTicketUpdate(ticket, {
+    kind: "resolution",
+    message,
+    newStatus: "closed",
+    visibility: "internal"
+  }, { name: "ServerWatch", role: "admin" });
+  ticket.automationClosedAt = nowIso();
+  ticket.automationCloseReason = "recovered_stable";
 }
 
 async function runTicketAutomation({ force = false } = {}) {
@@ -2425,7 +2634,7 @@ async function runTicketAutomation({ force = false } = {}) {
   try {
     const automation = getTicketAutomationSettings();
     if (!automation.enabled) return;
-    const created = [];
+    const changedTickets = [];
     const serverThresholdMs = automation.serverOfflineMinutes * 60 * 1000;
     for (const server of listedServers()) {
       if (!server.isActive || server.currentStatus !== "offline" || !server.groupId) continue;
@@ -2439,9 +2648,15 @@ async function runTicketAutomation({ force = false } = {}) {
         category: "server",
         impact: "company",
         assetType: "server",
-        assetName: server.name || server.hostname
+        assetName: server.name || server.hostname,
+        automationMeta: {
+          assetId: server.id,
+          offlineStartedAt: server.statusChangedAt,
+          lastOfflineCheckAt: server.lastCheckedAt || null,
+          lastOfflineLog: server.lastError || null
+        }
       });
-      if (ticket) created.push(ticket);
+      if (ticket) changedTickets.push(ticket);
     }
 
     const linkThresholdMs = automation.linkOfflineMinutes * 60 * 1000;
@@ -2458,58 +2673,41 @@ async function runTicketAutomation({ force = false } = {}) {
         category: "network",
         impact: "company",
         assetType: "network_link",
-        assetName: link.name
+        assetName: link.name,
+        automationMeta: {
+          assetId: link.id,
+          offlineStartedAt: link.statusChangedAt,
+          lastOfflineCheckAt: link.lastCheckedAt || null,
+          lastOfflineLog: link.lastError || null
+        }
       });
-      if (ticket) created.push(ticket);
+      if (ticket) changedTickets.push(ticket);
     }
 
-    const backupIssuesByGroup = new Map();
-    const addBackupIssue = (groupId, item) => {
-      if (!groupId) return;
-      if (!backupIssuesByGroup.has(groupId)) backupIssuesByGroup.set(groupId, []);
-      backupIssuesByGroup.get(groupId).push(item);
-    };
-    for (const client of decorateCloudBackupClients(state.cloudBackup?.clients || [])) {
-      for (const backupSet of client.backupSets || []) {
-        const backupAt = backupSet.lastSuccessBackupJobDate || backupSet.lastBackupJobDate || state.cloudBackup?.fetchedAt;
-        if (!occurredAfterAutomationBaseline(backupAt, automation)) continue;
-        if (!cloudBackupOverdue(backupSet)) continue;
-        addBackupIssue(client.groupId, {
-          source: "msp",
-          label: `${client.name} - ${backupSet.backupSetName || backupSet.loginDescription || "backup"}`,
-          lastAt: backupSet.lastSuccessBackupJobDate || backupSet.lastBackupJobDate || null
-        });
-      }
-    }
-    for (const item of decorateProxmoxItems(state.proxmoxBackup?.items || [])) {
-      const lastAt = item.lastSnapshotAt;
-      if (!occurredAfterAutomationBaseline(lastAt || state.proxmoxBackup?.fetchedAt, automation)) continue;
-      const overdue = !lastAt || elapsedAtLeast(lastAt, automation.backupOverdueHours * 60 * 60 * 1000);
-      const failed = ["failed", "error"].includes(String(item.verifyState || "").toLowerCase());
-      if (!overdue && !failed) continue;
-      addBackupIssue(item.groupId, {
-        source: "pbs",
-        label: item.serverName || item.comment || `${item.namespace || "raiz"} - ${item.backupId}`,
-        lastAt
+    const recoveryStableMs = automation.recoveryStableMinutes * 60 * 1000;
+    for (const server of listedServers()) {
+      const ticket = openAutomaticTicket(`server-offline:${server.id}`);
+      if (!ticket || server.currentStatus !== "online" || !elapsedAtLeast(server.statusChangedAt, recoveryStableMs)) continue;
+      closeRecoveredAutomaticTicket(ticket, {
+        recoveredAt: server.statusChangedAt,
+        lastOfflineLog: server.lastError,
+        assetLabel: `O servidor ${server.name || server.hostname}`
       });
-    }
-    for (const [groupId, issues] of backupIssuesByGroup) {
-      if (!issues.length) continue;
-      const group = listedGroups().find((item) => item.id === groupId);
-      const ticket = addAutomaticTicket({
-        automationKey: `backups-overdue:${groupId}`,
-        groupId,
-        title: `Backups pendentes: ${group?.name || "empresa"}`,
-        description: `Foram identificados ${issues.length} backup${issues.length === 1 ? " pendente" : "s pendentes"} ha mais de ${automation.backupOverdueHours} horas.\n\n${issues.slice(0, 40).map(formatAutomaticBackupItem).join("\n")}${issues.length > 40 ? `\n- ... e mais ${issues.length - 40} item(ns)` : ""}`,
-        category: "backup",
-        impact: "company",
-        assetType: "backup",
-        assetName: `${issues.length} backup${issues.length === 1 ? "" : "s"}`
-      });
-      if (ticket) created.push(ticket);
+      changedTickets.push(ticket);
     }
 
-    if (created.length) {
+    for (const link of listedNetworkLinks()) {
+      const ticket = openAutomaticTicket(`network-link-offline:${link.id}`);
+      if (!ticket || publicNetworkLink(link).displayStatus !== "online" || !elapsedAtLeast(link.statusChangedAt, recoveryStableMs)) continue;
+      closeRecoveredAutomaticTicket(ticket, {
+        recoveredAt: link.statusChangedAt,
+        lastOfflineLog: link.lastError,
+        assetLabel: `O link ${link.name}`
+      });
+      changedTickets.push(ticket);
+    }
+
+    if (changedTickets.length) {
       scheduleSave();
       broadcastSnapshot();
     }
@@ -2688,9 +2886,15 @@ function networkSummary(currentUser = null) {
   };
 }
 
-function addNetworkEvent(link, previousStatus, currentStatus, message) {
+function addNetworkEvent(link, previousStatus, currentStatus, message, metadata = {}) {
   const device = link.networkDeviceId ? listedNetworkDevices().find((item) => item.id === link.networkDeviceId) : null;
   const group = link.groupId ? listedGroups().find((item) => item.id === link.groupId) : null;
+  const previousStatusStartedAt = metadata.previousStatusStartedAt || null;
+  const previousStartedAtMs = previousStatusStartedAt ? new Date(previousStatusStartedAt).getTime() : NaN;
+  const recoveredDurationMs =
+    previousStatus === "offline" && currentStatus === "online" && Number.isFinite(previousStartedAtMs)
+      ? Math.max(0, Date.now() - previousStartedAtMs)
+      : null;
   const event = {
     id: randomUUID(),
     category: "network",
@@ -2706,6 +2910,11 @@ function addNetworkEvent(link, previousStatus, currentStatus, message) {
     latencyMs: link.lastLatencyMs ?? null,
     packetLossPercent: link.lastPacketLossPercent ?? null,
     jitterMs: link.lastJitterMs ?? null,
+    interfaceName: link.snmpIfDescr || link.interfaceName || null,
+    monitorSource: link.monitorSource || null,
+    consecutiveFailures: Number(link.consecutiveFailures || 0),
+    previousStatusStartedAt,
+    durationMs: recoveredDurationMs,
     message: message || null,
     createdAt: nowIso()
   };
@@ -2810,6 +3019,7 @@ function applyNetworkLinkResult(link, result, probeId) {
   const adjustedResult = reconcileNetworkLinkResult(link, result);
   const checkedAt = result.checkedAt || nowIso();
   const previousStatus = link.currentStatus || "unknown";
+  const previousStatusStartedAt = link.statusChangedAt || null;
   const candidate = networkCandidateStatus(link, adjustedResult);
   link.lastProbeSeenAt = nowIso();
   link.lastCheckedAt = checkedAt;
@@ -2842,7 +3052,8 @@ function applyNetworkLinkResult(link, result, probeId) {
       link,
       previousStatus,
       link.currentStatus,
-      link.lastError || `Resultado recebido do probe ${probeId}.`
+      link.lastError || `Resultado recebido do probe ${probeId}.`,
+      { previousStatusStartedAt }
     );
   }
   link.updatedAt = nowIso();
@@ -2861,6 +3072,7 @@ function applyNetworkLinkSnmpResult(link, result, networkProbeId) {
 
   const checkedAt = result.checkedAt || nowIso();
   const previousStatus = link.currentStatus || "unknown";
+  const previousStatusStartedAt = link.statusChangedAt || null;
   const online = Number(result.ifOperStatus) === 1;
 
   const inOctets = Number.isFinite(Number(result.inOctets)) ? Number(result.inOctets) : null;
@@ -2906,7 +3118,8 @@ function applyNetworkLinkSnmpResult(link, result, networkProbeId) {
       link,
       previousStatus,
       link.currentStatus,
-      link.lastError || `Resultado SNMP recebido do network probe ${networkProbeId}.`
+      link.lastError || `Resultado SNMP recebido do network probe ${networkProbeId}.`,
+      { previousStatusStartedAt }
     );
   }
   link.updatedAt = nowIso();
@@ -3146,6 +3359,7 @@ function summary(currentUser = null) {
     inactive: servers.length - total,
     availability24h,
     serverEvents24h: serverEvents24hSummary(currentUser),
+    operationalEvents24h: operationalEvents24hSummary(currentUser),
     alertsOpen: scopedAlerts(currentUser).filter((alert) => !alert.read && alert.type === "down").length,
     network: networkSummary(currentUser),
     groups: visibleGroups(currentUser).length,
@@ -3753,6 +3967,7 @@ function buildCompanyReport(groupId, rawDays, user) {
   const dayKeys = reportDays(days);
   const startedAt = Date.now() - days * 24 * 60 * 60 * 1000;
   const servers = listedServers().filter((server) => server.groupId === group.id);
+  const serverIds = new Set(servers.map((server) => String(server.id)));
   const activeServers = servers.filter((server) => server.isActive !== false);
   const publicServers = activeServers.map(publicServer);
   const links = listedNetworkLinks().filter((link) => link.groupId === group.id && link.isActive !== false && link.featured !== false).map(publicNetworkLink);
@@ -3760,13 +3975,20 @@ function buildCompanyReport(groupId, rawDays, user) {
   const currentBackup = currentGroupBackupReport(group.id);
 
   const serverEvents = (state.events || [])
-    .filter((event) => event.groupId === group.id && eventTimestampMs(event) >= startedAt && (isServerFailureEvent(event) || isServerRecoveryEvent(event)))
+    .filter((event) => {
+      const belongsToGroup = String(event.groupId || "") === String(group.id) || serverIds.has(String(event.serverId || ""));
+      return belongsToGroup && eventTimestampMs(event) >= startedAt && (isServerFailureEvent(event) || isServerRecoveryEvent(event));
+    })
     .sort((left, right) => eventTimestampMs(right) - eventTimestampMs(left));
   const networkEvents = (state.networkEvents || [])
     .filter((event) => event.groupId === group.id && eventTimestampMs(event) >= startedAt)
     .sort((left, right) => eventTimestampMs(right) - eventTimestampMs(left));
-  const serverFailures = serverEvents.filter(isServerFailureEvent);
-  const serverRecoveries = serverEvents.filter(isServerRecoveryEvent);
+  const confirmedServerTransitions = serverEvents.filter(
+    (event) =>
+      (isServerFailureEvent(event) && event.previousStatus === "online" && event.currentStatus === "offline") ||
+      (isServerRecoveryEvent(event) && event.previousStatus === "offline" && event.currentStatus === "online")
+  );
+  const { failures: serverFailures, recoveries: serverRecoveries } = summarizedServerIncidentEvents(confirmedServerTransitions);
   const linkProblems = networkEvents.filter((event) => ["offline", "degraded"].includes(event.currentStatus));
 
   const historyByDay = new Map(
@@ -3784,6 +4006,7 @@ function buildCompanyReport(groupId, rawDays, user) {
   });
 
   const serverFailureBuckets = reportEventBucket(serverFailures, dayKeys);
+  const serverRecoveryBuckets = reportEventBucket(serverRecoveries, dayKeys);
   const linkProblemBuckets = reportEventBucket(linkProblems, dayKeys);
   const trend = dayKeys.map((day) => {
     const entry = historyByDay.get(day);
@@ -3795,6 +4018,7 @@ function buildCompanyReport(groupId, rawDays, user) {
       error: Number(counts.error) || 0,
       monitored: Number(counts.monitored) || 0,
       serverFailures: serverFailureBuckets.get(day) || 0,
+      serverRecoveries: serverRecoveryBuckets.get(day) || 0,
       linkProblems: linkProblemBuckets.get(day) || 0
     };
   });
@@ -3895,6 +4119,47 @@ function normalizeUnifiSettings(payload, existing = {}) {
     unifiApiKey: apiKey,
     unifiTlsFingerprint: tlsFingerprint,
     unifiApiBasePath: apiBasePath
+  };
+}
+
+function normalizeVaultwardenSettings(payload, existing = {}) {
+  const rawUrl = payload.publicUrl !== undefined ? String(payload.publicUrl || "").trim() : existing.vaultwardenPublicUrl || "";
+  let publicUrl = rawUrl.replace(/\/+$/, "");
+  if (publicUrl) {
+    let parsed;
+    try {
+      parsed = new URL(publicUrl);
+    } catch {
+      throw new Error("Informe uma URL HTTPS valida para o Vaultwarden.");
+    }
+    if (parsed.protocol !== "https:" || parsed.username || parsed.password || parsed.pathname !== "/" || parsed.search || parsed.hash) {
+      throw new Error("Use somente a URL HTTPS publica do Vaultwarden, sem caminho ou credenciais.");
+    }
+    publicUrl = parsed.origin;
+  }
+  const enabled = payload.enabled !== undefined ? payload.enabled === true : existing.vaultwardenEnabled === true;
+  const defaultGatewayUrl = publicUrl ? `${publicUrl}/serverwatch-api` : "";
+  const rawGatewayUrl = payload.gatewayUrl !== undefined
+    ? String(payload.gatewayUrl || "").trim()
+    : existing.vaultwardenGatewayUrl || defaultGatewayUrl;
+  let gatewayUrl = rawGatewayUrl.replace(/\/+$/, "");
+  if (gatewayUrl) {
+    let parsed;
+    try {
+      parsed = new URL(gatewayUrl);
+    } catch {
+      throw new Error("Informe uma URL HTTPS valida para o gateway do cofre.");
+    }
+    if (!publicUrl || parsed.protocol !== "https:" || parsed.origin !== new URL(publicUrl).origin || parsed.pathname !== "/serverwatch-api" || parsed.search || parsed.hash) {
+      throw new Error("O gateway deve usar o mesmo dominio do Vaultwarden e o caminho /serverwatch-api.");
+    }
+    gatewayUrl = `${parsed.origin}/serverwatch-api`;
+  }
+  return {
+    ...existing,
+    vaultwardenPublicUrl: publicUrl || null,
+    vaultwardenGatewayUrl: publicUrl ? gatewayUrl || defaultGatewayUrl : null,
+    vaultwardenEnabled: Boolean(publicUrl && (gatewayUrl || defaultGatewayUrl)) && enabled
   };
 }
 
@@ -4106,8 +4371,35 @@ function publicSettings(currentUser = null) {
       : "",
     unifiApiBasePath: isAdminUser(currentUser)
       ? state.settings.unifiApiBasePath || process.env.UNIFI_API_BASE_PATH || "/proxy/network/integration"
-      : ""
+      : "",
+    vaultwardenPublicUrl: isAdminUser(currentUser) ? state.settings.vaultwardenPublicUrl || "" : "",
+    vaultwardenGatewayUrl: isAdminUser(currentUser)
+      ? state.settings.vaultwardenGatewayUrl || (state.settings.vaultwardenPublicUrl ? `${state.settings.vaultwardenPublicUrl}/serverwatch-api` : "")
+      : "",
+    vaultwardenEnabled: isAdminUser(currentUser) ? state.settings.vaultwardenEnabled === true : false
   };
+}
+
+function vaultGatewayTicket(user) {
+  const secret = String(process.env.SERVERWATCH_VAULT_TICKET_SECRET || "");
+  if (secret.length < 32) {
+    const error = new Error("Gateway do cofre ainda nao possui uma chave de comunicacao segura.");
+    error.statusCode = 503;
+    throw error;
+  }
+  const now = Math.floor(Date.now() / 1000);
+  const payload = Buffer.from(JSON.stringify({
+    sub: user.id,
+    email: user.email || null,
+    name: user.name || null,
+    role: "admin",
+    aud: "serverwatch-vault-gateway",
+    iat: now,
+    exp: now + 90,
+    jti: randomUUID()
+  })).toString("base64url");
+  const signature = createHmac("sha256", secret).update(payload).digest("base64url");
+  return `${payload}.${signature}`;
 }
 
 async function refreshDatabaseBackupRuntime({ notify = true } = {}) {
@@ -5126,6 +5418,22 @@ async function handleApi(req, res) {
     const session = requireSession(req, res);
     if (!session) return;
 
+    if (req.method === "POST" && parts[1] === "vault" && parts[2] === "ticket") {
+      if (!isAdminUser(session.user)) {
+        return sendJson(res, 403, { error: "Apenas administradores podem acessar o cofre." });
+      }
+      try {
+        const gatewayUrl = state.settings.vaultwardenGatewayUrl
+          || (state.settings.vaultwardenPublicUrl ? `${state.settings.vaultwardenPublicUrl}/serverwatch-api` : "");
+        if (!state.settings.vaultwardenEnabled || !gatewayUrl) {
+          return sendJson(res, 409, { error: "Ative a integracao Vaultwarden antes de acessar o cofre." });
+        }
+        return sendJson(res, 200, { ticket: vaultGatewayTicket(session.user), gatewayUrl, expiresIn: 90 });
+      } catch (error) {
+        return sendJson(res, error.statusCode || 500, { error: error.message || "Falha ao autorizar o cofre." });
+      }
+    }
+
     if (handleMeta(req, res, { parts, session })) return;
 
     if (req.method === "GET" && parts[1] === "reports" && parts[2] === "company" && parts[3]) {
@@ -5256,6 +5564,7 @@ const handleSettings = createSettingsHandler({
   normalizeCloudBackupSettings,
   normalizeProxmoxSettings,
   normalizeUnifiSettings,
+  normalizeVaultwardenSettings,
   refreshCloudBackup,
   refreshProxmoxBackup,
   refreshUnifiNetwork,
@@ -5372,6 +5681,7 @@ const handleNetwork = createNetworkHandler({
   requireAdmin,
   getDevices: (user = null) => scopedNetworkDevices(user),
   getLinks: (user = null) => scopedNetworkLinks(user),
+  getEvents: (user = null) => scopedNetworkEvents(user),
   publicDevice: publicNetworkDevice,
   publicLink: publicNetworkLink,
   normalizeDevice: normalizeNetworkDevice,

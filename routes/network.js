@@ -7,6 +7,7 @@ export function createNetworkHandler({
   requireAdmin,
   getDevices,
   getLinks,
+  getEvents,
   publicDevice,
   publicLink,
   normalizeDevice,
@@ -17,6 +18,24 @@ export function createNetworkHandler({
   broadcastSnapshot
 }) {
   return async function handleNetwork(req, res, { parts, session }) {
+    if (parts[2] === "events" && req.method === "GET" && parts.length === 3) {
+      const url = new URL(req.url, "http://localhost");
+      const linkId = String(url.searchParams.get("linkId") || "").trim();
+      if (!linkId) return sendJson(res, 400, { error: "Informe o link para consultar o historico." });
+
+      const link = getLinks(session.user).find((item) => item.id === linkId && !item.deletedAt);
+      if (!link) return notFound(res);
+
+      const requestedLimit = Number(url.searchParams.get("limit") || 5000);
+      const limit = Math.max(1, Math.min(Number.isFinite(requestedLimit) ? requestedLimit : 5000, 5000));
+      const events = getEvents(session.user)
+        .filter((event) => event.linkId === link.id)
+        .sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime())
+        .slice(0, limit);
+
+      return sendJson(res, 200, { linkId: link.id, events });
+    }
+
     if (parts[2] === "devices") {
       if (req.method === "GET" && parts.length === 3) {
         return sendJson(res, 200, getDevices(session.user).filter((device) => !device.deletedAt).map(publicDevice));

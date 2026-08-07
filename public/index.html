@@ -9,7 +9,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="/styles.css?v=20260721-company-reports-spacing-2" />
+    <link rel="stylesheet" href="/styles.css?v=20260806-vault-key-clarity-1" />
   </head>
   <body>
     <section class="bootstrap-screen" id="bootScreen" aria-label="Carregando ServerWatch">
@@ -68,7 +68,8 @@
           <a class="nav-tab admin-only" href="/empresas" data-view="groups"><svg class="nav-tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="3" width="14" height="18" rx="1"/><rect x="8" y="7" width="2" height="2"/><rect x="14" y="7" width="2" height="2"/><rect x="8" y="13" width="2" height="2"/><rect x="14" y="13" width="2" height="2"/></svg><span>Empresas/Clientes</span></a>
           <a class="nav-tab admin-only" href="/probes" data-view="probes"><svg class="nav-tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="2"/><path d="M16.24 7.76a6 6 0 0 1 0 8.49"/><path d="M7.76 16.24a6 6 0 0 1 0-8.49"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/><path d="M4.93 19.07a10 10 0 0 1 0-14.14"/></svg><span>Probes</span></a>
           <a class="nav-tab admin-only" href="/usuarios" data-view="users"><svg class="nav-tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="9" cy="8" r="3"/><path d="M3 20c0-3.3 2.7-6 6-6s6 2.7 6 6"/><circle cx="17.5" cy="9" r="2.3"/><path d="M15.7 14.4c2.3.5 4 2.5 4 5.6"/></svg><span>Usuarios</span></a>
-          <a class="nav-tab admin-only" href="/integracoes" data-view="integrations"><svg class="nav-tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 12h8"/><path d="M12 8v8"/><path d="M7 3v4"/><path d="M17 3v4"/><path d="M7 17v4"/><path d="M17 17v4"/><rect x="4" y="7" width="16" height="10" rx="3"/></svg><span>Integracoes</span></a>
+           <a class="nav-tab admin-only" href="/integracoes" data-view="integrations"><svg class="nav-tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 12h8"/><path d="M12 8v8"/><path d="M7 3v4"/><path d="M17 3v4"/><path d="M7 17v4"/><path d="M17 17v4"/><rect x="4" y="7" width="16" height="10" rx="3"/></svg><span>Integracoes</span></a>
+           <a class="nav-tab admin-only" href="/cofre" data-view="vault"><svg class="nav-tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="10" width="16" height="10" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/><path d="M12 14v2"/></svg><span>Cofre</span></a>
           <a class="nav-tab route-only admin-only" href="/admin" data-view="admin"><svg class="nav-tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="3" width="14" height="18" rx="1"/><rect x="8" y="7" width="2" height="2"/><rect x="14" y="7" width="2" height="2"/><rect x="8" y="13" width="2" height="2"/><rect x="14" y="13" width="2" height="2"/></svg><span>Administracao</span></a>
           <span class="sidebar-section-title">Sistema</span>
           <a class="nav-tab" href="/configuracoes" data-view="settings"><svg class="nav-tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 13a7.97 7.97 0 0 0 0-2l2-1.5-2-3.4-2.4.9a8 8 0 0 0-1.7-1l-.3-2.5h-4l-.3 2.5a8 8 0 0 0-1.7 1l-2.4-.9-2 3.4 2 1.5a7.97 7.97 0 0 0 0 2l-2 1.5 2 3.4 2.4-.9c.5.4 1.1.8 1.7 1l.3 2.5h4l.3-2.5a8 8 0 0 0 1.7-1l2.4.9 2-3.4Z"/></svg><span>Configuracoes</span></a>
@@ -168,8 +169,8 @@
               <p id="dashboardScopeMeta">Tabela executiva para leitura rapida da operacao.</p>
             </div>
             <div class="dashboard-mode-toggle" id="dashboardModeToggle" role="group" aria-label="Alternar visualizacao do dashboard">
-              <button class="scope-chip active" type="button" data-dashboard-mode="simple">Visualizacao simples</button>
-              <button class="scope-chip" type="button" data-dashboard-mode="complete">Dashboard completa</button>
+              <button class="scope-chip active" type="button" data-dashboard-mode="complete">Dashboard completa</button>
+              <button class="scope-chip" type="button" data-dashboard-mode="simple">Visualizacao simples</button>
             </div>
           </section>
           <section class="simple-dashboard" id="simpleDashboard" aria-label="Resumo simplificado">
@@ -630,7 +631,58 @@
                   <button class="primary-button compact" type="submit">Salvar rotina</button>
                 </div>
               </form>
+
+              <form class="integration-card vault-integration-card" id="vaultwardenSettingsForm">
+                <div class="integration-card-header">
+                  <div>
+                    <span class="integration-kicker">Seguranca</span>
+                    <h3>Vaultwarden</h3>
+                  </div>
+                  <span class="integration-status inactive" id="vaultwardenSourceLabel">Aguardando publicacao</span>
+                </div>
+                <p>Centraliza o acesso administrativo ao cofre. Senhas e chaves continuam armazenadas somente no Vaultwarden.</p>
+                <label>
+                  Endereco publico do cofre
+                  <input id="vaultwardenPublicUrlInput" type="url" inputmode="url" autocomplete="off" spellcheck="false" placeholder="https://vault.grupoinsideti.com.br" />
+                </label>
+                <label>
+                  Gateway nativo
+                  <input id="vaultwardenGatewayUrlInput" type="url" readonly aria-readonly="true" placeholder="https://vault.grupoinsideti.com.br/serverwatch-api" />
+                </label>
+                <label class="toggle-row compact-toggle">
+                  <input id="vaultwardenEnabledInput" type="checkbox" />
+                  <span>Disponibilizar o atalho administrativo do cofre</span>
+                </label>
+                <p class="integration-runtime-copy" id="vaultwardenRuntimeMeta">Configure o endereco HTTPS quando o Vaultwarden estiver publicado.</p>
+                <div class="dialog-actions">
+                  <button class="primary-button compact" type="submit">Salvar integracao Vaultwarden</button>
+                </div>
+              </form>
             </div>
+          </div>
+        </section>
+
+        <section class="view admin-only" id="vaultView">
+          <div class="wide-panel vault-overview">
+            <div class="panel-title">
+              <div>
+                <span class="integration-kicker">Acesso protegido</span>
+                <h2>Cofre de senhas</h2>
+                <span>Interface nativa com sessao individual. O Vaultwarden permanece como fonte unica das credenciais.</span>
+              </div>
+              <span class="integration-status inactive" id="vaultOverviewStatus">Em preparacao</span>
+            </div>
+            <div class="vault-overview-content">
+              <div>
+                <h3>Credenciais no contexto dos ativos</h3>
+                <p id="vaultOverviewDescription">Conecte sua conta individual e vincule cada credencial a uma empresa ou servidor.</p>
+              </div>
+              <div class="dialog-actions">
+                <a class="ghost-button vault-open-button is-disabled" id="openVaultwardenButton" href="#" target="_blank" rel="noopener noreferrer" aria-disabled="true">Abrir no Vaultwarden</a>
+                <button class="ghost-button" type="button" data-view-link="integrations">Configurar integracao</button>
+              </div>
+            </div>
+            <div class="vault-client-app" id="vaultClientApp"></div>
           </div>
         </section>
 
@@ -1129,11 +1181,11 @@
                   <input id="ticketAutomationLinkMinutes" type="number" min="15" max="10080" step="1" />
                 </label>
                 <label>
-                  Backup pendente (horas)
-                  <input id="ticketAutomationBackupHours" type="number" min="6" max="720" step="1" />
+                  Recuperado e estavel (minutos)
+                  <input id="ticketAutomationRecoveryMinutes" type="number" min="5" max="1440" step="1" />
                 </label>
               </div>
-              <p class="settings-copy">Cada ativo ou empresa gera no maximo um chamado automatico por dia. Ao ativar, somente novas ocorrencias entram na fila; incidentes anteriores ficam fora da nova base.</p>
+              <p class="settings-copy">Servidores e links geram no maximo um chamado automatico por dia somente quando a indisponibilidade permanece continua pelo tempo configurado. Backups continuam sendo acompanhados na area propria e nao geram chamados.</p>
               <div class="dialog-actions">
                 <button class="primary-button" type="submit">Salvar automacao</button>
               </div>
@@ -1334,6 +1386,21 @@
             <select id="serverProbeId"></select>
           </label>
           <small class="field-hint" id="serverProbeHint">Os probes aparecem aqui automaticamente depois da instalacao.</small>
+        </fieldset>
+
+        <fieldset class="vault-credential-options" id="vaultCredentialOptions">
+          <legend>Credencial protegida</legend>
+          <p class="field-hint">O ServerWatch guarda apenas o vinculo. A senha continua cifrada e so e exibida pelo Vaultwarden apos o desbloqueio do cofre.</p>
+          <div class="form-grid">
+            <label>
+              Identificacao da credencial
+              <input id="serverVaultCredentialLabel" maxlength="120" placeholder="Administrador local" />
+            </label>
+            <label>
+              Link do item no Vaultwarden
+              <input id="serverVaultCredentialUrl" type="url" inputmode="url" autocomplete="off" spellcheck="false" placeholder="https://vault.../#/vault?itemId=..." />
+            </label>
+          </div>
         </fieldset>
 
         <label>
@@ -2032,7 +2099,20 @@
       </div>
     </dialog>
 
+    <dialog class="server-dialog alert-details-dialog" id="alertDetailsDialog">
+      <div class="dialog-shell">
+        <div class="dialog-header alert-details-dialog-header">
+          <div>
+            <p class="eyebrow">Alertas inteligentes</p>
+            <h2>Contexto do incidente</h2>
+          </div>
+          <button class="icon-button" value="cancel" type="button" id="closeAlertDetailsDialog" title="Fechar">x</button>
+        </div>
+        <div class="alert-details-content" id="alertDetailsContent"></div>
+      </div>
+    </dialog>
+
     <div class="toast-stack" id="toastStack" aria-live="polite"></div>
-    <script src="/app.js?v=20260721-company-reports-1" type="module"></script>
+    <script src="/app.js?v=20260806-vault-key-clarity-1" type="module"></script>
   </body>
 </html>

@@ -2,6 +2,15 @@
 
 Resumo das versoes estaveis publicadas do ServerWatch.
 
+## v6.0.0 - 2026-08-07
+
+- Adiciona o **Cofre** (`/cofre`, aba nova, admin-only): integracao nativa com Vaultwarden via um Vault Gateway dedicado — a senha mestra nunca passa pelo backend/MongoDB/Redis do ServerWatch, cada usuario tem um perfil Bitwarden CLI isolado no gateway, sessao expira em ate 60 minutos, e nenhum segredo e gravado em log de auditoria (so usuario/acao/item/resultado). Servidores podem vincular uma credencial do Vaultwarden (`vaultCredential`), validada para exigir HTTPS e mesma origem do Vaultwarden configurado. Ver `docs/VAULTWARDEN_NATIVE_INTEGRATION.md`.
+- Adiciona rotina de **backup e restore do proprio banco MongoDB** do ServerWatch (`routes/databaseBackups.js`, `services/databaseBackup.js`, `scripts/mongodb-backup-worker.sh`): agendamento diario configuravel, retencao configuravel, backup manual pelo painel e restore auditavel. Ver `docs/DATABASE_BACKUPS.md`.
+- Adiciona `GET /api/network/events?linkId=` para consultar o historico de eventos de um link de rede especifico (ate 5000 registros, mais recente primeiro).
+- Adiciona endpoints `PUT /api/settings/unifi` e `PUT /api/settings/vaultwarden` para configuracao administrativa das duas integracoes sem precisar editar variaveis de ambiente e reiniciar o container.
+- Aumenta os limites de memoria do container (`mem_limit` 768m -> 1280m, heap do Node 512MB -> 768MB) para acomodar o crescimento do sistema.
+- Consolida na base versionada trabalho que já estava rodando em producao sem tag/commit correspondente havia algumas semanas — este release existe para recuperar essa disciplina de versionamento.
+
 ## v5.1.0 - 2026-07-21
 
 - Adiciona Relatorios por Empresa em `/relatorios`, com selecao de empresa e periodos de 7, 30 e 90 dias.

@@ -13,8 +13,11 @@ export function createSettingsHandler({
   syncDatabaseBackupWorkerConfig,
   normalizeCloudBackupSettings,
   normalizeProxmoxSettings,
+  normalizeUnifiSettings,
+  normalizeVaultwardenSettings,
   refreshCloudBackup,
   refreshProxmoxBackup,
+  refreshUnifiNetwork,
   publicSettings,
   scheduleSave,
   broadcastSnapshot
@@ -113,6 +116,27 @@ export function createSettingsHandler({
       } catch {
         // erro ja fica registrado no estado do proxmoxBackup; nao bloqueia o salvamento
       }
+      broadcastSnapshot();
+      return sendJson(res, 200, publicSettings(session.user));
+    }
+
+    if (req.method === "PUT" && parts[2] === "unifi") {
+      const payload = await readBody(req);
+      setSettings(normalizeUnifiSettings(payload, getSettings()));
+      scheduleSave();
+      try {
+        await refreshUnifiNetwork();
+      } catch {
+        // A configuracao permanece salva para permitir corrigir a conectividade depois.
+      }
+      broadcastSnapshot();
+      return sendJson(res, 200, publicSettings(session.user));
+    }
+
+    if (req.method === "PUT" && parts[2] === "vaultwarden") {
+      const payload = await readBody(req);
+      setSettings(normalizeVaultwardenSettings(payload, getSettings()));
+      scheduleSave();
       broadcastSnapshot();
       return sendJson(res, 200, publicSettings(session.user));
     }
